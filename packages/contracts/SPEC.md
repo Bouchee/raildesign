@@ -489,17 +489,16 @@ the palette ranks with — kept here so host-side search can rank with the same 
   chat that committed without planning still shows — and can review — that work. They are never stored;
   the **`"adopted"`** member of `TodoOrigin` exists only on the wire (derivation: [[submodule-server-todos]]).
   **`DelegationRunDetails`** + the **`DelegationRunStatus`** union — the subagent Agent-card DTO,
-  **mirrored** from `pi-delegation` (never imported): rides `tool_execution_update.partialResult`
+  owned by the application: rides `tool_execution_update.partialResult`
   (REPLACE), the final `Agent` tool result, and the `subagent-completion` custom message; the
   child transcript itself is read via `subagent.getTranscript`, keyed
   `(workspaceId, parentSessionId, childSessionId)` — its result also carries the run's current
   registry `status` (absent once the host no longer knows the run), the client's poll-while-live
   signal. The completion message's tag + pairing live in
   `wsProtocol` (the value-bearing half), mirroring the tool-response posture exactly: the
-  **`SUBAGENT_COMPLETION_CUSTOM_TYPE`** constant (mirrors `pi-subagents`' `SUBAGENT_COMPLETION_MESSAGE`,
-  never imported — the DTO posture again), **`SubagentCompletionMessage`** (the compile-held tag↔details
+  **`SUBAGENT_COMPLETION_CUSTOM_TYPE`** constant, **`SubagentCompletionMessage`** (the compile-held tag↔details
   shape, its details **`SubagentCompletionDetails`**: the run details plus the optional
-  **`CompletionDelivery`** marker mirrored from `pi-subagents`) and the shared
+  **`CompletionDelivery`** marker) and the shared
   **`isSubagentCompletionMessage`** guard — wire data is untrusted, so the
   details validate through **`isDelegationRunDetails`** (domain): the **closed status union**, every
   required **numeric usage field**, `durationMs`, every present optional display field as a string, and a
@@ -926,7 +925,7 @@ without importing that package. Subagents retain their Pi child session ids and 
   child/parent ids, role, task, status, creation time, the child's actual `model` (`provider/id`) and
   effective `thinkingLevel` (both optional — absent from an older host), optional abort reason,
   `detached: true` for a background run (from the child's `info`; absent for a foreground run and from
-  an older host) and — once terminal — the run duration [[module-pi-delegation]] measured
+  an older host) and — once terminal — the reported run duration
   (`durationMs`) and, from a v96 host, the finish time (`finishedAt`); not usage or reports.
   Subagent role/task summaries are capped at 200/2,000 characters. Finished records outlive the host
   ([[submodule-server-resource-history]]) but never carry authority: neither archived records,
@@ -962,7 +961,7 @@ without importing that package. Subagents retain their Pi child session ids and 
   lifecycle changes. Clients reread the snapshot; output bytes do not ride a broadcast or transcript
   tool update after the start acknowledgement. Existing `subagent.getTranscript` remains unchanged.
 
-`DelegationRunDetails.abortReason` mirrors the optional string owned by [[module-pi-delegation]].
+`DelegationRunDetails.abortReason` is an optional application-owned string.
 Historical details without this field stay valid; non-string values are rejected by its guard. User
 Stop uses `"user"` so the portable completion owner can suppress idle-parent wake-up without a
 wire-owned cancellation registry.

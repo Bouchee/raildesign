@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import type { ChildHandle, RunLifecycleStatus } from "pi-delegation";
+import type { DelegationRunStatus as RunLifecycleStatus } from "@thinkrail/contracts";
+import type { ChildHandle } from "./delegation";
 import {
 	hasLiveSessionChildren,
 	liveSessionChildren,
@@ -19,12 +20,8 @@ function child(
 			sessionId: id,
 			scope,
 			parentSessionId: parent,
-			originKind: "fresh",
-			info: { createdBy: "test" },
-			interactive: false,
-			visibility: "hidden",
+			info: {},
 			createdAt: "",
-			sessionFile: "",
 		},
 		snapshot: {
 			status,
@@ -44,17 +41,7 @@ function child(
 				},
 				durationMs: 0,
 			},
-			collected: false,
 		},
-		async runQueued() {
-			throw new Error("No executor in policy test");
-		},
-		async runNow() {
-			throw new Error("No executor in policy test");
-		},
-		async steer() {},
-		onEvent: () => () => {},
-		collectResult: () => undefined,
 		async abort() {},
 		async dispose() {},
 	};

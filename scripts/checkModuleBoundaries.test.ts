@@ -10,9 +10,7 @@ const modules = {
 	"packages/artifact-tests": "@thinkrail/artifact-tests",
 	"packages/contracts": "@thinkrail/contracts",
 	"packages/shared": "@thinkrail/shared",
-	"packages/pi-delegation": "pi-delegation",
 	"packages/pi-background-commands": "pi-background-commands",
-	"packages/pi-subagents": "pi-subagents",
 	"pi-extensions/visualize": "@thinkrail/pi-visualize",
 	"packages/server": "@thinkrail/server",
 	"apps/web": "@thinkrail/web",
@@ -41,13 +39,10 @@ function fixture(): string {
 			"@thinkrail/shared": "workspace:*",
 		},
 		"packages/shared": { "@thinkrail/contracts": "workspace:*" },
-		"packages/pi-subagents": { "pi-delegation": "workspace:*" },
 		"packages/server": {
 			"@thinkrail/contracts": "workspace:*",
 			"@thinkrail/shared": "workspace:*",
-			"pi-delegation": "workspace:*",
 			"pi-background-commands": "workspace:*",
-			"pi-subagents": "workspace:*",
 		},
 		"apps/web": { "@thinkrail/contracts": "workspace:*" },
 		"apps/cli": {
@@ -76,11 +71,10 @@ test("accepts the declared package rings and thin launcher edges", () => {
 		"packages/shared/src/value.ts",
 		'import type { Project } from "@thinkrail/contracts";',
 	);
-	write(root, "packages/pi-subagents/src/value.ts", 'export * from "pi-delegation";');
 	write(
 		root,
 		"packages/server/src/value.ts",
-		'import "pi-delegation"; import "pi-subagents"; import "pi-background-commands"; export * from "@thinkrail/contracts";',
+		'import "pi-background-commands"; export * from "@thinkrail/contracts";',
 	);
 	write(root, "apps/web/src/value.tsx", 'import type { Project } from "@thinkrail/contracts";');
 	write(root, "apps/cli/src/value.ts", 'import { bootHost } from "@thinkrail/server";');
@@ -101,7 +95,7 @@ test("accepts the declared package rings and thin launcher edges", () => {
 test("keeps background commands portable and out of browser imports", () => {
 	const root = fixture();
 	write(root, "packages/pi-background-commands/src/leak.ts", 'import "@thinkrail/server";');
-	write(root, "packages/pi-background-commands/src/delegation.ts", 'import "pi-delegation";');
+	write(root, "packages/pi-background-commands/src/contracts.ts", 'import "@thinkrail/contracts";');
 	write(
 		root,
 		"apps/web/src/commandLeak.ts",
@@ -109,7 +103,7 @@ test("keeps background commands portable and out of browser imports", () => {
 	);
 	expect(moduleBoundaryViolations(root)).toEqual([
 		'apps/web/src/commandLeak.ts: import "pi-background-commands" creates forbidden apps/web -> packages/pi-background-commands edge',
-		'packages/pi-background-commands/src/delegation.ts: import "pi-delegation" creates forbidden packages/pi-background-commands -> packages/pi-delegation edge',
+		'packages/pi-background-commands/src/contracts.ts: import "@thinkrail/contracts" creates forbidden packages/pi-background-commands -> packages/contracts edge',
 		'packages/pi-background-commands/src/leak.ts: import "@thinkrail/server" creates forbidden packages/pi-background-commands -> packages/server edge',
 	]);
 });
@@ -121,7 +115,7 @@ test("keeps published pi packages free of host imports and unwired from the host
 	write(
 		root,
 		"pi-extensions/visualize/src/leak.ts",
-		'import "@thinkrail/server"; import "pi-delegation";',
+		'import "@thinkrail/server"; import "@thinkrail/shared";',
 	);
 	write(root, "packages/server/src/early.ts", 'import "@thinkrail/pi-visualize";');
 	write(
@@ -133,7 +127,7 @@ test("keeps published pi packages free of host imports and unwired from the host
 		'apps/web/src/early.ts: import "@thinkrail/pi-visualize" creates forbidden apps/web -> pi-extensions/visualize edge',
 		'packages/server/src/early.ts: import "@thinkrail/pi-visualize" creates forbidden packages/server -> pi-extensions/visualize edge',
 		'pi-extensions/visualize/src/leak.ts: import "@thinkrail/server" creates forbidden pi-extensions/visualize -> packages/server edge',
-		'pi-extensions/visualize/src/leak.ts: import "pi-delegation" creates forbidden pi-extensions/visualize -> packages/pi-delegation edge',
+		'pi-extensions/visualize/src/leak.ts: import "@thinkrail/shared" creates forbidden pi-extensions/visualize -> packages/shared edge',
 	]);
 });
 
@@ -182,14 +176,14 @@ test("rejects manifest, type-only, dynamic, CommonJS, and relative cross-boundar
 	write(root, "apps/web/src/commonJsLeak.cjs", 'require("@thinkrail/server");');
 	write(root, "apps/cli/src/dynamicLeak.ts", 'void import("@thinkrail/web");');
 	write(root, "packages/shared/src/relativeLeak.ts", 'export * from "../../server/src/index";');
-	write(root, "packages/pi-delegation/src/leak.ts", 'import "pi-subagents";');
+	write(root, "packages/contracts/src/leak.ts", 'import "@thinkrail/shared";');
 
 	expect(moduleBoundaryViolations(root)).toEqual([
 		'apps/cli/src/dynamicLeak.ts: import "@thinkrail/web" creates forbidden apps/cli -> apps/web edge',
 		"apps/desktop/package.json: dependencies.@thinkrail/web creates forbidden apps/desktop -> apps/web edge",
 		'apps/web/src/commonJsLeak.cjs: import "@thinkrail/server" creates forbidden apps/web -> packages/server edge',
 		'apps/web/src/typeLeak.ts: import "@thinkrail/server" creates forbidden apps/web -> packages/server edge',
-		'packages/pi-delegation/src/leak.ts: import "pi-subagents" creates forbidden packages/pi-delegation -> packages/pi-subagents edge',
+		'packages/contracts/src/leak.ts: import "@thinkrail/shared" creates forbidden packages/contracts -> packages/shared edge',
 		'packages/shared/src/relativeLeak.ts: import "../../server/src/index" creates forbidden packages/shared -> packages/server edge',
 	]);
 });

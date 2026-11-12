@@ -1,5 +1,30 @@
+import type { DelegationRunDetails, DelegationRunStatus } from "@thinkrail/contracts";
 import { CodedError } from "@thinkrail/shared/codedError";
-import type { ChildHandle, DelegationService } from "pi-delegation";
+
+export interface ChildHandle {
+	sessionId: string;
+	record: {
+		sessionId: string;
+		scope?: string;
+		parentSessionId?: string;
+		createdAt: string;
+		info: { roleName?: string; detached?: boolean };
+	};
+	snapshot?:
+		| { status: DelegationRunStatus; task: string; details: DelegationRunDetails }
+		| undefined;
+	abort(reason: string): Promise<void>;
+	dispose(): Promise<void>;
+}
+export interface DelegationService {
+	findChild(id: string): ChildHandle | undefined;
+	childrenOf(parentSessionId: string): ChildHandle[];
+}
+export interface LifecycleEvent {
+	type: string;
+	sessionId: string;
+	parentSessionId: string;
+}
 
 export const INTERRUPTED_ABORT_REASON = "interrupted";
 

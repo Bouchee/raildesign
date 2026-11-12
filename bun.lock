@@ -217,44 +217,6 @@
         "typebox": "*",
       },
     },
-    "packages/pi-delegation": {
-      "name": "pi-delegation",
-      "version": "0.0.0",
-      "devDependencies": {
-        "@earendil-works/pi-agent-core": "catalog:",
-        "@earendil-works/pi-ai": "catalog:",
-        "@earendil-works/pi-coding-agent": "catalog:",
-        "@types/bun": "catalog:",
-        "typebox": "catalog:",
-        "typescript": "catalog:",
-      },
-      "peerDependencies": {
-        "@earendil-works/pi-agent-core": "*",
-        "@earendil-works/pi-ai": "*",
-        "@earendil-works/pi-coding-agent": "*",
-      },
-    },
-    "packages/pi-subagents": {
-      "name": "pi-subagents",
-      "version": "0.0.0",
-      "dependencies": {
-        "pi-delegation": "workspace:*",
-      },
-      "devDependencies": {
-        "@earendil-works/pi-agent-core": "catalog:",
-        "@earendil-works/pi-ai": "catalog:",
-        "@earendil-works/pi-coding-agent": "catalog:",
-        "@types/bun": "catalog:",
-        "typebox": "catalog:",
-        "typescript": "catalog:",
-      },
-      "peerDependencies": {
-        "@earendil-works/pi-agent-core": "*",
-        "@earendil-works/pi-ai": "*",
-        "@earendil-works/pi-coding-agent": "*",
-        "typebox": "*",
-      },
-    },
     "packages/pi-thinkrail-workflow": {
       "name": "pi-thinkrail-workflow",
       "version": "0.0.0",
@@ -330,9 +292,7 @@
         "bun-pty": "0.5.2",
         "openai": "catalog:",
         "pi-background-commands": "workspace:*",
-        "pi-delegation": "workspace:*",
         "pi-spec-graph": "workspace:*",
-        "pi-subagents": "workspace:*",
         "pi-thinkrail-workflow": "workspace:*",
         "pi-todos": "workspace:*",
         "pino": "10.4.0",
@@ -2127,11 +2087,7 @@
 
     "pi-background-commands": ["pi-background-commands@workspace:packages/pi-background-commands"],
 
-    "pi-delegation": ["pi-delegation@workspace:packages/pi-delegation"],
-
     "pi-spec-graph": ["pi-spec-graph@workspace:packages/spec-graph"],
-
-    "pi-subagents": ["pi-subagents@workspace:packages/pi-subagents"],
 
     "pi-thinkrail-workflow": ["pi-thinkrail-workflow@workspace:packages/pi-thinkrail-workflow"],
 

@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ResourceRecord } from "@thinkrail/contracts";
 import type { BackgroundCommandSnapshot, BackgroundCommands } from "pi-background-commands";
-import type { ChildHandle } from "pi-delegation";
 import { archivedCommandOutput, finishedResources, recordResource } from "../resourceHistory";
 import {
 	archiveCommandHistory,
@@ -14,6 +13,7 @@ import {
 	ownedChildResources,
 	subagentSummary,
 } from "./chatResources";
+import type { ChildHandle } from "./delegation";
 import { isHostResourceId } from "./resourceIdentity";
 
 let root: string;
@@ -56,12 +56,8 @@ function child(
 			sessionId: id,
 			parentSessionId,
 			scope: workspaceId,
-			originKind: "fresh",
-			info: { createdBy: "test", roleName: "x".repeat(300), detached: true },
-			interactive: false,
-			visibility: "hidden",
+			info: { roleName: "x".repeat(300), detached: true },
 			createdAt: "2026-01-01T00:00:00Z",
-			sessionFile: "private-transcript",
 		},
 		snapshot: {
 			status: "running",
@@ -82,19 +78,9 @@ function child(
 					contextTokens: 3,
 				},
 			},
-			collected: false,
 		},
-		async runNow() {
-			throw new Error("No executor");
-		},
-		async runQueued() {
-			throw new Error("No executor");
-		},
-		async steer() {},
 		async abort() {},
 		async dispose() {},
-		onEvent: () => () => {},
-		collectResult: () => undefined,
 	};
 }
 
@@ -273,7 +259,6 @@ test("child archival rejects foreign lifecycle events and marks only interrupted
 		type: "run-terminal",
 		sessionId: "own",
 		parentSessionId: scope.sessionId,
-		outcome: { historyEntryId: null, status: "aborted", details: terminal.snapshot.details },
 	});
 	expect(finishedResources(scope, "subagent", new Set())[0]?.summary.interrupted).toBe(true);
 });

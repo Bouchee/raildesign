@@ -12,8 +12,8 @@ tags: [resources, persistence]
 ## Responsibility
 
 Keep every background command and subagent a chat ran — its summary and, for a command, the retained log
-tail — so Resources still shows the chat's whole history after a host restart. The live owners
-([[module-pi-background-commands]], [[module-pi-delegation]]) stay in-memory and unaware of it; `agent`
+tail — so Resources still shows the chat's whole history after a host restart. The live command owner
+([[module-pi-background-commands]]) and supplied child snapshots stay separate from this archive; `agent`
 feeds it their lifecycle and asks it for what they no longer hold. It records what the owners reported and
 never grants control: nothing here is live authority.
 

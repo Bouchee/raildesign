@@ -17,13 +17,13 @@ import {
 } from "@thinkrail/contracts";
 import { CodedError } from "@thinkrail/shared/codedError";
 import type { BackgroundCommands } from "pi-background-commands";
-import type { ChildHandle, DelegationService, LifecycleEvent } from "pi-delegation";
 import {
 	finishedResources,
 	pageResources,
 	type ResourceHistoryScope,
 	recordResource,
 } from "../resourceHistory";
+import type { ChildHandle, DelegationService, LifecycleEvent } from "./delegation";
 import { INTERRUPTED_ABORT_REASON } from "./delegation";
 import { isHostResourceId } from "./resourceIdentity";
 

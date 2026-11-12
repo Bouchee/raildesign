@@ -5,7 +5,7 @@ status: active
 title: subagent renderers (Agent / get_subagent_result) and run-detail helpers
 parent: submodule-web-chat-tools
 depends-on: [module-contracts]
-references: [module-pi-subagents]
+references: [submodule-server-agent]
 tags: [chat, subagents]
 ---
 
@@ -13,7 +13,7 @@ tags: [chat, subagents]
 
 Transcript navigation is optional. A renderer exposes its transcript button only when its `ChatActions` supplies `openSubagentTranscript`; the stage 1 chat composition supplies no subagent execution or transcript reader.
 
-Presentational renderers for the **`pi-subagents`** capability, joined by tool name: `AgentCard` (the
+Presentational renderers for the application child-agent tool contract, joined by tool name: `AgentCard` (the
 `Agent` tool — also registered for `get_subagent_result`, whose result carries the same
 `DelegationRunDetails`), and the pure `runDetails` module (defensive `DelegationRunDetails` readers,
 usage/token/cost/duration formatters, the collapsed-header summary line, and the completion-report
@@ -36,15 +36,14 @@ Adopted:
   (`RunModelLabel`: catalog name + effort, raw `provider/id` tooltip) beside the usage counters,
   Open-transcript action, and the final report behind a fold once terminal. Errors auto-expand
   (existing chrome). **Failed runs keep the transcript action**: an error outcome's thrown tool
-  result still carries the run's final details — `pi-subagents` re-injects them via its
-  `tool_result` override (its SPEC, PR #304 review finding) — so the `details.childSessionId` gate
+  result still carries supplied final run details, so the `details.childSessionId` gate
   lights on both the live and hydrated paths (hydrate-pinned).
 - **A background run's tool card freezes at its ack** (pi ignores `onUpdate` after the tool promise
   settles) — deliberate: the card says "started in the background", the Resources dock carries the live
   phase, and the parent chat's **result row** is the terminal signal (OpenCode's notice pattern). Its
   state uses the Resources vocabulary — an aborted (e.g. turn-capped) run reads Stopped, never success
   (PR #304 review finding).
-- `completionReport` strips pi-subagents' `Subagent "<role>" (<id>) <status>:` header (the join on that
+- `completionReport` strips the `Subagent "<role>" (<id>) <status>:` header (the join on that
   exact content format is deliberate; an unmatched text passes through whole); `reportTeaser` is the
   report's first readable line with Markdown block markers and emphasis removed.
 - `get_subagent_result` stays **routine** (folds into activity) with the same body + summary, except that
@@ -71,6 +70,6 @@ Adopted:
   `readRunDetails` (childSessionId/status/task present), never trust the shape; fall back to `args`
   (`subagent_type`, `task`) before the first update lands.
 - `partialResult` is **REPLACE** — every snapshot is complete; nothing accumulates renderer-side.
-- Tool names `Agent` / `get_subagent_result` must match the `pi-subagents` capability exactly {D} the
+- Tool names `Agent` / `get_subagent_result` must match the server tool contract exactly {D} the
   name is the join key.
 - Token-utility styling only (no raw hex / inline `style`).

@@ -183,9 +183,11 @@ host startup. This selects physical `host` and registry-extension content roots 
 extension factories; disabled extensions still withhold their Skill assets. Source runs use the
 existing package content roots.
 
-Child definitions, concurrency and resource ownership/cancellation rules remain reusable and tested.
-Only pi execution/session bindings are replaced; restoring these libraries does not claim the full
-stage-3 child Runner or MCP/Skill tool live acceptance.
+Child resource ownership and cancellation helpers use local `ChildHandle`, `DelegationService` and
+`LifecycleEvent` interfaces with application-owned run details. They validate supplied snapshots and
+wait for owned cleanup; they do not construct a child executor. The unused Pi delegation and subagent
+packages are removed. SDK child execution, definition discovery and concurrency remain Stage 3 work.
+These policy tests do not claim child Runner or MCP/Skill tool live acceptance.
 
 Image dimensions, MIME detection and payload/request budgets remain in the pure `imageGuard` module.
 Its retained tests validate those rules; the current verified text-only model does not enable vision.
