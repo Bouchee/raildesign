@@ -38,7 +38,7 @@ function requiredPath(path: string): string {
 
 export function resolveBuildRuntimeSources(): BuildRuntimeSources {
 	const skillRoots: StagedSkillRoot[] = [
-		...["pi-spec-graph", "@thinkrail/workflow", "@thinkrail/todos"].map((name) =>
+		...["@thinkrail/spec-graph", "@thinkrail/workflow", "@thinkrail/todos"].map((name) =>
 			requiredPath(join(dirname(require.resolve(`${name}/package.json`)), "skills")),
 		),
 		requiredPath(fileURLToPath(new URL("../skills", import.meta.url))),

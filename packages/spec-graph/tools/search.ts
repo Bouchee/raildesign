@@ -1,7 +1,9 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { tool } from "@openai/agents";
 import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { DEFAULT_SPEC_SEARCH_LIMIT, type SpecSectionHit, searchSpecs } from "../core/index.ts";
-import { getSectionIndex, textResult } from "./shared.ts";
+import type { SpecToolServices } from "./shared.ts";
+import { getSectionIndex, textResult, toolError } from "./shared.ts";
 
 export const MAX_SPEC_SEARCH_LIMIT = 25;
 
@@ -37,22 +39,24 @@ function hitLine(hit: SpecSectionHit): string {
 	return `${hit.path}:${hit.line}  ${where}${snippet}${words}`;
 }
 
-export function registerSpecSearch(pi: ExtensionAPI): void {
-	pi.registerTool<typeof parameters, SpecSearchDetails>({
+export function createSpecSearch(services: SpecToolServices) {
+	return tool({
 		name: "spec_search",
-		label: "Spec Search",
 		description:
 			"Find the spec sections that answer a question, ranked by words: each section's heading and text plus its spec's title, words in any order, word forms matched (renaming ↔ rename), identifiers split (renameSession ↔ rename session), an exact phrase first. Returns `path:line  Spec › Section — snippet`, best first; read a section at its line with the normal read tool. It matches words, not meaning: when nothing fits, retry with the words a spec would use or with several phrasings at once. Use spec_grep for an exact pattern or a regex.",
-		promptSnippet:
-			"spec_search — find the spec sections that govern a topic, ranked by words; spec_grep matches exact patterns.",
-		parameters,
-		async execute(_callId, params, _signal, _onUpdate, ctx) {
+		strict: false,
+		parameters: { ...parameters, required: parameters.required ?? [], additionalProperties: true },
+		errorFunction: (_context, error, details) =>
+			toolError(services, error, details?.toolCall?.callId),
+		async execute(params) {
+			services.assertActive();
+			if (!Value.Check(parameters, params)) throw new Error("Invalid tool arguments");
 			const requested = Math.trunc(params.limit ?? DEFAULT_SPEC_SEARCH_LIMIT);
 			const limit = Math.min(
 				MAX_SPEC_SEARCH_LIMIT,
 				requested > 0 ? requested : DEFAULT_SPEC_SEARCH_LIMIT,
 			);
-			const { hits, total } = searchSpecs(getSectionIndex(ctx.cwd), params.query, {
+			const { hits, total } = searchSpecs(getSectionIndex(services.cwd), params.query, {
 				limit,
 				...(params.type !== undefined ? { type: params.type } : {}),
 				...(params.tag !== undefined ? { tag: params.tag } : {}),

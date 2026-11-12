@@ -39,6 +39,7 @@ test("SDK test setup keeps no-agent configuration free of keys", () => {
 		expect(config.endpoints[0].baseUrl).toBe("https://opencode.ai/inference/go/openai/v1");
 		expect(config.endpoints[0].apiKey).toBe("");
 		expect(config.endpoints[0].models[0].id).toBe("deepseek-v4.1-flash");
+		expect(config.endpoints[0].models[0].maxTokens).toBeNull();
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

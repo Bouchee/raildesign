@@ -9,7 +9,7 @@ import {
 	type SpecSectionHit,
 	scalar,
 	searchSpecs,
-} from "pi-spec-graph/core";
+} from "@thinkrail/spec-graph/core";
 import { loadWorkspaces } from "../persistence";
 
 const indexes = new Map<string, SpecIndex>();

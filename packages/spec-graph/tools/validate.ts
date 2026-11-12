@@ -1,21 +1,25 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { tool } from "@openai/agents";
 import { Type } from "typebox";
-import { isValid, type ValidationReport, validateGraph } from "../core/index.ts";
-import { getIndex, textResult } from "./shared.ts";
+import { Value } from "typebox/value";
+import { isValid, validateGraph } from "../core/index.ts";
+import type { SpecToolServices } from "./shared.ts";
+import { getIndex, textResult, toolError } from "./shared.ts";
 
 const parameters = Type.Object({});
 
-export function registerSpecValidate(pi: ExtensionAPI): void {
-	pi.registerTool<typeof parameters, ValidationReport>({
+export function createSpecValidate(services: SpecToolServices) {
+	return tool({
 		name: "spec_validate",
-		label: "Spec Validate",
 		description:
 			"Validate the spec-graph: report dangling parent/depends-on/references/implements links, duplicate ids, and parent cycles.",
-		promptSnippet:
-			"spec_validate — check the spec-graph for dangling links, duplicate ids, and parent cycles.",
-		parameters,
-		async execute(_callId, _params, _signal, _onUpdate, ctx) {
-			const report = validateGraph(getIndex(ctx.cwd).graph());
+		strict: false,
+		parameters: { ...parameters, required: parameters.required ?? [], additionalProperties: true },
+		errorFunction: (_context, error, details) =>
+			toolError(services, error, details?.toolCall?.callId),
+		async execute(_params) {
+			services.assertActive();
+			if (!Value.Check(parameters, _params)) throw new Error("Invalid tool arguments");
+			const report = validateGraph(getIndex(services.cwd).graph());
 			if (isValid(report)) return textResult("Spec-graph is valid: no issues found.", report);
 
 			const sections: string[] = [];

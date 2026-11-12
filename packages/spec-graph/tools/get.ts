@@ -1,7 +1,9 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { tool } from "@openai/agents";
 import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { type Frontmatter, LINK_KINDS, type LinkKind, linkTargets } from "../core/index.ts";
-import { errorResult, getIndex, textResult } from "./shared.ts";
+import type { SpecToolServices } from "./shared.ts";
+import { errorResult, getIndex, textResult, toolError } from "./shared.ts";
 
 const parameters = Type.Object({
 	id: Type.String({ description: "The spec id to look up." }),
@@ -23,17 +25,19 @@ interface GetDetails {
 	reverseLinks: ResolvedLink[];
 }
 
-export function registerSpecGet(pi: ExtensionAPI): void {
-	pi.registerTool<typeof parameters, GetDetails | { error: string }>({
+export function createSpecGet(services: SpecToolServices) {
+	return tool({
 		name: "spec_get",
-		label: "Spec Get",
 		description:
 			"Get one spec node by id: its frontmatter, path, and resolved links (forward + reverse edges across parent/depends-on/references/implements). Returns no prose body — read the file at the returned path with the read tool.",
-		promptSnippet:
-			"spec_get — look up one spec by id: its frontmatter, resolved links, and path (read the body with `read`).",
-		parameters,
-		async execute(_callId, params, _signal, _onUpdate, ctx) {
-			const graph = getIndex(ctx.cwd).graph();
+		strict: false,
+		parameters: { ...parameters, required: parameters.required ?? [], additionalProperties: true },
+		errorFunction: (_context, error, details) =>
+			toolError(services, error, details?.toolCall?.callId),
+		async execute(params) {
+			services.assertActive();
+			if (!Value.Check(parameters, params)) throw new Error("Invalid tool arguments");
+			const graph = getIndex(services.cwd).graph();
 			const node = graph.nodes.get(params.id);
 			if (!node) return errorResult(`No spec with id "${params.id}".`);
 

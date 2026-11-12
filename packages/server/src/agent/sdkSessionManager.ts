@@ -35,6 +35,7 @@ import type {
 } from "@thinkrail/contracts";
 import { firstPromptOfTexts, normalizeSessionTitle } from "@thinkrail/contracts";
 import { parseToolResultContent } from "@thinkrail/extension-api/server";
+import { createSpecTools, SPEC_RULE } from "@thinkrail/spec-graph";
 import { createTodoTools, TODO_RULE } from "@thinkrail/todos";
 import { WORKFLOW_RULE } from "@thinkrail/workflow";
 import { z } from "zod";
@@ -781,9 +782,11 @@ function buildSessionAgent(
 	};
 	const projectContext = workspaceInstructions(entry.store.record.cwd);
 	const skillCatalog = skillInstructions(skillOptions, model);
+	const repository =
+		loadWorkspaces().find((item) => item.id === entry.store.record.workspaceId)?.kind !== "chat";
 	const agent = new Agent({
 		name: "RailDesign",
-		instructions: `You are RailDesign, a coding assistant. Work only in the assigned worktree: ${entry.store.record.cwd}. Use read and search to inspect files. Use apply_patch for edits and bash to run project checks. Request approval for commands and edits. A denied operation is not permission to try another route. Report actual checks and remaining limits.\n${projectContext}\n${skillCatalog}\n${TODO_RULE}\n${WORKFLOW_RULE}`,
+		instructions: `You are RailDesign, a coding assistant. Work only in the assigned worktree: ${entry.store.record.cwd}. Use read and search to inspect files. Use apply_patch for edits and bash to run project checks. Request approval for commands and edits. A denied operation is not permission to try another route. Report actual checks and remaining limits.\n${projectContext}\n${skillCatalog}\n${TODO_RULE}\n${repository ? SPEC_RULE : ""}\n${WORKFLOW_RULE}`,
 		model: sdkModel,
 		tools: [
 			...createTodoTools({
@@ -795,6 +798,16 @@ function buildSessionAgent(
 				sessionId: entry.store.record.sessionId,
 				assertActive: () => assertActive(entry, run),
 			}),
+			...(repository
+				? createSpecTools({
+						markToolFailed: (callId) => {
+							const call = callId ? run.toolCalls.get(callId) : undefined;
+							if (call) call.failed = true;
+						},
+						cwd: entry.store.record.cwd,
+						assertActive: () => assertActive(entry, run),
+					})
+				: []),
 			...createSkillTools(skillOptions),
 			...workspaceTools(
 				{

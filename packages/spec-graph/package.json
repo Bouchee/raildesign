@@ -1,5 +1,5 @@
 {
-	"name": "pi-spec-graph",
+	"name": "@thinkrail/spec-graph",
 	"version": "0.0.0",
 	"private": true,
 	"type": "module",
@@ -9,12 +9,9 @@
 		"./core": "./core/index.ts",
 		"./package.json": "./package.json"
 	},
-	"description": "Teaches the pi agent a project's spec-graph: search, navigate, and manage frontmatter-tagged specs.",
+	"description": "SDK function tools and application data for project specifications.",
 	"keywords": [
-		"pi-package",
-		"pi",
-		"pi-coding-agent",
-		"extension",
+		"agents-sdk",
 		"spec-graph"
 	],
 	"scripts": {
@@ -23,24 +20,16 @@
 		"bench:search": "bun core/bench/live.ts"
 	},
 	"dependencies": {
-		"yaml": "catalog:"
-	},
-	"peerDependencies": {
-		"@earendil-works/pi-coding-agent": "*",
-		"typebox": "*"
+		"yaml": "catalog:",
+		"@openai/agents": "catalog:",
+		"@thinkrail/shared": "workspace:*",
+		"typebox": "catalog:"
 	},
 	"devDependencies": {
-		"@earendil-works/pi-coding-agent": "catalog:",
 		"@types/bun": "catalog:",
-		"typebox": "catalog:",
 		"typescript": "catalog:"
 	},
-	"pi": {
-		"extensions": [
-			"./index.ts"
-		],
-		"skills": [
-			"./skills"
-		]
-	}
+	"skills": [
+		"./skills"
+	]
 }

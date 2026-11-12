@@ -27,6 +27,7 @@ const MODULE_RULES: readonly ModuleRule[] = [
 	{ root: "packages/pi-background-commands", allowed: [] },
 	{ root: "packages/workflow", allowed: [] },
 	{ root: "packages/todos", allowed: ["packages/shared"] },
+	{ root: "packages/spec-graph", allowed: ["packages/shared"] },
 	{ root: "packages/visualize", allowed: [] },
 	{ root: "packages/ask-user-question", allowed: [] },
 	{

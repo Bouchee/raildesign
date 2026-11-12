@@ -1,7 +1,9 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { tool } from "@openai/agents";
 import { Type } from "typebox";
-import { type GraphSlice, graphSlice, LINK_KINDS, SLICE_DIRECTIONS } from "../core/index.ts";
-import { errorResult, getIndex, stringEnum, textResult } from "./shared.ts";
+import { Value } from "typebox/value";
+import { graphSlice, LINK_KINDS, SLICE_DIRECTIONS } from "../core/index.ts";
+import type { SpecToolServices } from "./shared.ts";
+import { errorResult, getIndex, stringEnum, textResult, toolError } from "./shared.ts";
 
 const parameters = Type.Object({
 	root: Type.String({ description: "Id of the node to start from." }),
@@ -17,17 +19,19 @@ const parameters = Type.Object({
 	),
 });
 
-export function registerSpecGraph(pi: ExtensionAPI): void {
-	pi.registerTool<typeof parameters, GraphSlice | { error: string }>({
+export function createSpecGraph(services: SpecToolServices) {
+	return tool({
 		name: "spec_graph",
-		label: "Spec Graph",
 		description:
 			"Return a bounded slice of the spec-graph rooted at a node: `subtree` (down the parent tree), `ancestors` (up to the tree root), or `neighbors` (across a chosen edge and its reverse). Bounded by `depth` (default 1).",
-		promptSnippet:
-			"spec_graph — walk a bounded slice of the spec-graph (subtree / ancestors / neighbors) from a node.",
-		parameters,
-		async execute(_callId, params, _signal, _onUpdate, ctx) {
-			const graph = getIndex(ctx.cwd).graph();
+		strict: false,
+		parameters: { ...parameters, required: parameters.required ?? [], additionalProperties: true },
+		errorFunction: (_context, error, details) =>
+			toolError(services, error, details?.toolCall?.callId),
+		async execute(params) {
+			services.assertActive();
+			if (!Value.Check(parameters, params)) throw new Error("Invalid tool arguments");
+			const graph = getIndex(services.cwd).graph();
 			if (!graph.nodes.has(params.root)) {
 				return errorResult(`No spec with id "${params.root}".`);
 			}

@@ -1,20 +1,24 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerSpecCreate } from "./create.ts";
-import { registerSpecDelete } from "./delete.ts";
-import { registerSpecGet } from "./get.ts";
-import { registerSpecGraph } from "./graph.ts";
-import { registerSpecGrep } from "./grep.ts";
-import { registerSpecSearch } from "./search.ts";
-import { registerSpecUpdate } from "./update.ts";
-import { registerSpecValidate } from "./validate.ts";
+import { createSpecCreate } from "./create.ts";
+import { createSpecDelete } from "./delete.ts";
+import { createSpecGet } from "./get.ts";
+import { createSpecGraph } from "./graph.ts";
+import { createSpecGrep } from "./grep.ts";
+import { createSpecSearch } from "./search.ts";
+import type { SpecToolServices } from "./shared.ts";
+import { createSpecUpdate } from "./update.ts";
+import { createSpecValidate } from "./validate.ts";
 
-export function registerSpecTools(pi: ExtensionAPI): void {
-	registerSpecGrep(pi);
-	registerSpecSearch(pi);
-	registerSpecGet(pi);
-	registerSpecGraph(pi);
-	registerSpecCreate(pi);
-	registerSpecUpdate(pi);
-	registerSpecDelete(pi);
-	registerSpecValidate(pi);
+export function createSpecTools(services: SpecToolServices) {
+	return [
+		createSpecGrep(services),
+		createSpecSearch(services),
+		createSpecGet(services),
+		createSpecGraph(services),
+		createSpecCreate(services),
+		createSpecUpdate(services),
+		createSpecDelete(services),
+		createSpecValidate(services),
+	];
 }
+
+export type { SpecToolServices } from "./shared.ts";

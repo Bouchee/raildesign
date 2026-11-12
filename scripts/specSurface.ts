@@ -1,6 +1,6 @@
 import { dirname, join, resolve } from "node:path";
+import { FIELDS, list, parseFile, SpecIndex } from "@thinkrail/spec-graph/core";
 import { fromMarkdown } from "mdast-util-from-markdown";
-import { FIELDS, list, parseFile, SpecIndex } from "pi-spec-graph/core";
 import { fileExists, readBarrelExports } from "./barrelExports";
 
 export const PUBLIC_SURFACE_TAG = "public-surface-checked";

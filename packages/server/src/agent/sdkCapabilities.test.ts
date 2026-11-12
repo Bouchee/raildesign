@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -8,6 +8,7 @@ import {
 	modelResponse,
 	ScriptedModel,
 } from "@openai/agents/testing";
+import { SPEC_RULE } from "@thinkrail/spec-graph";
 import { TodoStore } from "@thinkrail/todos/core";
 import { loadWorkspaces, saveWorkspaces } from "../persistence";
 import { configureAgentModelFactory } from "./modelConfiguration";
@@ -19,6 +20,7 @@ import {
 	promptSession,
 	reloadSessionResources,
 	removeSession,
+	resolveExtUi,
 	setExtUiPublisher,
 } from "./sdkSessionManager";
 import { readSessionRecord } from "./sessionStore";
@@ -189,3 +191,95 @@ test("SDK Plan dispatch mutates the shared store and preserves UI details outsid
 	expect(JSON.stringify(model.calls[0]?.request)).toContain("shared TODO list");
 	expect(record?.effects["plan-add"]?.status).toBe("completed");
 });
+
+test("only repository sessions receive the Spec tools and rule", async () => {
+	const chatFolder = join(root, "chat");
+	mkdirSync(chatFolder);
+	saveWorkspaces([
+		...loadWorkspaces(),
+		{
+			id: "chat",
+			projectId: "chats",
+			kind: "chat",
+			name: "Chat",
+			branch: "",
+			baseBranch: "",
+			worktreePath: chatFolder,
+		},
+	]);
+	const advertised = async (workspaceId: string, folder: string) => {
+		const model = new ScriptedModel([done()]);
+		const created = await createSession({ cwd: folder, workspaceId });
+		configureAgentModelFactory(() => model);
+		await promptSession(created.sessionId, "Hello");
+		const request = model.calls[0]?.request;
+		return {
+			tools: request?.tools.map((tool) => ("name" in tool ? tool.name : "")) ?? [],
+			rule: request?.systemInstructions?.includes(SPEC_RULE) ?? false,
+		};
+	};
+	const repository = await advertised("workspace", cwd);
+	expect(repository.tools).toContain("spec_get");
+	expect(repository.rule).toBe(true);
+	const chat = await advertised("chat", chatFolder);
+	expect(chat.tools.filter((name) => name.startsWith("spec_"))).toEqual([]);
+	expect(chat.rule).toBe(false);
+});
+
+for (const approved of [true, false]) {
+	test(`SDK spec_create ${approved ? "approval writes the file" : "rejection leaves no file"}`, async () => {
+		const path = join(cwd, "feature/SPEC.md");
+		const model = new ScriptedModel([
+			call(
+				"spec_create",
+				{
+					path: "feature/SPEC.md",
+					id: "fixture-feature",
+					type: "module-design",
+					title: "Fixture",
+					status: "draft",
+				},
+				"create-spec",
+			),
+			done(),
+		]);
+		configureAgentModelFactory(() => model);
+		let approvals = 0;
+		setExtUiPublisher((request) => {
+			expect(existsSync(path)).toBe(false);
+			expect(request.kind).toBe("confirm");
+			if (
+				request.kind !== "confirm" ||
+				!request.runId ||
+				!request.toolCallId ||
+				request.revision === undefined
+			)
+				throw new Error("Missing approval ownership");
+			approvals++;
+			resolveExtUi({
+				id: request.id,
+				sessionId: request.sessionId,
+				runId: request.runId,
+				toolCallId: request.toolCallId,
+				revision: request.revision,
+				value: approved,
+			});
+		});
+		await promptSession(sessionId, "Create the feature spec");
+		expect(approvals).toBe(1);
+		expect(existsSync(path)).toBe(approved);
+		if (approved) expect(readFileSync(path, "utf8")).toContain("id: fixture-feature");
+		const record = readSessionRecord(sessionId);
+		const result = record?.messages.find(
+			(message) => message.role === "toolResult" && message.toolCallId === "create-spec",
+		);
+		expect(result?.role === "toolResult" && result.isError).toBe(!approved);
+		if (approved) {
+			expect(result?.role === "toolResult" && result.details).toMatchObject({
+				path: "feature/SPEC.md",
+				id: "fixture-feature",
+			});
+			expect(record?.effects["create-spec"]?.status).toBe("completed");
+		} else expect(record?.effects["create-spec"]).toBeUndefined();
+	});
+}

@@ -464,7 +464,7 @@ the palette ranks with — kept here so host-side search can rank with the same 
   Contracts deliberately exports no theme catalog enum/list/labels: a future manifest can mint an id
   unknown when the host was built, and a client missing it resolves a same-appearance bundled fallback;
   **`SpecGraphNode`/`SpecGraphSnapshot`** — the
-  Specs-viewer read DTOs, **projected**, never imported from `pi-spec-graph` — the wire
+  Specs-viewer read DTOs, **projected**, never imported from `@thinkrail/spec-graph` — the wire
   carries only what the panel renders (`type`/`status` stay `string`: tolerate whatever is on disk);
   **`TodoItem`/`TodoGroupItem`/`TodoPlan`/`TodoArtifact`** + the **`TodoStatus`/`TodoOrigin`/
   `TodoArtifactKind`** unions — the in-chat plan

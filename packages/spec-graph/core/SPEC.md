@@ -2,14 +2,14 @@
 id: submodule-spec-graph-core
 type: submodule-design
 status: active
-title: Spec-graph core (pi-free model)
+title: Spec-graph core (engine-independent model)
 parent: module-spec-graph
-tags: [spec-graph, pi-extension]
+tags: [spec-graph, model]
 ---
 
 ## Responsibility
 
-The pi-free spec model: the is-a-spec rule, frontmatter parse/serialize and in-place edit (via the
+The engine-independent spec model: the is-a-spec rule, frontmatter parse/serialize and in-place edit (via the
 `yaml` library, with link/metadata lists inline), the derived graph (parent tree +
 `depends-on`/`references`/`implements` DAG + reverse edges), the on-demand in-memory read index, content
 grep with metadata filters, ranked section search, bounded graph slices, and structural validation.

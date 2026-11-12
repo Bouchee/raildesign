@@ -2,15 +2,21 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-	type AgentToolResult,
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
+	type ToolResult,
 	truncateHead,
-} from "@earendil-works/pi-coding-agent";
+} from "@thinkrail/shared/toolOutput";
 import { Type } from "typebox";
 import { indexSections, type SectionIndex, SpecIndex, type SpecType } from "../core/index.ts";
 
 const indexes = new Map<string, SpecIndex>();
+
+export interface SpecToolServices {
+	cwd: string;
+	assertActive(): void;
+	markToolFailed(callId: string | undefined): void;
+}
 
 export const MAX_SECTION_INDEX_ROOTS = 4;
 
@@ -40,14 +46,14 @@ export async function textResult<T>(
 	text: string,
 	details: T,
 	continuation = "",
-): Promise<AgentToolResult<T>> {
+): Promise<ToolResult<T>> {
 	if (continuation) text += `\n${continuation}`;
 	const preview = truncateHead(text);
 	if (!preview.truncated) return { content: [{ type: "text", text }], details };
 	let fullOutputPath: string | undefined;
 	let notice: string;
 	try {
-		const directory = await mkdtemp(join(tmpdir(), "pi-spec-output-"));
+		const directory = await mkdtemp(join(tmpdir(), "raildesign-spec-output-"));
 		const path = join(directory, "output.txt");
 		await writeFile(path, text, { mode: 0o600 });
 		fullOutputPath = path;
@@ -73,10 +79,20 @@ export async function textResult<T>(
 	};
 }
 
-export async function errorResult(message: string): Promise<AgentToolResult<{ error: string }>> {
+export async function errorResult(message: string): Promise<ToolResult<{ error: string }>> {
 	const inline = `Error: ${message}`;
 	const text = truncateHead(inline).truncated ? `Error:\n${message}` : inline;
 	return { ...(await textResult(text, { error: message })), isError: true };
+}
+
+export async function toolError(
+	services: SpecToolServices,
+	error: unknown,
+	callId: string | undefined,
+): Promise<string> {
+	services.markToolFailed(callId);
+	const result = await errorResult(error instanceof Error ? error.message : String(error));
+	return result.content.map((block) => block.text).join("\n");
 }
 
 const SCAFFOLD_HEADINGS: Record<SpecType, string[]> = {

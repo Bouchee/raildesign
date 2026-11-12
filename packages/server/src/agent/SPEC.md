@@ -258,3 +258,9 @@ belongs to the later advanced-tool gate.
 The manager composes seven `@thinkrail/todos` FunctionTools with the session identity and current run grant.
 `TODO_RULE` describes Plan creation and maintenance. Structured tool details remain in the application
 transcript; the model receives bounded text. The existing TodoStore owns all Plan mutation.
+
+## SDK Spec tools
+
+Repository sessions compose eight `@thinkrail/spec-graph` FunctionTools and SPEC_RULE. Standalone
+chats receive neither. Create, update and delete use SDK approval interruptions before filesystem effects;
+all tools recheck the run grant and preserve the core's path and frontmatter validation.

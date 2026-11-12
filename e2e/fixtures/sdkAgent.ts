@@ -45,7 +45,7 @@ export function seedAgentConfiguration(
 						{
 							id: target.id,
 							contextWindow: null,
-							maxTokens: 512,
+							maxTokens: null,
 							reasoning: null,
 							vision: null,
 							tools: true,

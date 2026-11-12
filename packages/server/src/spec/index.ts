@@ -1,2 +1,2 @@
-export type { SpecSectionHit } from "pi-spec-graph/core";
+export type { SpecSectionHit } from "@thinkrail/spec-graph/core";
 export * from "./specs";

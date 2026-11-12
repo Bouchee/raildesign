@@ -557,3 +557,9 @@ checks does not establish packaging or installer acceptance. The Stage 1 SDK liv
 accepted Go model and real tool execution, approval and Stop; it cannot substitute another model or a
 fake agent. Complete removal of remaining standalone pi packages and release artifacts belongs to the
 later release stage.
+
+The first scenario in `raildesign-stage3.live.spec.ts` exercises Skill body and AGENTS instructions,
+Plan mutation and approved Spec creation, then checks stored state and the Plan UI after refresh.
+It is a focused live-provider check; adding the scenario does not claim it ran in an offline batch.
+
+The SDK E2E model fixture leaves `maxTokens` unset (`null`) to use the product's bounded default output budget.

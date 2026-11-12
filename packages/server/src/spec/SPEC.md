@@ -22,7 +22,7 @@ requested only for the one project the Welcome screen renders, never eagerly for
 The read is **synchronous** (core's walk is sync-fs, O(worktree dirs) per call). That's acceptable —
 fetches are on-demand (workspace activation / a `workspace.fsChanged` nudge / an error-state Retry, no
 polling) and the per-file parse cache skips re-reads. If
-the walk ever dominates, the escalation is core's **watcher-as-dirty-flag** (see `pi-spec-graph`
+the walk ever dominates, the escalation is core's **watcher-as-dirty-flag** (see `@thinkrail/spec-graph`
 core/SPEC.md), not an async wrapper — that would still block the loop in one piece.
 
 ## Boundary
@@ -51,7 +51,7 @@ core/SPEC.md), not an async wrapper — that would still block the loop in one p
   **`evictSpecRoot(root)`** drops a root's snapshot, its indexes and any pending build (the host calls
   it when a workspace is removed). The walk stays synchronous and bounded by the parse cache; a
   glob/parse failure degrades to an empty snapshot.
-  **`specSections(root) → SpecSections`** — the palette's ranked section search: `pi-spec-graph/core`'s
+  **`specSections(root) → SpecSections`** — the palette's ranked section search: `@thinkrail/spec-graph/core`'s
   `searchSpecs` over a per-root section index, shaped like a snapshot (`built`, `rebuilding`, and
   `search(query, limit)`). A root's first ask only marks the root and schedules its snapshot build, which
   indexes the sections from the same read (one walk, one pending promise), so no request tokenizes a
@@ -63,8 +63,8 @@ core/SPEC.md), not an async wrapper — that would still block the loop in one p
 - **Public surface (barrel):** `specGraph`, `evictSpecIndex`, `projectHasSpecs`, `specSnapshot`,
   `invalidateSpecSnapshot`, `evictSpecRoot`, `specSections`, `SpecSnapshot`, `SpecSnapshotEntry`,
   `SpecSections`, `SpecSectionHit`.
-- **Allowed deps:** `persistence` (workspace lookup); `contracts` (DTOs); **`pi-spec-graph/core`** (the
-  pi-free read model — the one host-side value-import of the extension package, sanctioned in
+- **Allowed deps:** `persistence` (workspace lookup); `contracts` (DTOs); **`@thinkrail/spec-graph/core`** (the
+  engine-independent read model — a host-side value-import of the model package, sanctioned in
   `module-spec-graph`).
-- **Forbidden:** `host`; sibling features; `pi-spec-graph`'s extension entry or `tools/` (pi-coupled);
+- **Forbidden:** `host`; sibling features; `@thinkrail/spec-graph`'s SDK tool entry or `tools/`;
   any pi package.

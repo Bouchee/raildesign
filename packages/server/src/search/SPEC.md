@@ -112,7 +112,7 @@ transcript may still be on disk, but nothing may reopen it.
   and only on a read after its TTL lapsed or the worktree changed, the previous snapshot answering
   meanwhile as `refreshing` — title / id / path through the matcher.
 - **Sections:** the spec bodies, through the `spec` module's `specSections(root)` — the ranked section
-  engine of `pi-spec-graph/core` that the agent's `spec_search` also uses, so both surfaces answer a
+  engine of `@thinkrail/spec-graph/core` that the agent's `spec_search` also uses, so both surfaces answer a
   question with the same sections; the engine folds case and diacritics like the matcher. The provider
   hands it the query **as typed** (the engine has its own tokenizer; the matcher's terms would lose a
   phrase), and maps each hit to a `section` hit: one per section, `content` tier with the engine's score

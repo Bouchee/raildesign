@@ -11,12 +11,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type {
-	AgentToolResult,
-	ExtensionAPI,
-	ExtensionToolContext,
-	ToolDefinition,
-} from "@earendil-works/pi-coding-agent";
+import { RunContext } from "@openai/agents";
+import type { ToolResult } from "@thinkrail/shared/toolOutput";
 import {
 	LINK_KINDS,
 	resolveSpecPath,
@@ -24,7 +20,7 @@ import {
 	SPEC_STATUSES,
 	SPEC_TYPES,
 } from "../core/index.ts";
-import { registerSpecTools } from "./index.ts";
+import { createSpecTools } from "./index.ts";
 
 test("spec_grep pages by bytes without losing or repeating matches", async () => {
 	await withRoot(async (root) => {
@@ -146,7 +142,7 @@ test("grep count limits are clamped and continuation keeps filters", async () =>
 		expect((last.details as { nextOffset?: number }).nextOffset).toBeUndefined();
 		const invalid = await run("spec_grep", { pattern: "needle", offset: -1 }, root);
 		expect(isError(invalid)).toBe(true);
-		expect(text(invalid)).toBe("Error: Use a nonnegative integer offset.");
+		expect(text(invalid)).toBe("Error: Invalid tool arguments");
 	});
 });
 
@@ -190,27 +186,38 @@ function foldsCase(): boolean {
 const caseFolding = test.skipIf(!foldsCase());
 const windowsOnly = test.skipIf(process.platform !== "win32");
 
-const tools = new Map<string, ToolDefinition>();
-registerSpecTools({
-	registerTool(tool: ToolDefinition) {
-		tools.set(tool.name, tool);
-	},
-} as unknown as ExtensionAPI);
+const tools = new Map(
+	createSpecTools({ cwd: "", assertActive: () => {}, markToolFailed: () => {} }).map((tool) => [
+		tool.name,
+		tool,
+	]),
+);
 
-function run(
+async function run(
 	name: string,
 	params: Record<string, unknown>,
 	cwd: string,
-): Promise<AgentToolResult<unknown>> {
-	const tool = tools.get(name);
-	if (!tool) throw new Error(`missing tool: ${name}`);
-	return tool.execute("call-1", params, undefined, undefined, {
+): Promise<ToolResult<unknown>> {
+	let failed = false;
+	const tool = createSpecTools({
 		cwd,
-	} as unknown as ExtensionToolContext);
+		assertActive: () => {},
+		markToolFailed: () => {
+			failed = true;
+		},
+	}).find((candidate) => candidate.name === name);
+	if (!tool) throw new Error(`missing tool: ${name}`);
+	const output = await tool.invoke(new RunContext({}), JSON.stringify(params));
+	return typeof output === "string"
+		? { content: [{ type: "text", text: output }], details: {}, isError: failed }
+		: output;
 }
 
-function isError(result: AgentToolResult<unknown>): boolean {
-	return typeof result.details === "object" && result.details !== null && "error" in result.details;
+function isError(result: ToolResult<unknown>): boolean {
+	return (
+		result.isError === true ||
+		(typeof result.details === "object" && result.details !== null && "error" in result.details)
+	);
 }
 
 function paramEnum(toolName: string, prop: string): readonly string[] {
@@ -227,7 +234,7 @@ test("finite-vocabulary param schemas derive their enum from the core tuples", (
 	expect(paramEnum("spec_graph", "edge")).toEqual([...LINK_KINDS]);
 });
 
-function text(result: AgentToolResult<unknown>): string {
+function text(result: ToolResult<unknown>): string {
 	const block = result.content[0] as { text?: string } | undefined;
 	return block?.text ?? "";
 }
@@ -700,7 +707,7 @@ test("spec_create writes canonical frontmatter order with inline arrays into nes
 	});
 });
 
-test("spec_create scaffolds body headings by type (and none for an unknown type)", async () => {
+test("spec_create scaffolds body headings by type and rejects an unknown type", async () => {
 	await withRoot(async (root) => {
 		const cases: Array<[string, string, string[]]> = [
 			[
@@ -722,7 +729,7 @@ test("spec_create scaffolds body headings by type (and none for an unknown type)
 			{ path: "weird.md", id: "weird", type: "made-up-type", title: "W" },
 			root,
 		);
-		expect(readFileSync(join(root, "weird.md"), "utf8")).not.toContain("## ");
+		expect(existsSync(join(root, "weird.md"))).toBe(false);
 	});
 });
 
@@ -1096,4 +1103,23 @@ test("spec_update rejects set on a list field and preserves comments + non-diale
 		expect(file).toContain("# keep me");
 		expect(file).toContain("tags: [t]");
 	});
+});
+
+test("SDK spec-graph tools reject a revoked run before reading or writing", async () => {
+	const failures: (string | undefined)[] = [];
+	const tool = createSpecTools({
+		cwd: "/missing-worktree",
+		assertActive() {
+			throw new Error("Run revoked");
+		},
+		markToolFailed(callId) {
+			failures.push(callId);
+		},
+	})[0];
+	if (!tool) throw new Error("Missing tool");
+	const output = await tool.invoke(new RunContext({}), JSON.stringify({ pattern: "test" }), {
+		toolCall: { type: "function_call", callId: "spec-failed", name: tool.name, arguments: "{}" },
+	});
+	expect(output).toBe("Error: Run revoked");
+	expect(failures).toEqual(["spec-failed"]);
 });

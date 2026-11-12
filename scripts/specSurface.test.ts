@@ -139,7 +139,7 @@ test("isBareNameList accepts names and rejects prose, signatures, and empty surf
 
 test("declaredNames accepts type labels and ignores the bullet label", () => {
 	const block = surfaceOf(
-		"- **Public surface (barrel `index.ts`):** `openEditor`, `type WhichFn`, `pi-spec-graph/core`.\n",
+		"- **Public surface (barrel `index.ts`):** `openEditor`, `type WhichFn`, `@thinkrail/spec-graph/core`.\n",
 	);
 	expect(declaredNames(block)).toEqual(["WhichFn", "openEditor"]);
 });

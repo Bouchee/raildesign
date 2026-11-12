@@ -2,113 +2,62 @@
 id: module-spec-graph
 type: module-design
 status: active
-title: Spec-Graph pi extension
+title: Project specification model and SDK tools
 parent: architecture
-depends-on: []
-tags: [spec-graph, pi-extension]
+depends-on: [module-shared]
+tags: [spec-graph, agents-sdk]
 ---
 
 ## Responsibility
 
-`pi-spec-graph` is a portable pi-package that teaches the `pi` agent the project's **spec-graph** and lets
-it search, navigate, and manage specs. It ships a **skill**, eight **`spec_*` custom tools**, and a
-project-wide **`before_agent_start` rule**. It depends on nothing in this monorepo, so it runs under
-vanilla `pi`; thinkrail bundles it into every session of a repository workspace (a chat without a
-project opts its sessions out of the tools and the rule, and its delegated children load no copy).
+`@thinkrail/spec-graph` supplies the specification model, eight SDK tools and the Spec Skill.
+A file is a Spec when its frontmatter contains nonempty `id` and `type` fields.
+The host owns SDK execution and UI.
+The package has no Pi registration or execution path.
 
-It manages the frontmatter schema the repo's specs use — a file is a spec once its frontmatter carries
-`id` and `type`; the schema itself is documented in the skill. Frontmatter is handled with the `yaml`
-library, link/metadata lists inline. `spec_create` writes new frontmatter in a canonical field order;
-`spec_update` edits an existing file **in place** — it preserves the file's own field order and any
-comments / nested fields, rewrites the frontmatter block alone (in the line ending that block already
-used), and leaves every byte of the body untouched.
+## Public surface
 
-## Boundary
+The root exports `createSpecTools`, `SpecToolServices` and `SPEC_RULE`.
+The `./core` entry exports the independent read model and ranked section search.
+The package manifest declares its Skill roots through `skills`.
+`tools/` remains internal to the package.
 
-- **Owns:** the spec model (the is-a-spec rule, the derived graph, the read index, validation), the eight
-  tools, and the skill + `before_agent_start` rule.
-- **Public surface:** the extension entry `index.ts` (default `ExtensionFactory`, plus `SPEC_SECTION`, the
-  `systemPromptOptions.sections` key of the rule, so a host can drop the rule for a session after this
-  extension's `before_agent_start` handler wrote it) and the `pi` manifest in
-  `package.json` (`{ extensions: ["./index.ts"], skills: ["./skills"] }`) — how vanilla `pi` (`pi install`)
-  and thinkrail (`additionalExtensionPaths` / `additionalSkillPaths`) load it — plus the **`pi-spec-graph/core`
-  export** (the pi-free read model and its ranked section search), consumable by hosts (thinkrail's
-  server) without going through the agent. `tools/` stays internal.
-- **Allowed deps:** `@earendil-works/pi-coding-agent`, `typebox` (peer); `yaml` (frontmatter
-  parse/serialize); Node built-ins.
-- **Forbidden:** any `@thinkrail/*` package — the dependency edge is one-way (thinkrail → this
-  package), which is what keeps it portable.
+The host supplies the active worktree, run-grant check and failure marker callback.
+Repository sessions receive the Spec tools and rule.
+Standalone chats do not receive them.
 
-## Sub-modules
+## Model and changes
 
-`core/` (`submodule-spec-graph-core`) is the pi-free spec model; `tools/` (`submodule-spec-graph-tools`)
-are thin pi wrappers over it. The edge is one-way — `tools/` → `core/`, through core's barrel — and
-`index.ts` wires the tools plus the `before_agent_start` rule into the extension. Each sub-spec pins its
-own boundary and leaves.
+The filesystem is the source of truth.
+The index is a derived read cache.
+It scans paths in name order and ignores generated, dependency and assistant scratch directories.
+It checks each file's modification time and size on every read.
+Changed or new files are parsed again.
+Missing files leave the index.
+The graph changes only when the Spec set changes.
 
-## Derived read index
+One `SpecIndex` serves each root.
+An edit within the same modification-time tick with the same byte size can escape that cache check.
+A content hash is the next required change if this limit becomes material.
 
-The filesystem is the source of truth; the model the tools read is **derived, in-memory, read-only, and
-revalidated on demand**. Each read re-runs the **glob** — a name-sorted traversal that ignores
-`node_modules`/`.git`/`dist`/`build` and the scratch directories other assistants keep in a project
-(`.claude`, `.superpowers`, `.gsd`, `.mockups`, `.playwright-mcp`), whose plans and generated skills carry
-spec-shaped frontmatter but are not this project's specs — and revalidates every file by `(mtimeMs, size)`: unchanged files
-reuse their cached parse, changed/new files are re-parsed, vanished files are evicted, and the derived
-graph is rebuilt only when the spec set actually changed. So specs added, deleted, or edited from any
-source — including pi's normal `write`/`edit` — are always current, while redundant re-parse/rebuild is
-skipped when nothing moved. One `SpecIndex` is reused per root (keyed by cwd) so the cache pays off
-across an agent's calls. The one theoretical miss is an edit landing within the same mtime tick *and*
-keeping byte length identical (negligible; a content hash is the sanctioned escalation).
+`spec_create` writes canonical frontmatter order and heading stubs selected by type.
+`spec_update` edits frontmatter only.
+It preserves comments, nested fields, field order, line endings and every body byte.
+No tool edits Spec prose.
 
-## Tools
+## Tools and knowledge
 
-Read — `spec_search` (the sections that answer a question, ranked by words — see *Ranked section search*
-in `submodule-spec-graph-core`), `spec_grep` (content search, narrowable by metadata), `spec_get` (a node's frontmatter, resolved
-links, and path — no body), `spec_graph` (a bounded subtree/ancestors/neighbors slice). Manage —
-`spec_create` (which refuses any path the index could never see — see `resolveSpecPath` in
-`submodule-spec-graph-core` — and any parameters that would write a file born a non-spec),
-`spec_update` (frontmatter only), `spec_delete`, `spec_validate`. Per-tool
-usage lives in the skill and in each tool's `description`; **none edit prose** — prose is written/edited
-with pi's normal `read`/`write`/`edit`.
+Read tools are `spec_search`, `spec_grep`, `spec_get` and `spec_graph`.
+Write and validation tools are `spec_create`, `spec_update`, `spec_delete` and `spec_validate`.
+The Skill gives the schema, concepts and workflow.
+`SPEC_RULE` tells the model when a documented boundary or decision requires a Spec lookup.
+Localized work does not require unrelated Specs.
+The host adds this rule to SDK instructions.
 
-## Knowledge delivery
+## Dependencies and checks
 
-Concept, schema, and workflow live in the **skill** (auto-discovered via the `pi.skills` manifest /
-`additionalSkillPaths`). The always-on rule keeps specs authoritative while making lookup contextual:
-consult the relevant spec when work is governed by or may alter a documented boundary, contract,
-invariant, behavior, or architecture decision; localized work need not read unrelated specs. The rule is
-contributed in `before_agent_start` as the `pi-spec-graph` entry of `systemPromptOptions.sections` — mutated
-in place, handler returns nothing — so it renders as its own XML-tagged block after `cwd`, the tail position
-the old free-text append had. Returning `systemPrompt` forces the whole prompt: a cache miss on any change,
-where a named section is one diffed patch. Not a `promptGuidelines` bullet, which would flatten this
-multi-line rule into pi's shared `rules` list. Tag = package name: globally unique, and a portable package
-must not carry a host brand. A third-party extension that returns `systemPrompt` forces the whole prompt and
-drops every structured section, ours included — pi's documented force semantics; accepted rather than
-re-appending the rule to a forced prompt.
-Each tool carries a `description` (its constraints) and a one-line `promptSnippet` (its entry in the system
-prompt's Available-tools list, matching the bundled `pi-web-access` / `visualize` tools). This is
-pi-native prompt influence through an extension, not host prompt assembly.
-
-## thinkrail integration
-
-`packages/server/src/agent/extensions.ts` layers this package into every session's
-`DefaultResourceLoader` in source mode: `require.resolve("pi-spec-graph/index.ts")` on
-`additionalExtensionPaths`, the package's `skills` dir on `additionalSkillPaths`. Server references it only
-by resolved path (no value import), so it stays out of server's typecheck graph. Separately,
-`packages/server/src/spec/` value-imports **`pi-spec-graph/core`** (the pi-free model — no pi packages in
-that subtree) to serve the read-only Specs viewer over the wire — the same is-a-spec rule, parser, and
-revalidate-on-read `SpecIndex` the agent tools use.
-
-## Invariants
-
-- The dependency edge is one-way: thinkrail depends on this package; this package depends on nothing in the
-  monorepo, and `core/` imports no `@earendil-works/*`.
-- The index is a derived read cache over the filesystem (the source of truth); it holds no authoritative
-  state — `pi` owns state — and never serves a stale graph.
-- Tools never edit prose; `spec_update` is frontmatter-only, lossless (preserves comments / nested
-  fields), and never un-specs a file.
-
-## Non-goals
-
-UI in this package (thinkrail's Specs viewer consumes `core/` from the outside), semantic/embedding
-search, a related-code frontmatter field, orphan-directory detection, and moving/renaming specs.
+Allow the public SDK, TypeBox, shared output helpers, YAML and Node built-ins.
+The core has no SDK or host dependency.
+Tools access the core through its barrel.
+Do not import server or UI internals.
+Tests cover live filesystem changes, frontmatter preservation, path checks, output limits and SDK invocation.

@@ -71,7 +71,7 @@ internals**. The edges between them are owned here (see the dependency graph), n
 | `turns` | per-agent-run worktree snapshots → the change set each run produced (`workspace.turns`, `turn.changed`) | [turns/SPEC.md](src/turns/SPEC.md) |
 | `trash` | move a path to the OS trash through the bundled helpers (never `unlink`) | [trash/SPEC.md](src/trash/SPEC.md) |
 | `resourceHistory` | the durable per-chat archive of background commands and subagents behind Resources (records + command log tails) | [resourceHistory/SPEC.md](src/resourceHistory/SPEC.md) |
-| `spec` | the worktree's spec-graph snapshot (`spec.graph`) + project-level `projectHasSpecs`, via `pi-spec-graph/core` | [spec/SPEC.md](src/spec/SPEC.md) |
+| `spec` | the worktree's spec-graph snapshot (`spec.graph`) + project-level `projectHasSpecs`, via `@thinkrail/spec-graph/core` | [spec/SPEC.md](src/spec/SPEC.md) |
 | `todos` | a chat's per-session TODO plan read/write (`todo.*`), via `@thinkrail/todos/core` | [todos/SPEC.md](src/todos/SPEC.md) |
 | `reviews` | draft review comments on files/diffs: store + anchoring + context-package render | [reviews/SPEC.md](src/reviews/SPEC.md) |
 | `watch` | per-worktree fs watcher → debounced `workspace.fsChanged` invalidation push | [watch/SPEC.md](src/watch/SPEC.md) |

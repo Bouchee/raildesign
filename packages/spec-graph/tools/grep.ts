@@ -1,7 +1,10 @@
-import { DEFAULT_MAX_BYTES, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { tool } from "@openai/agents";
+import { DEFAULT_MAX_BYTES } from "@thinkrail/shared/toolOutput";
 import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { DEFAULT_GREP_LIMIT, formatGrepMatch, type GrepResult, grepSpecs } from "../core/index.ts";
-import { errorResult, getIndex, textResult } from "./shared.ts";
+import type { SpecToolServices } from "./shared.ts";
+import { errorResult, getIndex, textResult, toolError } from "./shared.ts";
 
 const parameters = Type.Object({
 	pattern: Type.String({ description: "Regex or substring to search for within spec files." }),
@@ -34,20 +37,22 @@ const parameters = Type.Object({
 	),
 });
 
-export function registerSpecGrep(pi: ExtensionAPI): void {
-	pi.registerTool<typeof parameters, GrepResult | { error: string }>({
+export function createSpecGrep(services: SpecToolServices) {
+	return tool({
 		name: "spec_grep",
-		label: "Spec Grep",
 		description:
 			"Search the project's spec-graph: regex or substring match within spec files (files whose frontmatter carries `id` + `type`), optionally narrowed by metadata (type / tag / parent / depends-on). Returns size-bounded pages of path:line matches; follow the returned offset only if needed. Oversized text is capped at 2,000 lines / 50 KiB with full output in a temporary file. Read a matched file's body with the normal read tool.",
-		promptSnippet:
-			"spec_grep — search specs by content when documented decisions, contracts, or boundaries may govern the work.",
-		parameters,
-		async execute(_callId, params, _signal, _onUpdate, ctx) {
+		strict: false,
+		parameters: { ...parameters, required: parameters.required ?? [], additionalProperties: true },
+		errorFunction: (_context, error, details) =>
+			toolError(services, error, details?.toolCall?.callId),
+		async execute(params) {
+			services.assertActive();
+			if (!Value.Check(parameters, params)) throw new Error("Invalid tool arguments");
 			const offset = params.offset ?? 0;
 			if (!Number.isSafeInteger(offset) || offset < 0)
 				return errorResult("Use a nonnegative integer offset.");
-			const index = getIndex(ctx.cwd);
+			const index = getIndex(services.cwd);
 			let result: GrepResult;
 			try {
 				result = grepSpecs(index.contentEntries(), {

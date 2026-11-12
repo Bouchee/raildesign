@@ -1,8 +1,10 @@
 import { writeFileSync } from "node:fs";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { tool } from "@openai/agents";
 import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { FIELDS, type FrontmatterEdit, updateFrontmatterText } from "../core/index.ts";
-import { errorResult, getIndex, textResult } from "./shared.ts";
+import type { SpecToolServices } from "./shared.ts";
+import { errorResult, getIndex, textResult, toolError } from "./shared.ts";
 
 const listGroup = Type.Object({
 	[FIELDS.dependsOn]: Type.Optional(Type.Array(Type.String())),
@@ -27,17 +29,20 @@ const parameters = Type.Object({
 	removeList: Type.Optional(listGroup),
 });
 
-export function registerSpecUpdate(pi: ExtensionAPI): void {
-	pi.registerTool<typeof parameters, { id: string; path: string } | { error: string }>({
+export function createSpecUpdate(services: SpecToolServices) {
+	return tool({
 		name: "spec_update",
-		label: "Spec Update",
 		description:
 			"Edit a spec's frontmatter only (never its prose): set/overwrite scalar fields, remove fields, and add/remove entries in the list fields (depends-on/references/implements/covers/tags). Comments and any non-dialect fields are preserved. Prose is edited with the write/edit tools.",
-		promptSnippet:
-			"spec_update — edit a spec's frontmatter only (scalar fields + list entries); never its prose.",
-		parameters,
-		async execute(_callId, params, _signal, _onUpdate, ctx) {
-			const index = getIndex(ctx.cwd);
+		needsApproval: true,
+		strict: false,
+		parameters: { ...parameters, required: parameters.required ?? [], additionalProperties: true },
+		errorFunction: (_context, error, details) =>
+			toolError(services, error, details?.toolCall?.callId),
+		async execute(params) {
+			services.assertActive();
+			if (!Value.Check(parameters, params)) throw new Error("Invalid tool arguments");
+			const index = getIndex(services.cwd);
 			const record = index.recordForId(params.id);
 			if (!record) return errorResult(`No spec with id "${params.id}".`);
 

@@ -361,6 +361,6 @@ before the already-enqueued replacement pass has reconciled the current plan.
   synthetic-item reconstruction);
   `contracts` (DTOs + `SessionEvent` for `isTodoToolEnd`); `@thinkrail/shared/paths` (`WORKSPACE_INTERNAL_DIR`
   — the app-state prefix filtered out of change sets); **`@thinkrail/todos/core`** (the engine-independent read/write model — a sanctioned host-side
-  value-import of the extension package, the same pattern as `spec` → `pi-spec-graph/core`); `log`.
+  value-import of the extension package, the same pattern as `spec` → `@thinkrail/spec-graph/core`); `log`.
 - **Forbidden:** `host`; sibling features other than `workspaces` + `git` + `log`; `@thinkrail/todos`' tool entry or
   `tools/` (pi-coupled); any pi package.

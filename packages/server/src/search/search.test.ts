@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Project, SearchHit, Workspace } from "@thinkrail/contracts";
 import { MATCH_TIER } from "@thinkrail/contracts";
-import { indexSections, searchSpecs } from "pi-spec-graph/core";
+import { indexSections, searchSpecs } from "@thinkrail/spec-graph/core";
 import type { HistorySession } from "../history";
 import type { SpecSectionHit, SpecSections, SpecSnapshotEntry } from "../spec";
 import type { StoredPlanFile } from "../todos";

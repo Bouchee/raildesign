@@ -1,22 +1,28 @@
 import { rmSync } from "node:fs";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { tool } from "@openai/agents";
 import { Type } from "typebox";
-import { errorResult, getIndex, textResult } from "./shared.ts";
+import { Value } from "typebox/value";
+import type { SpecToolServices } from "./shared.ts";
+import { errorResult, getIndex, textResult, toolError } from "./shared.ts";
 
 const parameters = Type.Object({
 	id: Type.String({ description: "Id of the spec to delete." }),
 });
 
-export function registerSpecDelete(pi: ExtensionAPI): void {
-	pi.registerTool<typeof parameters, { id: string; path: string } | { error: string }>({
+export function createSpecDelete(services: SpecToolServices) {
+	return tool({
 		name: "spec_delete",
-		label: "Spec Delete",
 		description:
 			"Delete a spec file by id. Other specs may still reference it afterward — run spec_validate to find dangling links.",
-		promptSnippet: "spec_delete — delete a spec file by id.",
-		parameters,
-		async execute(_callId, params, _signal, _onUpdate, ctx) {
-			const index = getIndex(ctx.cwd);
+		needsApproval: true,
+		strict: false,
+		parameters: { ...parameters, required: parameters.required ?? [], additionalProperties: true },
+		errorFunction: (_context, error, details) =>
+			toolError(services, error, details?.toolCall?.callId),
+		async execute(params) {
+			services.assertActive();
+			if (!Value.Check(parameters, params)) throw new Error("Invalid tool arguments");
+			const index = getIndex(services.cwd);
 			const path = index.pathForId(params.id);
 			if (!path) return errorResult(`No spec with id "${params.id}".`);
 			try {

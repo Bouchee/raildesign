@@ -27,7 +27,7 @@
 		"@thinkrail/shared": "workspace:*",
 		"bun-pty": "0.5.2",
 		"pi-background-commands": "workspace:*",
-		"pi-spec-graph": "workspace:*",
+		"@thinkrail/spec-graph": "workspace:*",
 		"@thinkrail/workflow": "workspace:*",
 		"@thinkrail/todos": "workspace:*",
 		"pino": "10.4.0",

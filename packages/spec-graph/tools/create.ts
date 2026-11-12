@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { tool } from "@openai/agents";
 import { Type } from "typebox";
+import { Value } from "typebox/value";
 import {
 	FIELDS,
 	type Frontmatter,
@@ -12,7 +13,15 @@ import {
 	SPEC_TYPES,
 	serializeFrontmatter,
 } from "../core/index.ts";
-import { errorResult, getIndex, scaffoldBody, stringEnum, textResult } from "./shared.ts";
+import type { SpecToolServices } from "./shared.ts";
+import {
+	errorResult,
+	getIndex,
+	scaffoldBody,
+	stringEnum,
+	textResult,
+	toolError,
+} from "./shared.ts";
 
 const parameters = Type.Object({
 	path: Type.String({
@@ -38,21 +47,24 @@ const parameters = Type.Object({
 	tags: Type.Optional(Type.Array(Type.String(), { description: "tags." })),
 });
 
-export function registerSpecCreate(pi: ExtensionAPI): void {
-	pi.registerTool<typeof parameters, { path: string; id: string } | { error: string }>({
+export function createSpecCreate(services: SpecToolServices) {
+	return tool({
 		name: "spec_create",
-		label: "Spec Create",
 		description:
 			"Create a new spec file with scaffolded frontmatter (id, type, title, an optional status, and any links) and a heading-only body stub chosen by type. Fails if the file already exists, the id is already in use, or the path is not an indexable root-relative .md path. Edit prose afterward with the write/edit tools.",
-		promptSnippet:
-			"spec_create — create a new spec file with scaffolded frontmatter (id/type/title/links) and heading stubs.",
-		parameters,
-		async execute(_callId, params, _signal, _onUpdate, ctx) {
-			const resolved = resolveSpecPath(ctx.cwd, params.path);
+		needsApproval: true,
+		strict: false,
+		parameters: { ...parameters, required: parameters.required ?? [], additionalProperties: true },
+		errorFunction: (_context, error, details) =>
+			toolError(services, error, details?.toolCall?.callId),
+		async execute(params) {
+			services.assertActive();
+			if (!Value.Check(parameters, params)) throw new Error("Invalid tool arguments");
+			const resolved = resolveSpecPath(services.cwd, params.path);
 			if ("error" in resolved) return errorResult(resolved.error);
 			const { rel, abs } = resolved;
 
-			const index = getIndex(ctx.cwd);
+			const index = getIndex(services.cwd);
 			if (existsSync(abs)) return errorResult(`File already exists: ${rel}`);
 			if (index.graph().nodes.has(params.id)) {
 				return errorResult(`Spec id "${params.id}" is already in use.`);
