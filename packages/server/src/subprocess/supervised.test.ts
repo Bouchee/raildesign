@@ -10,6 +10,22 @@ test("a supervised child reports its exit code and keeps a stderr tail", async (
 	expect(child.stderrTail()).toContain("boom");
 });
 
+test("observed output drains both UTF-8 streams before exit without a complete capture", async () => {
+	const output: string[] = [];
+	const child = spawnSupervised(
+		[
+			bun,
+			"-e",
+			"process.stdout.write(Buffer.from([0xf0,0x9f])); setTimeout(()=>{ process.stdout.write(Buffer.from([0xa6,0x8a])); process.stderr.write('界'); },10);",
+		],
+		{ onData: (text) => output.push(text) },
+	);
+	expect(await child.exited).toBe(0);
+	expect(output.join("")).toContain("🦊");
+	expect(output.join("")).toContain("界");
+	expect(output.join("")).not.toContain("�");
+});
+
 test("stop kills a long-lived child and resolves on its exit", async () => {
 	const child = spawnSupervised([bun, "-e", "setInterval(() => {}, 1000)"]);
 	expect(child.pid).toBeGreaterThan(0);
@@ -53,10 +69,20 @@ test.skipIf(process.platform === "win32")(
 	15_000,
 );
 
-test.skipIf(process.platform === "win32")("the watchdog keeps the child's exit code", async () => {
-	const child = spawnSupervised([bun, "-e", "process.exit(5)"], { exitWithParent: true });
-	expect(await child.exited).toBe(5);
-});
+test.skipIf(process.platform === "win32")(
+	"the watchdog keeps exit codes above 128 and leaves no listener after exit",
+	async () => {
+		const marker = `supervised-exit-${process.pid}-${Date.now()}`;
+		const child = spawnSupervised([bun, "-e", "process.exit(143)", marker], {
+			exitWithParent: true,
+		});
+		expect(await child.exited).toBe(143);
+		const deadline = Date.now() + 2_000;
+		while (Bun.spawnSync(["pgrep", "-f", marker]).exitCode === 0 && Date.now() < deadline)
+			await Bun.sleep(50);
+		expect(Bun.spawnSync(["pgrep", "-f", marker]).exitCode).not.toBe(0);
+	},
+);
 
 test.skipIf(process.platform === "win32")(
 	"a watched child killed by a signal still reports a null exit",

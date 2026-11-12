@@ -50,29 +50,43 @@ never what a particular child's output means.
   truncated relay for a complete one; cancelling the stream kills the child. `exited` resolves to the
   same shape `runBounded` returns, minus `out`. Streaming does not accept an abort signal; consumers
   cancel its stdout stream instead.
-- **Also owns:** `spawnSupervised(argv, { cwd?, env? })` → `{ pid, exited, stop, stderrTail }` for
-  the one long-lived host-owned child (the `speech` engine).
+- **Also owns:** `spawnSupervised(argv, { cwd?, env?, onData? })` → `{ pid, exited, stop, stderrTail }`.
+  Speech and background commands use this process owner.
+  `onData` receives decoded stdout and stderr text without a complete output capture.
+  Each stream has its own UTF-8 decoder.
+  With `onData`, exit waits for pipe drains within `DRAIN_GRACE_MS`.
+  The caller owns output retention, timeout and cancellation policy.
   - It uses the same spawn shape: POSIX group leader, Windows hidden but not detached, stdin ignored,
     and both pipes drained from spawn. Stdout is discarded, and the last 4 KB of stderr is kept for
     diagnosis.
   - It has no deadline; the caller owns the lifetime. `stop()` runs the same tree kill as expiry and
     resolves on the direct child's exit.
   - `exited` is the exit code, or `null` after a signal or a failed launch, and is never a throw.
-  - `exitWithParent` (POSIX only) runs the child under a tiny `/bin/sh` watchdog.
-    - The watchdog holds a stdin pipe from the host and kills the child when that pipe reaches EOF.
-      That happens when the host dies, even by SIGKILL, which no exit handler sees.
-    - It passes the child's exit code through. A child killed by a signal makes the watchdog re-raise
-      that signal on itself, so `exited` stays `null` as for an unwatched child. The group kill still
-      stops both.
+  - `exitWithParent` (POSIX only) starts the child through a tiny `/bin/sh` watchdog.
+    - The shell leads the process group. It forks a listener that holds the host's stdin pipe, then
+      `exec`s the child, so the child keeps that PID and its exit code or signal stays native.
+    - When the child exits, the host writes a newline and closes the pipe; the listener exits.
+    - EOF without that newline means the host died, even by SIGKILL, which no exit handler sees.
+      The listener then kills the whole process group, so the child's descendants stop too.
+    - Background commands and speech use it.
     - Why it exists: Playwright and crash-killed hosts left detached engines holding ~1 GB each,
       found running hours later.
 - **Public surface:** `runBounded`, `streamBounded`, `spawnSupervised`, `BoundedRun`, `BoundedBytesRun`,
   `BoundedRunOptions`, `BoundedBytesRunOptions`, `BoundedStream`, `BoundedStreamOptions`, `Supervised`,
-  `SupervisedOptions`.
+  `SupervisedOptions`, `spawnPiped`, `PipedProcess`, `PipedProcessOptions`, `DRAIN_GRACE_MS`.
 - **Allowed deps:** Bun/Node process APIs. Nothing else — it knows no feature, no wire type, no
   persistence.
 - **Forbidden:** message wording, retry, truncation, or any policy about a specific program. `git`'s
   stalled/stderr text and `branch-review`'s degrade-to-`null` are the callers' business.
+
+`spawnPiped(argv, { cwd?, env? })` supplies an owned process with piped stdin, stdout and stderr.
+The MCP transport uses this public interface with the official protocol helpers.
+The caller owns pipe reads, writes and protocol errors.
+The returned `stdin` is a `Bun.FileSink`.
+The output pipes are `ReadableStream<Uint8Array>` values.
+`stop()` uses the existing process-tree termination and waits for the direct child's exit.
+Repeated stop calls share one promise.
+After the direct child exits, Stop must not signal its reusable PID or process group.
 - **Known non-consumers.** Two callers spawn something that can outlast a human's patience and still do
   it themselves, each deliberately and each a standing debt rather than a settled design:
   - `@thinkrail/shared/jbcentral` — already deadline-first, and a different contract (bounded-byte reads, a

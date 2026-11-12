@@ -1,3 +1,4 @@
+export { type PipedProcess, type PipedProcessOptions, spawnPiped } from "./piped";
 export {
 	type BoundedBytesRun,
 	type BoundedBytesRunOptions,
@@ -5,6 +6,7 @@ export {
 	type BoundedRunOptions,
 	type BoundedStream,
 	type BoundedStreamOptions,
+	DRAIN_GRACE_MS,
 	runBounded,
 	streamBounded,
 } from "./runBounded";
