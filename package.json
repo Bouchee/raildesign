@@ -69,7 +69,6 @@
 		"desktop:package:stable": "bun run --cwd apps/desktop package:stable",
 		"smoke:desktop": "bun packages/artifact-tests/smoke.ts",
 		"smoke:desktop:installer": "bun packages/artifact-tests/installerSmoke.ts",
-		"smoke:subagents": "bun scripts/smoke-pure-pi-subagents.ts",
 		"typecheck": "turbo run typecheck typecheck:root",
 		"typecheck:root": "tsc -p tsconfig.json && tsc -p e2e/tsconfig.json",
 		"test": "bun test ./scripts/ && turbo run test --continue",

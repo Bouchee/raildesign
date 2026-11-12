@@ -13,7 +13,6 @@ const modules = {
 	"packages/pi-delegation": "pi-delegation",
 	"packages/pi-background-commands": "pi-background-commands",
 	"packages/pi-subagents": "pi-subagents",
-	"packages/pi-dag": "pi-dag",
 	"pi-extensions/visualize": "@thinkrail/pi-visualize",
 	"packages/server": "@thinkrail/server",
 	"apps/web": "@thinkrail/web",
@@ -43,7 +42,6 @@ function fixture(): string {
 		},
 		"packages/shared": { "@thinkrail/contracts": "workspace:*" },
 		"packages/pi-subagents": { "pi-delegation": "workspace:*" },
-		"packages/pi-dag": { "pi-delegation": "workspace:*" },
 		"packages/server": {
 			"@thinkrail/contracts": "workspace:*",
 			"@thinkrail/shared": "workspace:*",
@@ -98,21 +96,6 @@ test("accepts the declared package rings and thin launcher edges", () => {
 	);
 
 	expect(moduleBoundaryViolations(root)).toEqual([]);
-});
-
-test("keeps DAG orchestration portable and out of delegation and the unbundled host", () => {
-	const root = fixture();
-	write(root, "packages/pi-dag/index.ts", 'export * from "pi-delegation";');
-	expect(moduleBoundaryViolations(root)).toEqual([]);
-	write(root, "packages/pi-dag/leak.ts", 'import "@thinkrail/server"; import "pi-subagents";');
-	write(root, "packages/pi-delegation/leak.ts", 'import "pi-dag";');
-	write(root, "packages/server/dag.ts", 'import "pi-dag";');
-	expect(moduleBoundaryViolations(root)).toEqual([
-		'packages/pi-dag/leak.ts: import "@thinkrail/server" creates forbidden packages/pi-dag -> packages/server edge',
-		'packages/pi-dag/leak.ts: import "pi-subagents" creates forbidden packages/pi-dag -> packages/pi-subagents edge',
-		'packages/pi-delegation/leak.ts: import "pi-dag" creates forbidden packages/pi-delegation -> packages/pi-dag edge',
-		'packages/server/dag.ts: import "pi-dag" creates forbidden packages/server -> packages/pi-dag edge',
-	]);
 });
 
 test("keeps background commands portable and out of browser imports", () => {

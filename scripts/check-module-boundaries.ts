@@ -27,7 +27,6 @@ const MODULE_RULES: readonly ModuleRule[] = [
 	{ root: "packages/pi-delegation", allowed: [] },
 	{ root: "packages/pi-background-commands", allowed: [] },
 	{ root: "packages/pi-subagents", allowed: ["packages/pi-delegation"] },
-	{ root: "packages/pi-dag", allowed: ["packages/pi-delegation"] },
 	{
 		root: "packages/server",
 		allowed: [
