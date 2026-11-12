@@ -9,8 +9,8 @@ import {
 	type RemixiconComponentType,
 	RiFileTextLine as TextGlyph,
 } from "@remixicon/react";
+import type { AskUserQuestionPreviewFields } from "@thinkrail/ask-user-question/core";
 import { useT } from "@thinkrail/locales/react";
-import type { AskUserQuestionPreviewFields } from "@thinkrail/pi-ask-user-question/core";
 import {
 	FramedResourcePreview,
 	useOptionalResourceHost,

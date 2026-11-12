@@ -1,4 +1,4 @@
-import type { AskUserQuestionResult } from "@thinkrail/pi-ask-user-question/core";
+import type { AskUserQuestionResult } from "@thinkrail/ask-user-question/core";
 
 function isResult(value: unknown): value is AskUserQuestionResult {
 	return (

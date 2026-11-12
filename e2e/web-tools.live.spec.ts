@@ -13,14 +13,14 @@ async function expandToolStep(page: Page, tool: string): Promise<Locator> {
 	return expandActivityStep(page, tool);
 }
 
-test("fetch_content is invoked and rendered by our card", { tag: "@agent" }, async ({ page }) => {
+test("web_fetch is invoked and rendered by our card", { tag: "@agent" }, async ({ page }) => {
 	test.setTimeout(120_000);
 	await openChatAndSend(
 		page,
-		"Use the fetch_content tool to fetch https://example.com — use only that tool — then report the page title.",
+		"Use the web_fetch tool to fetch https://example.com — use only that tool — then report the page title.",
 	);
-	const step = await expandToolStep(page, "fetch_content");
-	await expect(step.getByTestId("tool-fetch_content")).toBeVisible();
+	const step = await expandToolStep(page, "web_fetch");
+	await expect(step.getByTestId("tool-web_fetch")).toBeVisible();
 });
 
 test("web_search renders its query and terminal result", { tag: "@agent" }, async ({ page }) => {

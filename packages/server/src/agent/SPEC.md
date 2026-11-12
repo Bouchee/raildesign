@@ -8,6 +8,13 @@ depends-on: [module-contracts]
 tags: [agents-sdk]
 ---
 
+## DeepSeek web tools
+
+`webAccess` owns the separate protected platform key and bounded DeepSeek Search/Fetch requests.
+The SDK extension receives grant-bound service callbacks. Stop aborts requests and prevents late results.
+The host captures structured content and details by tool-call ID for transcript cards while the model
+receives readable text through the public FunctionTool interface. No key enters browser state.
+
 ## Responsibility
 
 Own RailDesign sessions, application transcript projection and one active OpenAI Agents SDK Runner per session. The SDK owns the model loop and tool dispatch. The host owns identity, workspace grants, durable records, interaction ownership and completion. There is one execution path for every launcher.

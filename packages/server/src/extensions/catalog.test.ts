@@ -1,132 +1,100 @@
 import { describe, expect, it, mock } from "bun:test";
-import type { ExtensionAPI, ExtensionFactory } from "@earendil-works/pi-coding-agent";
+import { tool } from "@openai/agents";
 import { listExtensionCatalog } from "./catalog";
 import type { ServerExtensionEntry } from "./registry";
 
-function tool(name: string): ExtensionFactory {
-	return (pi: ExtensionAPI) => {
-		pi.on("session_start", () => {});
-		pi.registerTool({ name } as Parameters<ExtensionAPI["registerTool"]>[0]);
-	};
-}
+const namedTool = (name: string) =>
+	tool({
+		name,
+		description: name,
+		strict: false,
+		parameters: { type: "object", properties: {}, required: [], additionalProperties: true },
+		execute: () => name,
+	});
 
 describe("listExtensionCatalog", () => {
-	it("lists the shipped extensions with their copy, tools and enabled state", async () => {
-		expect(await listExtensionCatalog(new Set())).toEqual([
-			{
-				name: "visualize",
-				title: "Visualize",
-				description: expect.any(String),
-				enabled: true,
-				tools: ["visualize"],
-				hasChildExtensions: false,
-			},
-			{
-				name: "ask-user-question",
-				title: "Ask user question",
-				description: expect.any(String),
-				enabled: true,
-				tools: ["ask_user_question"],
-				hasChildExtensions: false,
-				settings: [{ key: "richPreviews", default: true }],
-			},
-			{
-				name: "web-access",
-				title: "Web access",
-				description: expect.any(String),
-				enabled: true,
-				tools: ["web_search", "fetch_content", "get_search_content"],
-				hasChildExtensions: true,
-			},
+	it("lists shipped SDK tool names and extension state", async () => {
+		const entries = await listExtensionCatalog(new Set(["visualize"]));
+		expect(entries.map((entry) => entry.name)).toEqual([
+			"visualize",
+			"ask-user-question",
+			"web-access",
 		]);
-		const [visualize, ask] = await listExtensionCatalog(new Set(["visualize", "retired"]));
-		expect(visualize?.enabled).toBe(false);
-		expect(ask?.enabled).toBe(true);
+		expect(entries[0]).toMatchObject({
+			tools: ["visualize"],
+			enabled: false,
+			hasChildExtensions: false,
+		});
+		expect(entries[1]).toMatchObject({
+			tools: ["ask_user_question"],
+			enabled: true,
+			settings: [{ key: "richPreviews", default: true }],
+		});
 	});
 
-	it("records a session factory's tools with its declared setting defaults", async () => {
-		const read: boolean[] = [];
-		const entries: ServerExtensionEntry[] = [
-			{
-				specifier: "@acme/settings/server",
-				extension: {
-					name: "settings-demo",
-					extensions: [],
-					settings: { rich: { type: "boolean", default: false } },
-					sessionExtensions: (session) => [
-						(pi) => {
-							read.push(session.setting("rich"));
-							pi.registerTool({ name: "demo" } as Parameters<ExtensionAPI["registerTool"]>[0]);
-						},
-					],
-				},
-			},
-		];
-		const [entry] = await listExtensionCatalog(new Set(), entries);
-		expect(entry?.tools).toEqual(["demo"]);
-		expect(entry?.settings).toEqual([{ key: "rich", default: false }]);
-		expect(read).toEqual([false]);
-	});
-
-	it("records parent tools against a stub, never children, and survives a throwing factory", async () => {
-		const child = mock<ExtensionFactory>(() => {});
+	it("uses declared default settings and does not execute parent or child tools", async () => {
+		const execute = mock(() => "unused");
+		const child = mock(() => [namedTool("child")]);
+		const values: boolean[] = [];
 		const entries: ServerExtensionEntry[] = [
 			{
 				specifier: "@acme/demo/server",
 				extension: {
 					name: "demo",
-					extensions: [
-						tool("alpha"),
-						async (pi) => {
-							await pi.events.emit("ready", {});
-							pi.registerTool({ name: "beta" } as Parameters<ExtensionAPI["registerTool"]>[0]);
-							throw new Error("boom");
-						},
-						tool("alpha"),
-					],
-					childExtensions: [child],
+					settings: { rich: { type: "boolean", default: false } },
+					sdkTools: (session) => {
+						values.push(session.setting("rich"));
+						return [
+							tool({
+								name: "demo",
+								description: "demo",
+								strict: false,
+								parameters: {
+									type: "object",
+									properties: {},
+									required: [],
+									additionalProperties: true,
+								},
+								execute,
+							}),
+							namedTool("demo"),
+						];
+					},
+					sdkChildTools: child,
 				},
 			},
-			{ specifier: "@acme/bare/server", extension: { name: "bare", extensions: [] } },
+			{ specifier: "@acme/bare/server", extension: { name: "bare" } },
 		];
 		expect(await listExtensionCatalog(new Set(["bare"]), entries)).toEqual([
 			{
 				name: "demo",
 				title: "demo",
 				enabled: true,
-				tools: ["alpha", "beta"],
+				tools: ["demo"],
 				hasChildExtensions: true,
+				settings: [{ key: "rich", default: false }],
 			},
 			{ name: "bare", title: "bare", enabled: false, tools: [], hasChildExtensions: false },
 		]);
+		await listExtensionCatalog(new Set(), entries);
+		expect(values).toEqual([false]);
+		expect(execute).not.toHaveBeenCalled();
 		expect(child).not.toHaveBeenCalled();
 	});
 
-	it("lists per-session tools through an inert session that never answers", async () => {
-		let response: Promise<unknown> | undefined;
+	it("refuses a factory that tries to use live services in the Settings catalog", async () => {
 		const entries: ServerExtensionEntry[] = [
 			{
-				specifier: "@acme/asker/server",
+				specifier: "@acme/live/server",
 				extension: {
-					name: "asker",
-					extensions: [tool("static")],
-					sessionExtensions: (session) => {
-						response = session.awaitToolResponse("call", undefined);
-						response.catch(() => undefined);
-						return [tool("asked")];
+					name: "live",
+					sdkTools(session) {
+						session.assertActive();
+						return [];
 					},
 				},
 			},
 		];
-		expect(await listExtensionCatalog(new Set(), entries)).toEqual([
-			{
-				name: "asker",
-				title: "asker",
-				enabled: true,
-				tools: ["static", "asked"],
-				hasChildExtensions: false,
-			},
-		]);
-		await expect(response).rejects.toThrow("no session");
+		await expect(listExtensionCatalog(new Set(), entries)).rejects.toThrow("no active session");
 	});
 });

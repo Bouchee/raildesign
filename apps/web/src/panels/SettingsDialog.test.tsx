@@ -43,6 +43,7 @@ describe("settingsNavGroups", () => {
 					SettingsSection.Providers,
 					SettingsSection.Mcp,
 					SettingsSection.Templates,
+					SettingsSection.Extensions,
 				],
 			],
 			[
@@ -80,6 +81,7 @@ describe("settingsNavGroups", () => {
 		const gates = [
 			[SettingsSection.Models, DEFAULT_MODEL_PROTOCOL_VERSION],
 			[SettingsSection.Mcp, MCP_PROTOCOL_VERSION],
+			[SettingsSection.Extensions, EXTENSION_CATALOG_PROTOCOL_VERSION],
 			[SettingsSection.Workspaces, WORKSPACE_SETTLE_PROTOCOL_VERSION],
 		] as const;
 		for (const [id, version] of gates) {

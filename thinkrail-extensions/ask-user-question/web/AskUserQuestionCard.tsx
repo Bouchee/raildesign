@@ -1,8 +1,8 @@
 import { RiArrowDownSLine as CollapseGlyph, RiArrowUpSLine as ExpandGlyph } from "@remixicon/react";
+import type { AskUserQuestionResult } from "@thinkrail/ask-user-question/core";
 import { ASK_DISCUSS_PROTOCOL_VERSION } from "@thinkrail/contracts";
 import { resultText, type ToolRenderProps } from "@thinkrail/extension-api/web";
 import { useT } from "@thinkrail/locales/react";
-import type { AskUserQuestionResult } from "@thinkrail/pi-ask-user-question/core";
 import { AttentionLine } from "@thinkrail/ui/attention-line";
 import { Button, IconButton } from "@thinkrail/ui/button";
 import { hasPlatformModifier, isImeComposing } from "@thinkrail/ui/keyboard";

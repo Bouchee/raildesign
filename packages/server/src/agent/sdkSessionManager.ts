@@ -8,6 +8,7 @@ import {
 	Runner,
 	RunState,
 	type RunStreamEvent,
+	type Tool,
 } from "@openai/agents";
 import type {
 	AgentSettlement,
@@ -28,10 +29,12 @@ import type {
 	SessionStats,
 	SessionSummary,
 	ThinkingLevel,
+	ToolResultMessage,
 	TranscriptMessage,
 	WireModel,
 } from "@thinkrail/contracts";
 import { firstPromptOfTexts, normalizeSessionTitle } from "@thinkrail/contracts";
+import { parseToolResultContent } from "@thinkrail/extension-api/server";
 import { z } from "zod";
 import {
 	interactiveTools,
@@ -61,6 +64,7 @@ import {
 	type StoredInput,
 	sessionRecordPath,
 } from "./sessionStore";
+import { webFetch, webSearch } from "./webAccess";
 
 const log = logger("agent");
 interface ActiveRun {
@@ -77,6 +81,15 @@ interface ActiveRun {
 	assistantId?: string;
 	toolCalls: Map<string, { name: string; arguments: Record<string, unknown>; failed: boolean }>;
 	startedTools: Set<string>;
+	structuredResults?: Map<
+		string,
+		{
+			content: ToolResultMessage["content"];
+			details?: unknown;
+			isError: boolean;
+			terminate?: boolean;
+		}
+	>;
 	usage?: {
 		inputTokens: number;
 		outputTokens: number;
@@ -332,6 +345,8 @@ function recordToolResult(
 	isError = false,
 	completed = true,
 ): void {
+	const structured = entry.active?.structuredResults?.get(callId);
+	if (structured) isError ||= structured.isError;
 	const previous = entry.store.record.messages.find(
 		(message) => message.role === "toolResult" && message.toolCallId === callId,
 	);
@@ -346,7 +361,8 @@ function recordToolResult(
 		role: "toolResult",
 		toolCallId: callId,
 		toolName: name,
-		content: [{ type: "text", text: output }],
+		content: structured?.content ?? [{ type: "text", text: output }],
+		...(structured?.details !== undefined ? { details: structured.details } : {}),
 		isError,
 		timestamp: previous?.timestamp ?? Date.now(),
 	};
@@ -692,6 +708,38 @@ function startStream(
 	return runner.run(agent, input, { stream: true, session, signal, maxTurns: 20 });
 }
 
+function captureStructuredToolResults(tools: Tool[], run: ActiveRun): void {
+	run.structuredResults ??= new Map();
+	for (const candidate of tools) {
+		if (candidate.type !== "function") continue;
+		const invoke = candidate.invoke;
+		candidate.invoke = async (context, input, details) => {
+			const result = await invoke(context, input, details);
+			const callId = details?.toolCall?.callId;
+			if (
+				callId &&
+				result &&
+				typeof result === "object" &&
+				"content" in result &&
+				Array.isArray(result.content)
+			) {
+				const parsed = parseToolResultContent(result);
+				const isError = "isError" in result && result.isError === true;
+				run.structuredResults?.set(callId, {
+					content: [{ type: "text", text: parsed.text }, ...parsed.images],
+					...("details" in result ? { details: result.details } : {}),
+					isError,
+					...("terminate" in result && result.terminate === true ? { terminate: true } : {}),
+				});
+				const call = run.toolCalls.get(callId);
+				if (call && isError) call.failed = true;
+				return parsed.text;
+			}
+			return result;
+		};
+	}
+}
+
 async function executeRun(
 	entry: Entry,
 	run: ActiveRun,
@@ -730,6 +778,20 @@ async function executeRun(
 					...registrySdkTools(
 						{
 							cwd: entry.store.record.cwd,
+							webAccess: {
+								search: async (query, count, signal) => {
+									assertActive(entry, run);
+									const result = await webSearch(query, count, signal ?? run.controller.signal);
+									assertActive(entry, run);
+									return result;
+								},
+								fetch: async (url, signal) => {
+									assertActive(entry, run);
+									const result = await webFetch(url, signal ?? run.controller.signal);
+									assertActive(entry, run);
+									return result;
+								},
+							},
 							workspaceFiles,
 							assertActive: () => assertActive(entry, run),
 							markToolFailed: (callId) => {
@@ -749,6 +811,15 @@ async function executeRun(
 						run.enabledExtensions,
 					),
 				],
+				// A tool result marked `terminate` ends the run without another model call.
+				toolUseBehavior: (_context, results) =>
+					results.some(
+						(result) =>
+							result.type === "function_output" &&
+							run.structuredResults?.get(result.runItem.rawItem.callId)?.terminate,
+					)
+						? { isFinalOutput: true, isInterrupted: undefined, finalOutput: "" }
+						: { isFinalOutput: false, isInterrupted: undefined },
 				modelSettings: {
 					...responsesClientSettings,
 					maxTokens: modelOutputBudget(model),
@@ -792,6 +863,7 @@ async function executeRun(
 					run.toolCalls.get(details.toolCall.callId)?.failed,
 				);
 			});
+			captureStructuredToolResults(agent.tools, run);
 			return agent;
 		};
 		let agent = buildAgent();

@@ -9,6 +9,12 @@ tags: [host]
 references: [module-artifact-tests]
 ---
 
+## Bundled extension helpers
+
+The server registry composes SDK questions, visualization and DeepSeek web tools through extension-api.
+Question and visualization schemas live in pure helper packages; the server imports their public
+extension entries rather than those helpers directly. Other bundled tool packages retain their current owners.
+
 ## Responsibility
 
 The embeddable Bun host serves the application HTTP/WebSocket protocol and owns workspace services

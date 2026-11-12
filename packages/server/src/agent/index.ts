@@ -14,3 +14,4 @@ export {
 export { admissionContextFor } from "./skillAdmission";
 export { isProjectSkillPath, mayHoldProjectSkills } from "./skillSources";
 export { listProjectAliasSkillNames, listSkillCatalog, listSkillCommands } from "./skills";
+export { getWebAccessStatus, setWebAccessKey, webFetch, webSearch } from "./webAccess";

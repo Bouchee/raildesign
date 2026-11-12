@@ -909,7 +909,7 @@ test("extension.list reflects disabledExtensions written through settings.update
 			title: "Web access",
 			description: expect.any(String),
 			enabled: true,
-			tools: ["web_search", "fetch_content", "get_search_content"],
+			tools: ["web_search", "web_fetch"],
 			hasChildExtensions: true,
 		},
 	]);

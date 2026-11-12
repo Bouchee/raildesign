@@ -330,7 +330,7 @@ test("find in files is pinned to v112", () => {
 });
 
 test("the question panel height setting is pinned to v114", () => {
-	expect(PROTOCOL_VERSION).toBe(116);
+	expect(PROTOCOL_VERSION).toBe(117);
 	expect(QUESTION_PANEL_PROTOCOL_VERSION).toBe(114);
 	expect(DEFAULT_CONFIG.questionPanelHeight).toBe(60);
 });

@@ -205,7 +205,6 @@ import {
 	workspaceDiffStats,
 } from "../workspaces";
 import { ackSend } from "./ackSend";
-
 import { startChatSession } from "./chatSession";
 import {
 	assertChatOpen,
@@ -220,7 +219,6 @@ import {
 import { nudgeBaseRefWorkspaces } from "./fsNudge";
 import { buildHistoryScope } from "./historyScope";
 import { provisionInitialTerminal } from "./initialTerminal";
-
 import {
 	mcpAdd,
 	mcpApprove,
@@ -240,17 +238,15 @@ import {
 	reloadLiveSessions,
 } from "./mcp";
 import { resolveNewChatModel } from "./newChatModel";
-
 import { withChangeLock, withReviewLock } from "./reviewLock";
-
 import { hostSearch, publishSearchText } from "./search";
 import { findWorkspaceReviewOutcome, scheduleLifecyclePass } from "./settledLifecycle";
-
 import {
 	clearChangesRequestedIfResolved,
 	isItemUnderActiveReview,
 	markClientStale,
 } from "./todoReview";
+import { configureWebAccess, webAccessStatus } from "./webAccess";
 
 const log = logger("host");
 const clientErrorSchema = z
@@ -813,6 +809,8 @@ const handlers: WsHandlers = {
 		);
 	},
 	"extension.list": () => listExtensionCatalog(new Set(getConfig().disabledExtensions)),
+	"webAccess.status": () => webAccessStatus(),
+	"webAccess.configure": (params) => configureWebAccess(params),
 
 	"locales.list": () => readLocalLocales(),
 	"locales.reveal": () => revealDataFolder(localesDir()),

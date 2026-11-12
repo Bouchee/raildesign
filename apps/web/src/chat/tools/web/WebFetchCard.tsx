@@ -13,15 +13,8 @@ function httpUrl(value: string): URL | null {
 	}
 }
 
-function firstUrl(args: Record<string, unknown>): string {
-	const single = strArg(args, "url");
-	if (single) return single;
-	const many = args.urls;
-	return Array.isArray(many) && typeof many[0] === "string" ? many[0] : "";
-}
-
 export function webFetchSummary({ args }: ToolRenderProps): string {
-	return firstUrl(args);
+	return strArg(args, "url");
 }
 
 export function WebFetchCard({
@@ -33,7 +26,7 @@ export function WebFetchCard({
 	onOpenFile,
 }: ToolRenderProps) {
 	const t = useT();
-	const url = firstUrl(args);
+	const url = strArg(args, "url");
 	const external = httpUrl(url);
 	const label = external
 		? external.hostname.replace(/^www\./, "")
@@ -41,7 +34,7 @@ export function WebFetchCard({
 	const output = resultText(result);
 
 	return (
-		<div data-testid="tool-fetch_content" className="flex flex-col gap-4">
+		<div data-testid="tool-web_fetch" className="flex flex-col gap-4">
 			<div className="flex items-center gap-4 tr-text-metadata">
 				<LinkIcon className="size-12 shrink-0 text-text-muted" />
 				{external ? (

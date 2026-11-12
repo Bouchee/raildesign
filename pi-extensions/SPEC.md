@@ -99,8 +99,10 @@ allow `npm publish` (npm's post-2026-09 default is stage-only) and is validated 
 publish within 48 hours of its creation — the manual bootstrap does not count — so it is created right
 before the package's next version PR merges, not at bootstrap. Operational detail: `pi-extensions/README.md`.
 
-Order: visualize → ask-user-question → delegation + subagents → background-commands → spec-graph →
-todos. Not published:
+Question and visualization helpers now live in `packages/ask-user-question` and `packages/visualize`;
+the SDK server extensions own their execution.
+
+Order: background-commands → spec-graph → todos. Not published:
 `pi-thinkrail-workflow` (workspace-internal), `pi-dag` (until it has a consumer).
 
 ## Boundary

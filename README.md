@@ -12,9 +12,12 @@ unknown and require a new user decision. `/compact` summarizes model memory whil
 conversation for display and search. Automatic summaries use the selected verified model's context
 budget; summary failures preserve the previous memory.
 
-Advanced tools, desktop releases and private-server deployment have separate implementation and
-acceptance stages. Controls for unavailable tools remain disabled. This source checkout does not
-establish a released installer or cross-platform acceptance.
+The SDK tool graph includes structured questions and visualization. Web search and page reading use
+DeepSeek Search and Fetch with a separate host key configured in Extensions settings.
+
+The remaining advanced tools, desktop releases and private-server deployment have separate
+implementation and acceptance stages. Controls for unavailable tools remain disabled. This source
+checkout does not establish a released installer or cross-platform acceptance.
 
 ![RailDesign showing the real notes.txt Diff in the selected worktree](.github/readme-assets/workbench-dark.png)
 

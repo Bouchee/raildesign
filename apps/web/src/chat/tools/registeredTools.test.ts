@@ -16,8 +16,7 @@ const INTENTIONAL_TOOLS = [
 	"edit",
 	"bash",
 	"web_search",
-	"fetch_content",
-	"get_search_content",
+	"web_fetch",
 	"visualize",
 	"spec_search",
 	"spec_grep",
@@ -217,45 +216,28 @@ describe("intentional bundled tool renderers", () => {
 		expect(summary(["crash isolation", "fatal fault"])).toBe("crash isolation");
 	});
 
-	it("summarizes the first query, URL, or selected stored-content target", () => {
+	it("summarizes the Search query and Fetch URL", () => {
 		expect(
 			getToolSummary(
 				currentTranslator(),
 				"web_search",
-				props("web_search", { queries: ["first query", "second query"] }, null),
+				props("web_search", { query: "first query" }, null),
 			),
 		).toBe("first query");
 		expect(
 			getToolSummary(
 				currentTranslator(),
-				"fetch_content",
-				props(
-					"fetch_content",
-					{ urls: ["https://example.com/one", "https://example.com/two"] },
-					null,
-				),
+				"web_fetch",
+				props("web_fetch", { url: "https://example.com/one" }, null),
 			),
 		).toBe("https://example.com/one");
-		expect(
-			getToolSummary(
-				currentTranslator(),
-				"get_search_content",
-				props(
-					"get_search_content",
-					{ responseId: "response-123", urlIndex: 0 },
-					{
-						details: { url: "https://example.com/selected" },
-					},
-				),
-			),
-		).toBe("https://example.com/selected");
 	});
 
 	it("treats only HTTP fetch targets as external links and gates local targets as files", () => {
 		const result = { content: [{ type: "text", text: "Fetched." }] };
-		const external = renderTool("fetch_content", { url: "https://www.example.com/docs" }, result);
-		const local = renderTool("fetch_content", { url: "module-a/SPEC.md" }, result);
-		const foreign = renderTool("fetch_content", { url: "/tmp/video.mp4" }, result);
+		const external = renderTool("web_fetch", { url: "https://www.example.com/docs" }, result);
+		const local = renderTool("web_fetch", { url: "module-a/SPEC.md" }, result);
+		const foreign = renderTool("web_fetch", { url: "/tmp/video.mp4" }, result);
 
 		expect(external).toContain('href="https://www.example.com/docs"');
 		expect(external).toContain(">example.com</a>");
@@ -264,10 +246,10 @@ describe("intentional bundled tool renderers", () => {
 		expect(foreign).toContain("/tmp/video.mp4");
 	});
 
-	it("renders search and stored web content as Markdown with safe external links", () => {
+	it("renders Search and Fetch content as Markdown with safe external links", () => {
 		for (const [toolName, args] of [
 			["web_search", { query: "preview tabs" }],
-			["get_search_content", { responseId: "response-123", queryIndex: 0 }],
+			["web_fetch", { url: "https://example.com/source" }],
 		] as const) {
 			const html = renderTool(toolName, args, {
 				content: [

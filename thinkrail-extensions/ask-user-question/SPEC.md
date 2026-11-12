@@ -11,8 +11,8 @@ references: [module-pi-ask-user-question, submodule-web-chat, submodule-server-a
 ## Responsibility
 
 The ThinkRail halves of the `ask_user_question` capability.
-- `./server` composes the portable tool ([[module-pi-ask-user-question]]) for every parent session, with
-  ThinkRail's own wording and an asker that waits on the host's interactive-tool mailbox.
+- `./server` creates the SDK question tool from pure schemas and response helpers.
+  The host supplies grants, saved responses, settings and workspace file checks.
 - `./web` is the questionnaire card: the docked form, its transcript stub and the answered receipt.
 
 The host keeps the interactive-tool lifecycle — mailbox phases, restart repair, late responses, composer
@@ -22,36 +22,23 @@ client of that contract ([[module-extension-api]]) and is deletable without a co
 
 ## Boundary
 
-- `@thinkrail/ext-ask-user-question/server` default-exports its descriptor:
-  - `extensions: []`;
-  - `settings: { richPreviews: { type: "boolean", default: true } }` — Settings → Extensions shows it as the
-    nested "Rich previews in questions" switch ([[module-thinkrail-extensions]]);
-  - `sessionExtensions: (session) => [factory]`, a factory that reads `session.setting("richPreviews")`
-    **inside its body** and composes `createAskUserQuestionExtension({ ask, announce, guidance, filePreviews,
-    checkFile })`, so every pi (re)load after a Settings change registers the tool with or without the file
-    fields;
-  - `interactiveTools: { ask_user_question: { describeResponse, validateArgs, parseResponse } }` — `describeResponse(args, response)`
-    renders a late answer (one delivered after a host restart) through the package's
-    `buildQuestionnaireResponse` when both have our shape, so the model reads the same wording as for a
-    live answer; any other shape returns `undefined` and the host's generic JSON preface applies.
-
-  `announce` forwards each executable call to `session.expectToolResponse(toolCallId)`, so the host's
-  question lifecycle starts only for calls this extension runs. The asker awaits `session.awaitToolResponse(toolCallId, signal)`. A `response` must be a questionnaire
-  result (checked with the package's `isAskUserQuestionResult`, else the call fails); `deferred` and
-  `abandoned` pass through as outcomes, so the package returns the canonical ack or the stop and ends the
-  turn. `guidance` is ThinkRail's description and prompt guidelines: the card docked above the message box, a composer reply that
-  supersedes it, Discuss, question versus option previews, and — only with rich previews on — mockup files
-  under `session.workspaceFiles.scratchDir` (`.thinkrail/context/mockups/`) referenced by `previewFile`.
-  Off, the model is offered neither the fields nor that guidance: the saving is the agent's mockup writing
-  (output tokens and a tool call each), not rendering, which is lazy. Markdown previews, mermaid included,
-  stay either way (unconfirmed with the user: mermaid is text, so the switch leaves it on). `checkFile` is the host's
-  `session.workspaceFiles.check`. The server half has no named exports; it imports only
-  `extension-api/server` and its pi package. The package's deferral ack `{ kind: "ack" }` is the host's pending marker — a test pins it.
+- `@thinkrail/ext-ask-user-question/server` exports an SDK descriptor with `sdkTools` and `interactiveTools`.
+  The `richPreviews` boolean setting defaults to true.
+  Each factory uses the host's frozen setting snapshot.
+  Its description retains the complete question and preview guidance.
+  The SDK approval policy checks arguments and preview paths before interruption.
+  Execution checks them again before it consumes the saved response by tool-call ID.
+  Response validation checks question identities, option membership, multiple selection and duplicate answers.
+  `describeResponse` gives restored answers the same text as live answers.
+  Deferred responses use the canonical `{ kind: "ack" }` marker.
+  Abandonment reports the stopped run.
+  The host owns interruption state, response receipts and continuation.
+  The server imports only the public SDK, extension-api server contracts and pure question helpers.
 - `@thinkrail/ext-ask-user-question/web` default-exports a `defineWebExtension` descriptor that registers
   `AskUserQuestionCard` for `ask_user_question` with `{ chrome: "bare", interactive: true, dock: true }`. Nothing is
   exported by name: the plan page reaches the card through the tool registry, as the chat does.
 - The card imports `extension-api/web`, the package's argument/result **types** (type-only, from
-  `@thinkrail/pi-ask-user-question/core`; a value import of the pi package stays forbidden in browser code,
+  `@thinkrail/ask-user-question/core`; a value import of server execution stays forbidden in browser code,
   so the result guard `readAskUserQuestionResult` and the answer model in `web/state.ts` are the card's own),
   `@thinkrail/ui` (`attention-line`, `button`, `keyboard`, `textarea`, `utils`), `@thinkrail/resource-renderers`
   (`useOptionalResourceHost` for the host's Markdown — mermaid included — and `FramedResourcePreview` +

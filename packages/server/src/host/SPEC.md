@@ -34,6 +34,11 @@ import requires explicit `resolveShellEnv:true`; an ordinary embedder/test keeps
 Exact port mode rejects a taken port; free mode searches upward. SIGINT/SIGTERM await shutdown. Fatal
 uncaught faults are written locally, echoed to stderr and terminate the process; no telemetry is sent.
 
+## Web access key methods
+
+`webAccess.status` and `webAccess.configure` call the agent key owner and return only configured status.
+The key is stored outside AppConfig and never included in settings broadcasts.
+
 ## HTTP contracts
 
 - `/health` returns `ok`. Static assets are rooted at `staticDir`; unresolved SPA routes receive

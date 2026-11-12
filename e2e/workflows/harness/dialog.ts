@@ -2,7 +2,7 @@ import type {
 	AskUserQuestionAnswer,
 	AskUserQuestionItem,
 	AskUserQuestionResult,
-} from "@thinkrail/pi-ask-user-question/core";
+} from "@thinkrail/ask-user-question/core";
 
 export type DialogRung = "script" | "persona" | "fallback";
 

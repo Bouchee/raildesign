@@ -6,7 +6,7 @@ import { resolveBuildRuntimeSources } from "./buildSupport";
 test("runtime source manifest covers the launcher artifact surface", () => {
 	const sources = resolveBuildRuntimeSources();
 	expect(sources.skillRoots.filter(({ route }) => route === "host")).toHaveLength(4);
-	expect(sources.skillRoots.some(({ route }) => route === "extensions/web-access")).toBe(true);
+	expect(sources.skillRoots.every(({ route }) => route === "host")).toBe(true);
 	expect(sources.skillRoots.every(({ source }) => existsSync(source))).toBe(true);
 	expect(
 		Object.fromEntries(

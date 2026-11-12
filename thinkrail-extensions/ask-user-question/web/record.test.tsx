@@ -1,8 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type {
-	AskUserQuestionAnswer,
-	AskUserQuestionItem,
-} from "@thinkrail/pi-ask-user-question/core";
+import type { AskUserQuestionAnswer, AskUserQuestionItem } from "@thinkrail/ask-user-question/core";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AnsweredReceipt } from "./record";
 

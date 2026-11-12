@@ -1,8 +1,8 @@
 import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
+import type { AskUserQuestionArgs } from "@thinkrail/ask-user-question/core";
 import type { ToolResponsePendingDetails } from "@thinkrail/contracts";
-import type { AskUserQuestionArgs } from "@thinkrail/pi-ask-user-question/core";
 import {
 	enterDefaultWorkspace,
 	hideAuxiliaryWorkbench,

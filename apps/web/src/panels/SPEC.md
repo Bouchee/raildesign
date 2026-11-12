@@ -15,6 +15,17 @@ Active panels offer no continue-to-workspace execution, agent plan review or str
 
 The application owns message, tool, usage and event types in `sessionProtocol.ts`. `session.event` carries `{sessionId,runId,seq,event}` with increasing per-session sequence numbers. Initial transcript hydration buffers events and applies only events above `SessionSummary.eventSeq`. Stable IDs join streamed and final messages. SDK details, routing credentials and checkpoints stay on the host. Basic confirmations carry session, run, interaction and revision ownership, and remain visible on reply failure. Stage 1 exposes read/search/command/edit, approval and Stop; durable continuous input and compaction are available in stage 2; advanced execution controls remain assigned to stage 3. RailDesign does not offer upstream analytics consent, surveys, Central or old Pi configuration folders.
 
+## DeepSeek web access
+
+`WebAccessSettings` supplies the separate DeepSeek platform key controls in Extensions settings.
+The Agent navigation group exposes Extensions when the extension catalog protocol is available.
+The host stores the key outside AppConfig and broadcasts no key value.
+The browser reads only `configured` status after save and refresh.
+The password field clears after each save attempt.
+Remove key sends an empty key through the same typed method.
+The UI explains the separate provider and per-request cost.
+The settings browser test covers save, private storage, refresh and removal without external API calls.
+
 ## Responsibility
 
 Chat settings exposes the local SDK tracing switch. It starts disabled, follows the host settings

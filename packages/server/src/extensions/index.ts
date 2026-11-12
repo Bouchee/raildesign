@@ -1,23 +1,17 @@
 export type {
-	ExtensionSessionServices,
 	InteractiveTool,
+	SdkToolServices,
 	ToolResponse,
 } from "@thinkrail/extension-api/server";
 export { listExtensionCatalog } from "./catalog";
-export {
-	type ExtensionDisabled,
-	type ExtensionSettingValue,
-	extensionSessionServices,
-	type HostSessionServices,
-	omitDisabledRegistryExtensions,
-	preferRegistryTools,
-	type RegistryExtensionKind,
-	registryExtensionName,
-	registryInlineExtensions,
-} from "./inline";
-export { type InteractiveTools, interactiveTools } from "./interactive";
+export { type ExtensionDisabled, type InteractiveTools, interactiveTools } from "./interactive";
 export { type ServerExtensionEntry, serverExtensions } from "./registry";
-export { registrySdkTools, type SdkExtensionSnapshot, snapshotSdkExtensions } from "./sdk";
+export {
+	registrySdkTools,
+	type SdkExtensionKind,
+	type SdkExtensionSnapshot,
+	snapshotSdkExtensions,
+} from "./sdk";
 export {
 	extensionSkillRoots,
 	resolveExtensionSkillRoots,

@@ -1,58 +1,61 @@
 import { describe, expect, test } from "bun:test";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { ExtensionSessionServices } from "@thinkrail/extension-api/server";
+import { RunContext } from "@openai/agents";
+import type { SdkToolServices } from "@thinkrail/extension-api/server";
 import extension from "./index";
 
 type ExecResult = { content: Array<{ type: string; text: string }>; details: unknown };
-type CapturedTool = {
-	name: string;
-	promptGuidelines?: string[];
-	execute: (
-		id: string,
-		params: unknown,
-		signal?: unknown,
-		onUpdate?: unknown,
-		ctx?: { cwd: string },
-	) => Promise<ExecResult>;
-};
-
 const checked: Array<{ path: string; cwd: string }> = [];
-
-const session: ExtensionSessionServices = {
-	expectToolResponse: () => {},
-	awaitToolResponse: async () => ({ kind: "deferred" }),
+const session: SdkToolServices = {
+	webAccess: {
+		search: async () => {
+			throw new Error("No web service in this fixture");
+		},
+		fetch: async () => {
+			throw new Error("No web service in this fixture");
+		},
+	},
+	cwd: "/workspace",
+	assertActive: () => {},
+	toolResponse: () => ({ kind: "deferred" }),
+	markToolFailed: () => {},
 	setting: () => false,
 	workspaceFiles: {
 		check: async (path, cwd) => {
 			checked.push({ path, cwd });
 			if (path === "missing.html") throw new Error("no such file");
 		},
-		scratchDir: ".thinkrail/context/mockups/",
+		scratchDir: ".raildesign/context/mockups/",
 	},
 };
 
-function loadTool(): CapturedTool {
-	let captured: CapturedTool | undefined;
-	const fakePi = {
-		registerTool: (def: CapturedTool) => {
-			captured = def;
+function loadTool() {
+	const sdkTool = extension.sdkTools(session)[0];
+	if (!sdkTool) throw new Error("Missing visualization tool");
+	return {
+		name: sdkTool.name,
+		description: sdkTool.description,
+		async execute(
+			_id: string,
+			params: unknown,
+			_signal?: unknown,
+			_update?: unknown,
+			_context?: unknown,
+		): Promise<ExecResult> {
+			const output = await sdkTool.invoke(new RunContext({}), JSON.stringify(params));
+			const result = typeof output === "string" ? JSON.parse(output) : output;
+			if (result.isError) throw new Error(result.error);
+			return result;
 		},
 	};
-	const factory = extension.sessionExtensions?.(session)[0];
-	if (!factory) throw new Error("server half declares no extension factory");
-	factory(fakePi as unknown as ExtensionAPI);
-	if (!captured) throw new Error("factory did not register a tool");
-	return captured;
 }
 
 describe("visualize server half", () => {
-	test("composes one per-session parent extension named visualize and no children or skills", () => {
+	test("creates one SDK visualization tool and no child tools or Skills", () => {
 		expect(extension.name).toBe("visualize");
 		expect(extension.title).toBe("Visualize");
 		expect(extension.description).toBeTruthy();
-		expect(extension.extensions).toHaveLength(0);
-		expect(extension.sessionExtensions?.(session)).toHaveLength(1);
-		expect(extension).not.toHaveProperty("childExtensions");
+		expect(extension.sdkTools(session)).toHaveLength(1);
+		expect(extension).not.toHaveProperty("sdkChildTools");
 		expect(extension).not.toHaveProperty("skillPackages");
 		expect(loadTool().name).toBe("visualize");
 	});
@@ -137,10 +140,10 @@ describe("visualize server half", () => {
 		const run = (params: unknown) =>
 			tool.execute("id", params, undefined, undefined, { cwd: "/workspace" });
 		await expect(
-			run({ type: "file", path: ".thinkrail/context/mockups/after.html", before: "before.html" }),
+			run({ type: "file", path: ".raildesign/context/mockups/after.html", before: "before.html" }),
 		).resolves.toBeDefined();
 		expect(checked).toEqual([
-			{ path: ".thinkrail/context/mockups/after.html", cwd: "/workspace" },
+			{ path: ".raildesign/context/mockups/after.html", cwd: "/workspace" },
 			{ path: "before.html", cwd: "/workspace" },
 		]);
 		await expect(run({ type: "file", path: "missing.html" })).rejects.toThrow(
@@ -149,6 +152,6 @@ describe("visualize server half", () => {
 	});
 
 	test("points the mockup guideline at the gitignored scratch directory", () => {
-		expect(loadTool().promptGuidelines?.[0]).toContain("`.thinkrail/context/mockups/`");
+		expect(loadTool().description).toContain("`.raildesign/context/mockups/`");
 	});
 });

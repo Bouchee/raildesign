@@ -17,6 +17,7 @@ import { InstallPackageDialog } from "./InstallPackageDialog";
 import { PiBuiltinsGroup, PiPackagesGroup } from "./PiPackagesSettings";
 import { saveSettings } from "./saveSettings";
 import { UPDATE_CHECK_KEY, usePiPackages } from "./usePiPackages";
+import { WebAccessSettings } from "./WebAccessSettings";
 
 const BUNDLED_DESCRIPTIONS: Readonly<Record<string, MessageKey>> = {
 	visualize: "settings.extensions.visualize.description",
@@ -257,6 +258,7 @@ export function ExtensionsSettings() {
 					onSetting={settingsSupported ? changeSetting : undefined}
 				/>
 			</section>
+			<WebAccessSettings />
 			{protocolVersion !== null && protocolVersion >= OTHER_AGENT_SKILLS_PROTOCOL_VERSION ? (
 				<section data-testid="settings-other-agent-skills" className="flex flex-col">
 					<h4 className="pb-8 tr-text-label-pill text-text-subtle">

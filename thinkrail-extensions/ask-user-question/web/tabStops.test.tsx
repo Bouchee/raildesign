@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import type { AskUserQuestionItem } from "@thinkrail/ask-user-question/core";
 import { ASK_DISCUSS_PROTOCOL_VERSION } from "@thinkrail/contracts";
 import type { ToolInteraction } from "@thinkrail/extension-api/web";
-import type { AskUserQuestionItem } from "@thinkrail/pi-ask-user-question/core";
 import { TooltipProvider } from "@thinkrail/ui/tooltip";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AskUserQuestionCard } from "./AskUserQuestionCard";

@@ -9,9 +9,7 @@ import {
 	buildQuestionnaireResponse,
 	DECLINE_MESSAGE,
 	DISCUSS_INSTRUCTION,
-	isAckDetails,
 	isAskUserQuestionResult,
-	isolateAskUserQuestionBatch,
 	MAX_HEADER_LENGTH,
 	MAX_LABEL_LENGTH,
 	MAX_RECOMMENDED_REASON_LENGTH,
@@ -294,7 +292,6 @@ describe("buildQuestionnaireResponse", () => {
 		);
 		expect(text(result)).toContain("discuss this question first");
 		expect(text(result)).toContain(DISCUSS_INSTRUCTION);
-		expect(result.terminate).toBeUndefined();
 	});
 
 	test("marks a multi answer's typed text as the user's own answer", () => {
@@ -339,7 +336,7 @@ describe("outcomeResult", () => {
 	test("a deferred answer is the canonical ack and ends the turn", () => {
 		const result = outcomeResult({ kind: "deferred" }, args());
 		expect(text(result)).toBe(ASK_ACK_TEXT);
-		expect(isAckDetails(result.details)).toBe(true);
+		expect(result.details).toEqual({ kind: "ack" });
 		expect(result.terminate).toBe(true);
 	});
 
@@ -355,42 +352,6 @@ describe("outcomeResult", () => {
 		expect(text(result)).toBe(ASK_STOPPED_ERROR);
 		expect(result.details).toEqual({ answers: [], cancelled: true });
 		expect(result.terminate).toBe(true);
-	});
-});
-
-describe("isolateAskUserQuestionBatch", () => {
-	test("keeps text and the first ask as the only tool call", () => {
-		const message = {
-			role: "assistant",
-			content: [
-				{ type: "text", text: "I need input." },
-				{ type: "toolCall", id: "read-1", name: "read", arguments: {} },
-				{ type: "toolCall", id: "ask-1", name: "ask_user_question", arguments: args() },
-				{ type: "toolCall", id: "ask-2", name: "ask_user_question", arguments: args() },
-				{ type: "toolCall", id: "bash-1", name: "bash", arguments: {} },
-			],
-		};
-		const isolated = isolateAskUserQuestionBatch(message);
-		expect(isolated?.content.map((block) => ("id" in block ? block.id : block.type))).toEqual([
-			"text",
-			"ask-1",
-		]);
-	});
-
-	test("leaves messages without an ask, or with nothing to drop, untouched", () => {
-		expect(
-			isolateAskUserQuestionBatch({
-				role: "assistant",
-				content: [{ type: "toolCall", id: "read-1", name: "read" }],
-			}),
-		).toBeUndefined();
-		expect(
-			isolateAskUserQuestionBatch({
-				role: "assistant",
-				content: [{ type: "toolCall", id: "ask-1", name: "ask_user_question" }],
-			}),
-		).toBeUndefined();
-		expect(isolateAskUserQuestionBatch({ role: "user", content: "hi" })).toBeUndefined();
 	});
 });
 

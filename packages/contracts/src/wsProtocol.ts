@@ -133,7 +133,7 @@ export type TemplateReadLocation =
 	| { projectId: string; workspaceId?: never }
 	| { workspaceId?: never; projectId?: never };
 
-export const PROTOCOL_VERSION = 116;
+export const PROTOCOL_VERSION = 117;
 export const DURABLE_SESSION_PROTOCOL_VERSION = 116;
 export const SDK_SESSION_PROTOCOL_VERSION = 115;
 export const QUESTION_PANEL_PROTOCOL_VERSION = 114;
@@ -458,6 +458,8 @@ export const WS_METHODS = {
 	skillList: "skill.list",
 	skillsState: "skills.state",
 	extensionList: "extension.list",
+	webAccessStatus: "webAccess.status",
+	webAccessConfigure: "webAccess.configure",
 	packagesList: "packages.list",
 	packagesInstall: "packages.install",
 	packagesRemove: "packages.remove",
@@ -810,6 +812,10 @@ export interface CustomEndpointModel {
 	tools: boolean | null;
 }
 
+export interface WebAccessStatus {
+	configured: boolean;
+}
+
 /** An OpenAI-compatible `custom-*` provider in pi's `models.json`. The key itself never crosses the wire. */
 export interface CustomEndpoint {
 	id: string;
@@ -1126,6 +1132,8 @@ export interface WsMethodMap {
 	"skill.list": { params: { projectId: string }; result: SlashCommandInfo[] };
 	"skills.state": { params: { workspaceId: string }; result: SkillCatalogEntry[] };
 	"extension.list": { params: Record<string, never>; result: ExtensionCatalogEntry[] };
+	"webAccess.status": { params: Record<string, never>; result: WebAccessStatus };
+	"webAccess.configure": { params: { apiKey: string }; result: WebAccessStatus };
 	"packages.list": { params: { workspaceId?: string; force?: boolean }; result: PiPackagesCatalog };
 	"packages.install": {
 		params: { source: string; scope: PiPackageScope; workspaceId?: string };

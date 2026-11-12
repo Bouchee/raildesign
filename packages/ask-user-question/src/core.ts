@@ -1,5 +1,3 @@
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-
 export const ASK_USER_QUESTION_TOOL_NAME = "ask_user_question";
 
 export const MIN_OPTIONS = 1;
@@ -79,18 +77,10 @@ export type AskOutcome =
 	| { kind: "deferred"; reason?: "chat" }
 	| { kind: "abandoned" };
 
-export interface AskRequest {
-	toolCallId: string;
-	args: AskUserQuestionArgs;
-	signal: AbortSignal | undefined;
-	ctx: ExtensionContext;
-}
-
-export type AskUserQuestionAsker = (request: AskRequest) => Promise<AskOutcome>;
-
 export interface AskToolResult<D> {
 	content: { type: "text"; text: string }[];
 	details: D;
+	/** Ends the run without another model call; the host maps it to SDK `toolUseBehavior`. */
 	terminate?: boolean;
 }
 
@@ -99,7 +89,6 @@ export const ASK_ACK_TEXT =
 export const ASK_CHAT_TEXT =
 	"The user chose to discuss these questions in chat instead of answering them here. This turn ends here; their reply will arrive as the next user message. Do not assume an answer until it arrives.";
 export const ASK_STOPPED_ERROR = "Question cancelled because the run was stopped";
-export const ASK_UNAVAILABLE_TEXT = "Error: UI not available (running in non-interactive mode)";
 export const DECLINE_MESSAGE = "User declined to answer questions";
 
 const ENVELOPE_PREFIX = "User has answered your questions:";
@@ -259,7 +248,6 @@ export function buildQuestionnaireResponse(
 		result,
 	);
 }
-
 export function outcomeResult(
 	outcome: AskOutcome,
 	args: AskUserQuestionArgs,
@@ -309,41 +297,4 @@ export function isAskUserQuestionResult(value: unknown): value is AskUserQuestio
 		Array.isArray((value as AskUserQuestionResult).answers) &&
 		typeof (value as AskUserQuestionResult).cancelled === "boolean"
 	);
-}
-
-export function isAckDetails(details: unknown): details is AskUserQuestionAckDetails {
-	return !!details && (details as AskUserQuestionAckDetails).kind === "ack";
-}
-
-interface ContentBlockView {
-	type?: unknown;
-	name?: unknown;
-	id?: unknown;
-}
-
-const NON_EXECUTABLE_STOP_REASONS: ReadonlySet<unknown> = new Set(["error", "aborted", "length"]);
-
-export function executableAskCallIds(message: { role: string }): string[] {
-	const { content, stopReason } = message as { content?: unknown; stopReason?: unknown };
-	if (message.role !== "assistant" || !Array.isArray(content)) return [];
-	if (NON_EXECUTABLE_STOP_REASONS.has(stopReason)) return [];
-	return (content as ContentBlockView[]).flatMap((block) =>
-		block?.type === "toolCall" &&
-		block.name === ASK_USER_QUESTION_TOOL_NAME &&
-		typeof block.id === "string"
-			? [block.id]
-			: [],
-	);
-}
-
-export function isolateAskUserQuestionBatch<M extends { role: string }>(message: M): M | undefined {
-	const content = (message as { content?: unknown }).content;
-	if (message.role !== "assistant" || !Array.isArray(content)) return undefined;
-	const blocks = content as ContentBlockView[];
-	const askIndex = blocks.findIndex(
-		(block) => block?.type === "toolCall" && block.name === ASK_USER_QUESTION_TOOL_NAME,
-	);
-	if (askIndex < 0) return undefined;
-	const kept = blocks.filter((block, index) => block?.type !== "toolCall" || index === askIndex);
-	return kept.length === blocks.length ? undefined : { ...message, content: kept };
 }

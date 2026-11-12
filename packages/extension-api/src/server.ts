@@ -1,4 +1,3 @@
-import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import type { Tool } from "@openai/agents";
 
 export type ToolResponse =
@@ -11,13 +10,6 @@ export interface WorkspaceFiles {
 	scratchDir: string;
 }
 
-export interface ExtensionSessionServices {
-	expectToolResponse(toolCallId: string): void;
-	awaitToolResponse(toolCallId: string, signal: AbortSignal | undefined): Promise<ToolResponse>;
-	setting(key: string): boolean;
-	workspaceFiles: WorkspaceFiles;
-}
-
 export interface ExtensionBooleanSetting {
 	type: "boolean";
 	default: boolean;
@@ -25,7 +17,13 @@ export interface ExtensionBooleanSetting {
 
 export type ExtensionSetting = ExtensionBooleanSetting;
 
+export interface WebAccessServices {
+	search(query: string, count: number, signal?: AbortSignal): Promise<unknown>;
+	fetch(url: string, signal?: AbortSignal): Promise<unknown>;
+}
+
 export interface SdkToolServices {
+	webAccess: WebAccessServices;
 	cwd: string;
 	assertActive(): void;
 	toolResponse(toolCallId: string): ToolResponse;
@@ -44,15 +42,15 @@ export interface ServerExtension {
 	name: string;
 	title?: string;
 	description?: string;
-	extensions: ExtensionFactory[];
-	sessionExtensions?: (session: ExtensionSessionServices) => ExtensionFactory[];
 	interactiveTools?: Record<string, InteractiveTool>;
 	sdkTools?: (session: SdkToolServices) => Tool[];
 	settings?: Record<string, ExtensionSetting>;
-	childExtensions?: ExtensionFactory[];
+	sdkChildTools?: (session: SdkToolServices) => Tool[];
 	skillPackages?: string[];
 }
 
 export function defineServerExtension<T extends ServerExtension>(extension: T): T {
 	return extension;
 }
+
+export { type ParsedToolResultContent, parseToolResultContent } from "./toolResultContent";

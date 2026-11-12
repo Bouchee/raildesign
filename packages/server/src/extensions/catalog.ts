@@ -1,48 +1,36 @@
-import type { ExtensionAPI, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import type { ExtensionCatalogEntry } from "@thinkrail/contracts";
-import { extensionSessionServices, type HostSessionServices } from "./inline";
+import type { SdkToolServices } from "@thinkrail/extension-api/server";
 import { type ServerExtensionEntry, serverExtensions } from "./registry";
-
-const inert: unknown = new Proxy(() => inert, {
-	get: (_target, key) => (key === "then" ? undefined : inert),
-	apply: () => inert,
-});
-
-async function recordToolNames(factory: ExtensionFactory): Promise<string[]> {
-	const tools: string[] = [];
-	const recorder = new Proxy(
-		{},
-		{
-			get: (_target, key) => {
-				if (key === "registerTool") return (tool: { name: string }) => tools.push(tool.name);
-				return key === "then" ? undefined : inert;
-			},
-		},
-	);
-	await Promise.resolve()
-		.then(() => factory(recorder as ExtensionAPI))
-		.catch(() => undefined);
-	return tools;
-}
-
-const inertSession: HostSessionServices = {
-	expectToolResponse: () => {},
-	awaitToolResponse: () => Promise.reject(new Error("the Settings catalog has no session")),
-	workspaceFiles: {
-		check: () => Promise.reject(new Error("the Settings catalog has no workspace")),
-		scratchDir: "",
-	},
-};
 
 type ExtensionDescription = Omit<ExtensionCatalogEntry, "enabled">;
 
-async function describeEntry(entry: ServerExtensionEntry): Promise<ExtensionDescription> {
-	const { extension } = entry;
-	const factories = [
-		...extension.extensions,
-		...(extension.sessionExtensions?.(extensionSessionServices(extension, inertSession)) ?? []),
-	];
-	const tools = (await Promise.all(factories.map(recordToolNames))).flat();
+function describeEntry({ extension }: ServerExtensionEntry): ExtensionDescription {
+	const unavailable = (): never => {
+		throw new Error("The Settings catalog has no active session");
+	};
+	const services: SdkToolServices = {
+		webAccess: {
+			search: async () => {
+				throw new Error("No web service in this fixture");
+			},
+			fetch: async () => {
+				throw new Error("No web service in this fixture");
+			},
+		},
+		cwd: "",
+		assertActive: unavailable,
+		toolResponse: unavailable,
+		markToolFailed: unavailable,
+		workspaceFiles: { check: async () => unavailable(), scratchDir: "" },
+		setting(key) {
+			const setting = extension.settings?.[key];
+			if (!setting) throw new Error("Unknown extension setting");
+			return setting.default;
+		},
+	};
+	const tools = (extension.sdkTools?.(services) ?? []).flatMap((tool) =>
+		tool.type === "function" ? [tool.name] : [],
+	);
 	const settings = Object.entries(extension.settings ?? {}).map(([key, setting]) => ({
 		key,
 		default: setting.default,
@@ -52,12 +40,12 @@ async function describeEntry(entry: ServerExtensionEntry): Promise<ExtensionDesc
 		title: extension.title ?? extension.name,
 		...(extension.description ? { description: extension.description } : {}),
 		tools: [...new Set(tools)],
-		hasChildExtensions: (extension.childExtensions?.length ?? 0) > 0,
+		hasChildExtensions: extension.sdkChildTools !== undefined,
 		...(settings.length > 0 ? { settings } : {}),
 	};
 }
 
-const described = new WeakMap<readonly ServerExtensionEntry[], Promise<ExtensionDescription[]>>();
+const described = new WeakMap<readonly ServerExtensionEntry[], ExtensionDescription[]>();
 
 export async function listExtensionCatalog(
 	disabled: ReadonlySet<string>,
@@ -65,10 +53,10 @@ export async function listExtensionCatalog(
 ): Promise<ExtensionCatalogEntry[]> {
 	let descriptions = described.get(entries);
 	if (!descriptions) {
-		descriptions = Promise.all(entries.map(describeEntry));
+		descriptions = entries.map(describeEntry);
 		described.set(entries, descriptions);
 	}
-	return (await descriptions).map((description) => ({
+	return descriptions.map((description) => ({
 		...description,
 		enabled: !disabled.has(description.name),
 	}));

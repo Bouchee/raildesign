@@ -3,28 +3,21 @@ import { resultText, strArg, type ToolRenderProps } from "@thinkrail/extension-a
 import { useT } from "@thinkrail/locales/react";
 import { WebResultBody } from "./WebResultBody";
 
-function firstQuery(args: Record<string, unknown>): string {
-	const single = strArg(args, "query");
-	if (single) return single;
-	const many = args.queries;
-	return Array.isArray(many) && typeof many[0] === "string" ? many[0] : "";
-}
-
 export function webSearchSummary({ args }: ToolRenderProps): string {
-	return firstQuery(args);
+	return strArg(args, "query");
 }
 
 function providerOf(result: unknown): string {
 	const details = (result as { details?: unknown } | null)?.details as
-		| { provider?: unknown; results?: Array<{ provider?: unknown }> }
+		| { provider?: unknown }
 		| undefined;
-	const p = details?.provider ?? details?.results?.[0]?.provider;
+	const p = details?.provider;
 	return typeof p === "string" ? p : "";
 }
 
 export function WebSearchCard({ toolCallId, args, result, status }: ToolRenderProps) {
 	const t = useT();
-	const query = firstQuery(args);
+	const query = strArg(args, "query");
 	const provider = providerOf(result);
 	const output = resultText(result);
 

@@ -2,8 +2,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
+import type { AskUserQuestionItem } from "@thinkrail/ask-user-question/core";
 import type { SessionEvent } from "@thinkrail/contracts";
-import type { AskUserQuestionItem } from "@thinkrail/pi-ask-user-question/core";
 import {
 	checkBudget,
 	checks,

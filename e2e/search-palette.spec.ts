@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, type Page, test, type WebSocketRoute } from "@playwright/test";
+import type { AskUserQuestionArgs } from "@thinkrail/ask-user-question/core";
 import {
 	MATCH_TIER,
 	MAX_SEARCH_PREVIEW_BYTES,
@@ -10,7 +11,6 @@ import {
 	type WsClientMessage,
 	type WsParams,
 } from "@thinkrail/contracts";
-import type { AskUserQuestionArgs } from "@thinkrail/pi-ask-user-question/core";
 import {
 	createWorkspaceViaDialog,
 	defaultWorkspaceRow,

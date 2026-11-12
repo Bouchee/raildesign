@@ -11,13 +11,13 @@ import {
 	RiSkipForwardLine as SkipForward,
 	RiStopCircleLine as StopGlyph,
 } from "@remixicon/react";
-import type { ToolInteraction } from "@thinkrail/extension-api/web";
-import { type Translator, useT } from "@thinkrail/locales/react";
 import type {
 	AskUserQuestionAnswer,
 	AskUserQuestionItem,
 	AskUserQuestionResult,
-} from "@thinkrail/pi-ask-user-question/core";
+} from "@thinkrail/ask-user-question/core";
+import type { ToolInteraction } from "@thinkrail/extension-api/web";
+import { type Translator, useT } from "@thinkrail/locales/react";
 import { cn } from "@thinkrail/ui/utils";
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import { discussReasonKey } from "./discuss";

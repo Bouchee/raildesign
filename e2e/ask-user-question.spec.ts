@@ -1,12 +1,12 @@
 import { realpathSync, rmSync, utimesSync } from "node:fs";
 import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
-import type { ToolCall, ToolResponsePendingDetails } from "@thinkrail/contracts";
 import type {
 	AskUserQuestionArgs,
 	AskUserQuestionOption,
 	AskUserQuestionResult,
-} from "@thinkrail/pi-ask-user-question/core";
+} from "@thinkrail/ask-user-question/core";
+import type { ToolCall, ToolResponsePendingDetails } from "@thinkrail/contracts";
 import {
 	enterDefaultWorkspace,
 	hideAuxiliaryWorkbench,

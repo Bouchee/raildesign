@@ -12,11 +12,10 @@
 	},
 	"dependencies": {
 		"@thinkrail/extension-api": "workspace:*",
-		"jiti": "2.7.0",
-		"pi-web-access": "0.13.0"
+		"@openai/agents": "catalog:",
+		"zod": "catalog:"
 	},
 	"devDependencies": {
-		"@earendil-works/pi-coding-agent": "catalog:",
 		"@types/bun": "catalog:",
 		"typescript": "catalog:"
 	}

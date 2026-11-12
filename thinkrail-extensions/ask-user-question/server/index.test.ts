@@ -1,28 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { ExtensionSessionServices, ToolResponse } from "@thinkrail/extension-api/server";
+import { RunContext } from "@openai/agents";
 import {
 	ASK_ACK_TEXT,
 	ASK_STOPPED_ERROR,
 	ASK_USER_QUESTION_TOOL_NAME,
 	buildQuestionnaireResponse,
-	isAckDetails,
-} from "@thinkrail/pi-ask-user-question/core";
+} from "@thinkrail/ask-user-question/core";
+import type { SdkToolServices, ToolResponse } from "@thinkrail/extension-api/server";
 import askUserQuestion from "./index";
-
-interface CapturedTool {
-	name: string;
-	description: string;
-	parameters: unknown;
-	promptGuidelines?: string[];
-	execute: (
-		id: string,
-		params: unknown,
-		signal: AbortSignal | undefined,
-		onUpdate: undefined,
-		ctx: unknown,
-	) => Promise<{ content: { text: string }[]; details: unknown; terminate?: boolean }>;
-}
 
 const args = {
 	questions: [
@@ -36,254 +21,113 @@ const args = {
 		},
 	],
 };
-
-type MessageEndHandler = (event: { message: unknown }) => unknown;
-
-function compose(
-	respond: (toolCallId: string, signal: AbortSignal | undefined) => Promise<ToolResponse>,
-	expectToolResponse: (toolCallId: string) => void = () => {},
-	richPreviews: () => boolean = () => true,
-	check: (path: string, cwd: string) => Promise<void> = async () => {},
-) {
-	const session: ExtensionSessionServices = {
-		expectToolResponse,
-		awaitToolResponse: respond,
-		setting: (key) => {
-			if (key !== "richPreviews") throw new Error(`unexpected setting ${key}`);
-			return richPreviews();
-		},
-		workspaceFiles: { check, scratchDir: ".thinkrail/context/mockups/" },
-	};
-	const factories = askUserQuestion.sessionExtensions?.(session) ?? [];
-	let tool: CapturedTool | undefined;
-	const handlers = new Map<string, MessageEndHandler>();
-	const pi = {
-		registerTool: (definition: CapturedTool) => {
-			tool = definition;
-		},
-		on: (event: string, handler: MessageEndHandler) => {
-			handlers.set(event, handler);
-		},
-	} as unknown as ExtensionAPI;
-	for (const factory of factories) factory(pi);
-	if (!tool) throw new Error("the session factories registered no tool");
-	return { tool, factories, handlers };
-}
-
+const answer = {
+	cancelled: false,
+	answers: [
+		{ questionIndex: 0, question: "Which library?", kind: "option" as const, answer: "luxon" },
+	],
+};
 const text = (result: { content: { text: string }[] }) =>
 	result.content.map((block) => block.text).join("");
 
-describe("the ask-user-question server half", () => {
-	test("is a session-only extension that registers the tool with ThinkRail's wording", () => {
-		expect(askUserQuestion.name).toBe("ask-user-question");
-		expect(askUserQuestion.extensions).toEqual([]);
-		const { tool, factories } = compose(async () => ({ kind: "deferred" }));
-		expect(factories).toHaveLength(1);
+function compose(
+	response: ToolResponse = { kind: "deferred" },
+	richPreviews = true,
+	check: (path: string, cwd: string) => Promise<void> = async () => {},
+	assertActive: () => void = () => {},
+) {
+	const calls: string[] = [];
+	const failures: string[] = [];
+	const services: SdkToolServices = {
+		webAccess: {
+			search: async () => {
+				throw new Error("No web service in this fixture");
+			},
+			fetch: async () => {
+				throw new Error("No web service in this fixture");
+			},
+		},
+		cwd: "/workspace",
+		assertActive,
+		toolResponse(callId) {
+			calls.push(callId);
+			return response;
+		},
+		markToolFailed(callId) {
+			failures.push(callId);
+		},
+		setting: () => richPreviews,
+		workspaceFiles: { check, scratchDir: ".raildesign/context/mockups/" },
+	};
+	const tool = askUserQuestion.sdkTools(services)[0];
+	if (!tool) throw new Error("Missing question tool");
+	return {
+		tool,
+		calls,
+		failures,
+		async execute(input: unknown = args, callId = "tc") {
+			const output = await tool.invoke(new RunContext({}), JSON.stringify(input), {
+				toolCall: {
+					type: "function_call",
+					callId,
+					name: ASK_USER_QUESTION_TOOL_NAME,
+					arguments: JSON.stringify(input),
+				},
+			});
+			const result = typeof output === "string" ? JSON.parse(output) : output;
+			if (result.isError) throw new Error(result.error);
+			return result;
+		},
+	};
+}
+
+describe("the SDK question tool", () => {
+	test("keeps the interactive contract and complete host guidance", () => {
+		const { tool } = compose();
 		expect(tool.name).toBe(ASK_USER_QUESTION_TOOL_NAME);
 		expect(tool.description).toContain(
 			"render as an interactive card docked above the chat's message box",
 		);
 		expect(tool.description).toContain("then the card is superseded");
-		expect(tool.promptGuidelines?.length).toBe(4);
+		expect(askUserQuestion.settings).toEqual({ richPreviews: { type: "boolean", default: true } });
+		expect(Object.keys(askUserQuestion.interactiveTools)).toEqual([ASK_USER_QUESTION_TOOL_NAME]);
+		expect(askUserQuestion).not.toHaveProperty("sessionExtensions");
 	});
 
-	test("declares its tool interactive under the package's own name and describes late responses", () => {
-		const interactive = askUserQuestion.interactiveTools ?? {};
-		expect(Object.keys(interactive)).toEqual([ASK_USER_QUESTION_TOOL_NAME]);
-		const describe = interactive[ASK_USER_QUESTION_TOOL_NAME]?.describeResponse;
-		const answer = {
-			cancelled: false,
-			answers: [
-				{ questionIndex: 0, question: "Which library?", kind: "option" as const, answer: "luxon" },
-			],
-		};
-		expect(describe?.(args, answer)).toBe(text(buildQuestionnaireResponse(answer, args)));
-		expect(describe?.({ question: "foreign" }, answer)).toBeUndefined();
-		expect(describe?.(args, { picked: "luxon" })).toBeUndefined();
+	test("requires approval before it consumes a saved owned response", async () => {
+		const fixture = compose({ kind: "response", value: answer });
+		expect(await fixture.tool.needsApproval(new RunContext({}), args, "tc")).toBe(true);
+		expect(fixture.calls).toEqual([]);
+		expect(await fixture.execute()).toEqual(buildQuestionnaireResponse(answer, args));
+		expect(fixture.calls).toEqual(["tc"]);
 	});
 
-	test("the package's deferral ack is the host's pending marker", async () => {
-		const deferred = await compose(async () => ({ kind: "deferred" })).tool.execute(
-			"tc",
-			args,
-			undefined,
-			undefined,
-			{},
-		);
-		expect(deferred.details).toEqual({ kind: "ack" });
-	});
-
-	test("announces each executable ask call to the host before it runs", () => {
-		const expected: string[] = [];
-		const { handlers } = compose(
-			async () => ({ kind: "deferred" }),
-			(toolCallId) => expected.push(toolCallId),
-		);
-		handlers.get("message_end")?.({
-			message: {
-				role: "assistant",
-				stopReason: "toolUse",
-				content: [{ type: "toolCall", id: "ask-1", name: ASK_USER_QUESTION_TOOL_NAME }],
-			},
-		});
-		expect(expected).toEqual(["ask-1"]);
-	});
-
-	test("waits for the host's response to this call and returns the answer envelope", async () => {
-		const asked: { toolCallId: string; signal: AbortSignal | undefined }[] = [];
-		const signal = new AbortController().signal;
-		const answer = {
-			cancelled: false,
-			answers: [
-				{ questionIndex: 0, question: "Which library?", kind: "option" as const, answer: "luxon" },
-			],
-		};
-		const { tool } = compose(async (toolCallId, received) => {
-			asked.push({ toolCallId, signal: received });
-			return { kind: "response", value: answer };
-		});
-		const result = await tool.execute("tc-1", args, signal, undefined, { hasUI: false });
-		expect(asked).toEqual([{ toolCallId: "tc-1", signal }]);
-		expect(result).toEqual(buildQuestionnaireResponse(answer, args));
-	});
-
-	test("a deferral is the canonical ack that ends the turn; abandonment reports the stop", async () => {
-		const deferred = await compose(async () => ({ kind: "deferred" })).tool.execute(
-			"tc",
-			args,
-			undefined,
-			undefined,
-			{},
-		);
+	test("keeps the pending marker and abandonment results", async () => {
+		const deferred = await compose().execute();
 		expect(text(deferred)).toBe(ASK_ACK_TEXT);
-		expect(isAckDetails(deferred.details)).toBe(true);
+		expect(deferred.details).toEqual({ kind: "ack" });
 		expect(deferred.terminate).toBe(true);
-		const abandoned = await compose(async () => ({ kind: "abandoned" })).tool.execute(
-			"tc",
-			args,
-			undefined,
-			undefined,
-			{},
-		);
+		const abandoned = await compose({ kind: "abandoned" }).execute();
 		expect(text(abandoned)).toBe(ASK_STOPPED_ERROR);
 		expect(abandoned.terminate).toBe(true);
 	});
 
-	test("a malformed response or a refused wait fails the call", async () => {
-		await expect(
-			compose(async () => ({ kind: "response", value: { kind: "ack" } })).tool.execute(
-				"tc",
-				args,
-				undefined,
-				undefined,
-				{},
-			),
-		).rejects.toThrow("Malformed ask_user_question response");
-		await expect(
-			compose(() => Promise.reject(new Error(ASK_STOPPED_ERROR))).tool.execute(
-				"tc",
-				args,
-				undefined,
-				undefined,
-				{},
-			),
-		).rejects.toThrow(ASK_STOPPED_ERROR);
+	test("rejects invalid response identities and option selections", async () => {
+		for (const value of [
+			{ kind: "ack" },
+			{ ...answer, answers: [{ ...answer.answers[0], question: "Another question" }] },
+			{ ...answer, answers: [{ ...answer.answers[0], answer: "unknown" }] },
+			{ ...answer, answers: [answer.answers[0], answer.answers[0]] },
+		]) {
+			const fixture = compose({ kind: "response", value });
+			await expect(fixture.execute()).rejects.toThrow();
+			expect(fixture.failures).toEqual(["tc"]);
+		}
 	});
 
-	test("declares the rich-preview setting, on by default", () => {
-		expect(askUserQuestion.settings).toEqual({ richPreviews: { type: "boolean", default: true } });
-	});
-
-	test("rich previews offer file fields and the mockup guidance; off, neither is offered", () => {
-		const optionFields = (tool: CapturedTool) =>
-			Object.keys(
-				(
-					tool.parameters as {
-						properties: {
-							questions: {
-								items: {
-									properties: { options: { items: { properties: Record<string, unknown> } } };
-								};
-							};
-						};
-					}
-				).properties.questions.items.properties.options.items.properties,
-			);
-		const rich = compose(async () => ({ kind: "deferred" })).tool;
-		expect(optionFields(rich)).toContain("previewFile");
-		expect(rich.description).toContain("`.thinkrail/context/mockups/`");
-		const plain = compose(
-			async () => ({ kind: "deferred" }),
-			() => {},
-			() => false,
-		).tool;
-		expect(optionFields(plain)).not.toContain("previewFile");
-		expect(plain.description).not.toContain("previewFile");
-		expect(plain.description).toContain("Discuss button");
-	});
-
-	test("reads the setting each time pi loads the factory, so a reload sees a change", () => {
-		let rich = true;
-		const respond = async () => ({ kind: "deferred" as const });
-		const { factories } = compose(
-			respond,
-			() => {},
-			() => rich,
-		);
-		const load = () => {
-			let description = "";
-			const pi = {
-				registerTool: (definition: CapturedTool) => {
-					description = definition.description;
-				},
-				on: () => {},
-			} as unknown as ExtensionAPI;
-			for (const factory of factories) factory(pi);
-			return description;
-		};
-		expect(load()).toContain("previewFile");
-		rich = false;
-		expect(load()).not.toContain("previewFile");
-	});
-
-	test("checks preview files through the host's workspace files before asking", async () => {
-		const checked: string[] = [];
-		let waited = false;
-		const { tool } = compose(
-			async () => {
-				waited = true;
-				return { kind: "deferred" };
-			},
-			() => {},
-			() => true,
-			async (path, cwd) => {
-				checked.push(`${cwd}:${path}`);
-				throw new Error("no such file");
-			},
-		);
-		const withFile = {
-			questions: [
-				{
-					...args.questions[0],
-					options: [
-						{ label: "date-fns", description: "small", previewFile: "mockups/a.html" },
-						{ label: "luxon", description: "rich" },
-					],
-				},
-			],
-		};
-		const result = await tool.execute("tc", withFile, undefined, undefined, { cwd: "/ws" });
-		expect(text(result)).toContain(
-			"cannot show questions[0].options[0].previewFile (mockups/a.html)",
-		);
-		expect(checked).toEqual(["/ws:mockups/a.html"]);
-		expect(waited).toBe(false);
-	});
-
-	test("a late discuss answer reads like a live one", () => {
-		const describe =
-			askUserQuestion.interactiveTools?.[ASK_USER_QUESTION_TOOL_NAME]?.describeResponse;
-		const answer = {
+	test("describes saved and live discussion answers with the same text", () => {
+		const policy = askUserQuestion.interactiveTools[ASK_USER_QUESTION_TOOL_NAME];
+		const response = {
 			cancelled: false,
 			answers: [
 				{
@@ -292,12 +136,67 @@ describe("the ask-user-question server half", () => {
 					kind: "discuss" as const,
 					answer: null,
 					reason: "unclear" as const,
-					notes: "what is luxon?",
+					notes: "What is luxon?",
 				},
 			],
 		};
-		const late = describe?.(args, answer);
-		expect(late).toBe(text(buildQuestionnaireResponse(answer, args)));
-		expect(late).toContain("the user wants to discuss this question first");
+		expect(policy.describeResponse(args, response)).toBe(
+			text(buildQuestionnaireResponse(response, args)),
+		);
+		expect(policy.describeResponse(args, response)).toContain(
+			"the user wants to discuss this question first",
+		);
+		expect(policy.describeResponse({ question: "foreign" }, answer)).toBeUndefined();
+		expect(policy.describeResponse(args, { picked: "luxon" })).toBeUndefined();
+	});
+
+	test("changes offered preview fields and guidance through the setting", () => {
+		const optionFields = (tool: ReturnType<typeof compose>["tool"]) =>
+			Object.keys(
+				(
+					tool.parameters.properties.questions as {
+						items: { properties: { options: { items: { properties: Record<string, unknown> } } } };
+					}
+				).items.properties.options.items.properties,
+			);
+		const rich = compose().tool;
+		expect(optionFields(rich)).toContain("previewFile");
+		expect(rich.description).toContain("`.raildesign/context/mockups/`");
+		const plain = compose({ kind: "deferred" }, false).tool;
+		expect(optionFields(plain)).not.toContain("previewFile");
+		expect(plain.description).not.toContain("previewFile");
+		expect(plain.description).toContain("Discuss button");
+	});
+
+	test("checks preview files before approval and again before response execution", async () => {
+		const checked: string[] = [];
+		const fixture = compose({ kind: "response", value: answer }, true, async (path, cwd) => {
+			checked.push(`${cwd}:${path}`);
+		});
+		const input = { questions: [{ ...args.questions[0], previewFile: "mockups/a.html" }] };
+		expect(await fixture.tool.needsApproval(new RunContext({}), input, "tc")).toBe(true);
+		expect(fixture.calls).toEqual([]);
+		await fixture.execute(input);
+		expect(checked).toEqual(["/workspace:mockups/a.html", "/workspace:mockups/a.html"]);
+	});
+
+	test("a file-check failure or revoked run cannot consume the response", async () => {
+		const failedFile = compose({ kind: "response", value: answer }, true, async () => {
+			throw new Error("no such file");
+		});
+		await expect(
+			failedFile.execute({ questions: [{ ...args.questions[0], previewFile: "missing.html" }] }),
+		).rejects.toThrow("no such file");
+		expect(failedFile.calls).toEqual([]);
+		const revoked = compose(
+			{ kind: "response", value: answer },
+			true,
+			async () => {},
+			() => {
+				throw new Error("Run revoked");
+			},
+		);
+		await expect(revoked.execute()).rejects.toThrow("Run revoked");
+		expect(revoked.calls).toEqual([]);
 	});
 });

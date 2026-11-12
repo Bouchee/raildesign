@@ -109,7 +109,7 @@ test("real settings routes retain the two Skill trust gates and project/workspac
 	});
 });
 
-test("disabling an extension removes its bundled Skills from all current catalog routes", async () => {
+test("web tools do not retain the removed provider's librarian Skill", async () => {
 	for (const disabledExtensions of [[], ["web-access"]]) {
 		await handleRequest("settings.update", { config: { disabledExtensions } }, ctx);
 		for (const [method, params] of [
@@ -122,7 +122,14 @@ test("disabling an extension removes its bundled Skills from all current catalog
 				entries.some(
 					(entry) => entry.name === (method === "skill.list" ? "skill:librarian" : "librarian"),
 				),
-			).toBe(disabledExtensions.length === 0);
+			).toBe(false);
+			expect(
+				entries.some(
+					(entry) =>
+						entry.name ===
+						(method === "skill.list" ? "skill:choosing-a-workflow" : "choosing-a-workflow"),
+				),
+			).toBe(true);
 		}
 	}
 });

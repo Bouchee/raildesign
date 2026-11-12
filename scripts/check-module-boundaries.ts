@@ -25,6 +25,8 @@ const MODULE_RULES: readonly ModuleRule[] = [
 	{ root: "packages/contracts", allowed: [] },
 	{ root: "packages/shared", allowed: ["packages/contracts"] },
 	{ root: "packages/pi-background-commands", allowed: [] },
+	{ root: "packages/visualize", allowed: [] },
+	{ root: "packages/ask-user-question", allowed: [] },
 	{
 		root: "packages/server",
 		allowed: [
@@ -119,6 +121,13 @@ function moduleRules(packages: ReadonlyMap<string, string>): ModuleRule[] {
 		...roots
 			.filter((root) => root.startsWith("pi-extensions/"))
 			.map((root) => ({ root, allowed: [] })),
+		...roots
+			.filter(
+				(root) =>
+					!MODULE_RULES.some((rule) => rule.root === root) &&
+					extensions.some((extension) => extensionHelperRoot(extension) === root),
+			)
+			.map((root) => ({ root, allowed: [] })),
 		...extensions.map((root) => ({
 			root,
 			allowed: [
@@ -127,14 +136,14 @@ function moduleRules(packages: ReadonlyMap<string, string>): ModuleRule[] {
 				"packages/ui",
 				"packages/extension-api",
 				"packages/resource-renderers",
-				piExtensionRoot(root),
+				extensionHelperRoot(root),
 			],
 		})),
 	];
 }
 
-function piExtensionRoot(extensionRoot: string): string {
-	return extensionRoot.replace(/^thinkrail-extensions\//, "pi-extensions/");
+function extensionHelperRoot(extensionRoot: string): string {
+	return extensionRoot.replace(/^thinkrail-extensions\//, "packages/");
 }
 
 function sourceFiles(root: string): string[] {
@@ -279,11 +288,11 @@ function sourceRule(rule: ModuleRule, subpath: string): ModuleRule {
 					"packages/ui",
 					"packages/extension-api",
 					"packages/resource-renderers",
-					piExtensionRoot(rule.root),
+					extensionHelperRoot(rule.root),
 				],
 			};
 		case "server":
-			return { ...rule, allowed: ["packages/extension-api", piExtensionRoot(rule.root)] };
+			return { ...rule, allowed: ["packages/extension-api", extensionHelperRoot(rule.root)] };
 		default:
 			return rule;
 	}

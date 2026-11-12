@@ -15,15 +15,16 @@
 		"@remixicon/react": "catalog:",
 		"@thinkrail/extension-api": "workspace:*",
 		"@thinkrail/locales": "workspace:*",
-		"@thinkrail/pi-visualize": "workspace:*",
 		"@thinkrail/resource-renderers": "workspace:*",
 		"@thinkrail/ui": "workspace:*",
 		"linkedom": "0.18.14",
 		"mermaid": "catalog:",
-		"react": "catalog:"
+		"react": "catalog:",
+		"@thinkrail/visualize": "workspace:*",
+		"@openai/agents": "catalog:",
+		"typebox": "catalog:"
 	},
 	"devDependencies": {
-		"@earendil-works/pi-coding-agent": "catalog:",
 		"@types/bun": "catalog:",
 		"@types/react": "catalog:",
 		"typescript": "catalog:"

@@ -2,7 +2,7 @@ import { RiQuestionnaireLine as MessageCircleQuestion } from "@remixicon/react";
 import type {
 	AskUserQuestionDiscussReason,
 	AskUserQuestionItem,
-} from "@thinkrail/pi-ask-user-question/core";
+} from "@thinkrail/ask-user-question/core";
 import { cn } from "@thinkrail/ui/utils";
 import { type KeyboardEvent, useEffect, useRef } from "react";
 import { type LiftKey, NoteSlot, OptionRow, OtherRow } from "./controls";

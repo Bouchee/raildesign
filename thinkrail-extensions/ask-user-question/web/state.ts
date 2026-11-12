@@ -4,7 +4,7 @@ import type {
 	AskUserQuestionDiscussReason,
 	AskUserQuestionItem,
 	AskUserQuestionOption,
-} from "@thinkrail/pi-ask-user-question/core";
+} from "@thinkrail/ask-user-question/core";
 
 export function parseQuestions(args: Record<string, unknown>): AskUserQuestionItem[] {
 	const qs = (args as Partial<AskUserQuestionArgs>).questions;

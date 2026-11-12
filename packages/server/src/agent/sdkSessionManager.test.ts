@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import {
 	existsSync,
 	mkdirSync,
@@ -51,9 +51,11 @@ import {
 } from "./sdkSessionManager";
 import { applyWorkspacePatch, type ToolGrant } from "./sdkTools";
 import { readSessionRecord, sessionRecordPath } from "./sessionStore";
+import { setWebAccessKey } from "./webAccess";
 
 let root: string;
 let worktree: string;
+let webFetchMock: ReturnType<typeof spyOn<typeof globalThis, "fetch">> | undefined;
 const originalEnvironment = {
 	data: process.env.THINKRAIL_DATA_DIR,
 	key: process.env.OPENAI_API_KEY,
@@ -81,6 +83,8 @@ beforeEach(() => {
 	]);
 });
 afterEach(() => {
+	webFetchMock?.mockRestore();
+	webFetchMock = undefined;
 	setSessionResourceCleanup(undefined);
 	disposeAllSessions();
 	setTrashImplementationForTests(undefined);
@@ -102,6 +106,153 @@ afterEach(() => {
 const command = (callId: string, command: string) =>
 	modelResponse([functionCall("bash", JSON.stringify({ command, timeoutMs: 10000 }), { callId })]);
 const done = () => modelResponse([assistantMessage("done")]);
+
+function offlineWeb(reply: (request: Request) => Response | Promise<Response>) {
+	const implementation = async (
+		input: Parameters<typeof fetch>[0],
+		init?: Parameters<typeof fetch>[1],
+	) => reply(new Request(input, init));
+	webFetchMock = spyOn(globalThis, "fetch").mockImplementation(
+		Object.assign(implementation, { preconnect: () => {} }),
+	);
+	return webFetchMock;
+}
+
+test("SDK web tools keep renderer metadata in restored transcripts and readable text in model history", async () => {
+	setWebAccessKey("offline-platform-key");
+	const requests: string[] = [];
+	offlineWeb((request) => {
+		requests.push(request.url);
+		return request.url.endsWith("/search")
+			? Response.json({
+					results: [{ title: "Source", url: "https://example.com/page", summary: "Summary" }],
+				})
+			: Response.json({ title: "Page", content: "Page body" });
+	});
+	const model = new ScriptedModel([
+		modelResponse([
+			functionCall("web_search", { query: "example", count: 1 }, { callId: "web-search" }),
+		]),
+		modelResponse([
+			functionCall("web_fetch", { url: "https://example.com/page" }, { callId: "web-fetch" }),
+		]),
+		done(),
+	]);
+	configureAgentModelFactory(() => model);
+	const { sessionId } = await createSession({ cwd: worktree, workspaceId: "workspace" });
+	await promptSession(sessionId, "Search and read the result");
+	expect(requests).toEqual([
+		"https://api.deepseek.com/v1/tools/search",
+		"https://api.deepseek.com/v1/tools/fetch",
+	]);
+	const results = readSessionRecord(sessionId)?.messages.filter(
+		(item) => item.role === "toolResult",
+	);
+	if (!results) throw new Error("Missing web transcript");
+	expect(results).toEqual([
+		expect.objectContaining({
+			toolCallId: "web-search",
+			content: [{ type: "text", text: "Source\nhttps://example.com/page\nSummary" }],
+			details: {
+				provider: "DeepSeek",
+				results: [{ title: "Source", url: "https://example.com/page", summary: "Summary" }],
+			},
+			isError: false,
+		}),
+		expect.objectContaining({
+			toolCallId: "web-fetch",
+			content: [{ type: "text", text: "# Page\n\nPage body" }],
+			details: {
+				provider: "DeepSeek",
+				title: "Page",
+				url: "https://example.com/page",
+				truncated: false,
+			},
+			isError: false,
+		}),
+	]);
+	const input = model.calls[2]?.request.input;
+	if (!Array.isArray(input)) throw new Error("Missing web continuation input");
+	expect(input.filter((item) => item.type === "function_call_result")).toEqual([
+		expect.objectContaining({
+			callId: "web-search",
+			output: { type: "text", text: "Source\nhttps://example.com/page\nSummary" },
+		}),
+		expect.objectContaining({
+			callId: "web-fetch",
+			output: { type: "text", text: "# Page\n\nPage body" },
+		}),
+	]);
+	expect(JSON.stringify(input)).not.toContain('"provider":"DeepSeek"');
+	await removeSession(sessionId);
+	const restored = await getSessionMessages(sessionId, "workspace", worktree);
+	expect(restored.messages.filter((item) => item.role === "toolResult")).toEqual(results);
+	expect(getSessionState(sessionId).completion?.outcome).toBe("succeeded");
+	model.assertComplete();
+});
+
+test("a disabled web extension is absent from the SDK graph and cannot execute", async () => {
+	saveConfig({ ...loadConfig(), disabledExtensions: ["web-access"] });
+	const fetch = offlineWeb(() => Response.json({ results: [] }));
+	const model = new ScriptedModel([
+		modelResponder(({ request }) => {
+			expect(JSON.stringify(request.tools)).not.toContain("web_search");
+			expect(JSON.stringify(request.tools)).not.toContain("web_fetch");
+			return [
+				functionCall("web_search", { query: "blocked", count: 1 }, { callId: "disabled-web" }),
+			];
+		}),
+	]);
+	configureAgentModelFactory(() => model);
+	const { sessionId } = await createSession({ cwd: worktree, workspaceId: "workspace" });
+	await promptSession(sessionId, "Try a disabled web tool");
+	expect(fetch).not.toHaveBeenCalled();
+	expect(getSessionState(sessionId).completion?.outcome).toBe("failed");
+	expect(readSessionRecord(sessionId)?.effects["disabled-web"]).toBeUndefined();
+	model.assertComplete();
+});
+
+test("Stop cancels an SDK web request before a late result can enter the transcript", async () => {
+	setWebAccessKey("offline-platform-key");
+	const started = latch();
+	let cancelled = false;
+	offlineWeb(
+		() =>
+			new Response(
+				new ReadableStream({
+					start() {
+						started.release();
+					},
+					cancel() {
+						cancelled = true;
+					},
+				}),
+			),
+	);
+	const model = new ScriptedModel([
+		modelResponse([
+			functionCall("web_fetch", { url: "https://example.com/page" }, { callId: "stopped-web" }),
+		]),
+	]);
+	configureAgentModelFactory(() => model);
+	const { sessionId } = await createSession({ cwd: worktree, workspaceId: "workspace" });
+	const running = promptSession(sessionId, "Read the page");
+	await started.promise;
+	await abortSession(sessionId);
+	await running;
+	expect(cancelled).toBe(true);
+	expect(getSessionState(sessionId).completion?.outcome).toBe("cancelled");
+	expect(
+		readSessionRecord(sessionId)?.messages.some(
+			(item) =>
+				item.role === "toolResult" &&
+				item.toolCallId === "stopped-web" &&
+				item.details !== undefined,
+		),
+	).toBe(false);
+	model.assertComplete();
+});
+
 function approvalResponse(request: ExtUiRequest, value: boolean): ExtUiResponse {
 	if (
 		request.kind !== "confirm" ||
@@ -921,11 +1072,20 @@ test("composer steering supersedes only the pending question and reaches continu
 	setSessionStatePublisher((record) => {
 		if (record.state.needsInput?.kind === "tool-response") ready.release();
 	});
+	let settled = 0;
+	setSessionPublisher((frame) => {
+		if (frame.event.type === "agent_settled") settled++;
+	});
 	const { sessionId } = await createSession({ cwd: worktree, workspaceId: "workspace" });
 	const running = promptSession(sessionId, "ask color");
 	await ready.promise;
 	steerSession(sessionId, "Use green instead", undefined, "replacement");
 	await running;
+	const deadline = Date.now() + 3000;
+	while (settled < 2 && Date.now() < deadline) await Bun.sleep(5);
+	// The superseded question ends its run; the reply starts the next run.
+	expect(settled).toBe(2);
+	expect(model.calls).toHaveLength(2);
 	expect(JSON.stringify(model.calls[1]?.request.input)).toContain("Use green instead");
 	expect(readSessionRecord(sessionId)?.pendingToolResponse).toBeUndefined();
 	expect(

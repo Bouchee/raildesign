@@ -5,10 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	extensionSkillRoots,
-	registryInlineExtensions,
 	resolveExtensionSkillRoots,
 	type ServerExtensionEntry,
 	serverExtensions,
+	snapshotSdkExtensions,
 	stagedExtensionSkillRoute,
 } from "./index";
 
@@ -33,24 +33,16 @@ describe("server extension registry", () => {
 		]);
 	});
 
-	it("flattens parent and child factories into named inline extensions", () => {
-		const names = (session?: Parameters<typeof registryInlineExtensions>[3]) =>
-			registryInlineExtensions("extensions", undefined, serverExtensions, session).map((inline) =>
-				typeof inline === "function" ? "fn" : inline.name,
-			);
-		expect(names()).toEqual(["web-access"]);
-		expect(
-			names({
-				expectToolResponse: () => {},
-				awaitToolResponse: () => Promise.resolve({ kind: "deferred" as const }),
-				workspaceFiles: { check: async () => {}, scratchDir: "" },
-			}),
-		).toEqual(["visualize", "ask-user-question", "web-access"]);
-		expect(
-			registryInlineExtensions("childExtensions").map((inline) =>
-				typeof inline === "function" ? "fn" : inline.name,
-			),
-		).toEqual(["web-access"]);
+	it("selects SDK parent factories and omits disabled extensions", () => {
+		const names = snapshotSdkExtensions([], {}).map((snapshot) => snapshot.name);
+		expect(names).toContain("visualize");
+		expect(names).toContain("ask-user-question");
+		expect(snapshotSdkExtensions(["visualize"], {}).map((snapshot) => snapshot.name)).not.toContain(
+			"visualize",
+		);
+		expect(snapshotSdkExtensions([], {}, "child").map((snapshot) => snapshot.name)).not.toContain(
+			"ask-user-question",
+		);
 	});
 });
 
@@ -83,7 +75,7 @@ describe("resolveExtensionSkillRoots", () => {
 		try {
 			const roots = resolveExtensionSkillRoots({
 				specifier: entry,
-				extension: { name: "demo", extensions: [], skillPackages: ["@acme/pi-demo"] },
+				extension: { name: "demo", skillPackages: ["@acme/pi-demo"] },
 			});
 			const skillPackage = join(root, "node_modules", "@acme", "ext-demo", "node_modules", "@acme");
 			expect(roots).toEqual([
@@ -99,7 +91,7 @@ describe("resolveExtensionSkillRoots", () => {
 		expect(
 			resolveExtensionSkillRoots({
 				specifier: "@acme/missing/server",
-				extension: { name: "quiet", extensions: [] },
+				extension: { name: "quiet" },
 			}),
 		).toEqual([]);
 	});
@@ -110,7 +102,7 @@ describe("resolveExtensionSkillRoots", () => {
 			expect(() =>
 				resolveExtensionSkillRoots({
 					specifier: entry,
-					extension: { name: "demo", extensions: [], skillPackages: ["no-skills"] },
+					extension: { name: "demo", skillPackages: ["no-skills"] },
 				}),
 			).toThrow(/no-skills declares no pi\.skills/);
 		} finally {
@@ -128,7 +120,7 @@ describe("resolveExtensionSkillRoots", () => {
 describe("extensionSkillRoots", () => {
 	const entry = (name: string, skillPackages?: string[]): ServerExtensionEntry => ({
 		specifier: "@acme/never-resolved/server",
-		extension: { name, extensions: [], ...(skillPackages ? { skillPackages } : {}) },
+		extension: { name, ...(skillPackages ? { skillPackages } : {}) },
 	});
 
 	it("maps an extension with skills to its owner folder under a staged skills root", () => {

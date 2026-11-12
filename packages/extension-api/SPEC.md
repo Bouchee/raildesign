@@ -63,29 +63,17 @@ The host retains registration, lifecycle and ordering; `define*` helpers preserv
 - `WebExtension` is `{ name, toolRenderers }`, with each tool-name entry carrying a `renderer` and
   optional `ToolRegistrationOptions` under `options`. `defineWebExtension` is a typed identity helper:
   it preserves the descriptor and its inferred tool keys without registration or default injection.
-- `./server` exposes `ServerExtension` and `defineServerExtension`, with server-only SDK `Tool` and pi `ExtensionFactory` types. Descriptors carry `name` (the identity — the Settings on/off switch and `disabledExtensions` key
-  on it), optional display copy `title` / `description` for the Settings catalog, `extensions`, optional
-  `sessionExtensions`, optional `sdkTools(session:SdkToolServices):Tool[]`, optional `interactiveTools`, optional `settings` (declared per-extension settings —
-  today only `{ type: "boolean", default }`; the values live in the host's config keyed by extension name
-  and the Settings copy is the app's locale keys), optional `childExtensions` and optional
-  `skillPackages` specifiers. Its identity
-  helper preserves factories, order and optional-field absence; loading and skill resolution remain host
-  responsibilities.
-- `sessionExtensions(session: ExtensionSessionServices) => ExtensionFactory[]` is how an extension uses
-  per-session state the host owns: the host calls it once per parent session with that session's
-  services: `setting(key)` (the extension's own declared setting, read inside a factory body so a pi
-  reload sees a changed value), `workspaceFiles` (`check(path, cwd)` — the host's rule for which workspace
-  files the UI may show — and `scratchDir`, the gitignored directory for mockups), and the interactive-tool
-  mailbox:
-  - `expectToolResponse(toolCallId)` announces a call the extension will execute and await, from its
-    `message_end` hook, before pi runs it. The host tracks only announced calls, so a switched-off
-    extension or a same-name tool from another package never becomes a host-tracked interaction.
-  - `awaitToolResponse(toolCallId, signal)` resolves a `ToolResponse`: `{kind: "response", value}`,
-    `{kind: "deferred"}` or `{kind: "abandoned"}`.
+- `./server` exposes `ServerExtension`, `SdkToolServices`, `ToolResponse`, `InteractiveTool` and `defineServerExtension`.
+  Descriptors hold `name`, optional display copy, `sdkTools`, `sdkChildTools`, `interactiveTools`, boolean `settings` and `skillPackages`.
+  Factories return SDK tools from explicit host services.
+  The helper preserves the descriptor without registration or default values.
+  The host supplies cwd, grant checks, saved responses, failure reporting, workspace checks and frozen settings.
+  The server entry also exports `parseToolResultContent` and `ParsedToolResultContent` for host result projection.
+  SDK types remain server-only and disappear from runtime imports.
 - The root is browser-safe and exposes only the web contract; it never re-exports the server half.
 - Workspace dependencies are `contracts` and, type-only, `@thinkrail/locales/react`'s `Translator`.
-  React and pi are type-only contract dependencies; there are no React components, registry, DOM access,
-  host imports, or pi runtime values.
+  React and the SDK are type-only contract dependencies; there are no React components, registry, DOM access,
+  host imports, or SDK runtime values.
 - `ToolSummary` is `(props, t) => string`: the host passes the render-time `Translator` from `useT()`
   (`getToolSummary(t, name, props)`), so a collapsed card or routine row recomputes its summary on a
   language change; a summary translates only through that `t`, never the global translator
@@ -101,7 +89,7 @@ the host, never acquire it from a store or transport. Extension composition rule
 
 Package tests exercise descriptors through their public entries, pure argument/result helpers and
 browser bundling of both the root and `./web`. Browser bundles permit only contracts at runtime and
-reject React, pi, host and server imports; `./server` separately verifies its pi dependency is erased.
+reject React, pi, host and server imports; `./server` separately verifies that SDK types do not enter runtime bundles.
 The app's registry and common-image-layer tests retain coverage of the host-owned rendering behavior.
 
 The SDK factory receives fresh `SdkToolServices`: run-grant validation, the saved owned response,

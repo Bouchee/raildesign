@@ -6,9 +6,9 @@ import {
 	type RemixiconComponentType,
 	RiQuestionLine as UnclearGlyph,
 } from "@remixicon/react";
+import type { AskUserQuestionDiscussReason } from "@thinkrail/ask-user-question/core";
 import type { MessageKey } from "@thinkrail/locales";
 import { useT } from "@thinkrail/locales/react";
-import type { AskUserQuestionDiscussReason } from "@thinkrail/pi-ask-user-question/core";
 import { Button, withIconClass } from "@thinkrail/ui/button";
 import { isImeComposing } from "@thinkrail/ui/keyboard";
 import { cn } from "@thinkrail/ui/utils";

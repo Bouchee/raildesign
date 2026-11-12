@@ -1,15 +1,5 @@
 import { tool } from "@openai/agents";
-import {
-	defineServerExtension,
-	type ExtensionSessionServices,
-	type SdkToolServices,
-} from "@thinkrail/extension-api/server";
-import {
-	type AskUserQuestionAsker,
-	createAskUserQuestionExtension,
-	createAskUserQuestionSchema,
-	isAskUserQuestionResult,
-} from "@thinkrail/pi-ask-user-question";
+import { createAskUserQuestionSchema, isAskUserQuestionResult } from "@thinkrail/ask-user-question";
 import {
 	ASK_USER_QUESTION_TOOL_NAME,
 	buildQuestionnaireResponse,
@@ -17,20 +7,11 @@ import {
 	outcomeResult,
 	previewFileSources,
 	validateQuestionnaire,
-} from "@thinkrail/pi-ask-user-question/core";
+} from "@thinkrail/ask-user-question/core";
+import { defineServerExtension, type SdkToolServices } from "@thinkrail/extension-api/server";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { thinkrailGuidance } from "./guidance";
-
-function askThroughHost(session: ExtensionSessionServices): AskUserQuestionAsker {
-	return async ({ toolCallId, signal }) => {
-		const response = await session.awaitToolResponse(toolCallId, signal);
-		if (response.kind !== "response") return response;
-		if (!isAskUserQuestionResult(response.value))
-			throw new Error("Malformed ask_user_question response");
-		return { kind: "answered", result: response.value };
-	};
-}
 
 function describeResponse(args: unknown, response: unknown): string | undefined {
 	if (!isAskUserQuestionArgs(args) || !isAskUserQuestionResult(response)) return undefined;
@@ -121,28 +102,17 @@ export default defineServerExtension({
 	title: "Ask user question",
 	description:
 		"Lets the agent pause and ask you structured multiple-choice questions in chat instead of guessing.",
-	extensions: [],
 	settings: { richPreviews: { type: "boolean", default: true } },
-	sessionExtensions: (session) => [
-		(pi) => {
-			const filePreviews = session.setting("richPreviews");
-			return createAskUserQuestionExtension({
-				ask: askThroughHost(session),
-				announce: (toolCallId) => session.expectToolResponse(toolCallId),
-				guidance: thinkrailGuidance(filePreviews, session.workspaceFiles.scratchDir),
-				filePreviews,
-				checkFile: session.workspaceFiles.check,
-			})(pi);
-		},
-	],
 	interactiveTools: {
 		[ASK_USER_QUESTION_TOOL_NAME]: { describeResponse, validateArgs, parseResponse },
 	},
 	sdkTools: (session) => [
 		tool({
 			name: ASK_USER_QUESTION_TOOL_NAME,
-			description:
-				"Ask structured multiple-choice questions when a concrete decision is required. Execution pauses until the user answers. Use this as the only tool call in its response. Never assume an answer while waiting.",
+			description: thinkrailGuidance(
+				session.setting("richPreviews"),
+				session.workspaceFiles.scratchDir,
+			),
 			strict: false,
 			parameters: {
 				...createAskUserQuestionSchema({ filePreviews: session.setting("richPreviews") }),

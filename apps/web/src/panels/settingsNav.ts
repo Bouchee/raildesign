@@ -14,11 +14,13 @@ import {
 	RiNotification3Line,
 	RiPaletteLine,
 	RiPlugLine,
+	RiPuzzleLine,
 	RiTerminalBoxLine,
 	RiTranslate2,
 } from "@remixicon/react";
 import {
 	DEFAULT_MODEL_PROTOCOL_VERSION,
+	EXTENSION_CATALOG_PROTOCOL_VERSION,
 	HOST_ENVIRONMENT_PROTOCOL_VERSION,
 	LOCALES_PROTOCOL_VERSION,
 	MCP_PROTOCOL_VERSION,
@@ -59,6 +61,12 @@ const NAV_GROUPS: SettingsNavGroup[] = [
 				requiresProtocolVersion: MCP_PROTOCOL_VERSION,
 			},
 			{ id: SettingsSection.Templates, label: "settings.nav.templates", icon: RiLayoutGridLine },
+			{
+				id: SettingsSection.Extensions,
+				label: "settings.nav.extensions",
+				icon: RiPuzzleLine,
+				requiresProtocolVersion: EXTENSION_CATALOG_PROTOCOL_VERSION,
+			},
 			{
 				id: SettingsSection.Environment,
 				label: "settings.nav.environment",

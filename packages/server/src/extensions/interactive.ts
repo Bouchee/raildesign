@@ -1,6 +1,7 @@
 import type { InteractiveTool } from "@thinkrail/extension-api/server";
-import type { ExtensionDisabled } from "./inline";
 import { type ServerExtensionEntry, serverExtensions } from "./registry";
+
+export type ExtensionDisabled = (name: string) => boolean;
 
 export type InteractiveTools = ReadonlyMap<string, InteractiveTool>;
 

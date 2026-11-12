@@ -18,14 +18,10 @@
 	},
 	"peerDependencies": {
 		"@openai/agents": "catalog:",
-		"@earendil-works/pi-coding-agent": "catalog:",
 		"react": "catalog:"
 	},
 	"peerDependenciesMeta": {
 		"@openai/agents": {
-			"optional": true
-		},
-		"@earendil-works/pi-coding-agent": {
 			"optional": true
 		},
 		"react": {
@@ -34,7 +30,6 @@
 	},
 	"devDependencies": {
 		"@openai/agents": "catalog:",
-		"@earendil-works/pi-coding-agent": "catalog:",
 		"@types/bun": "catalog:",
 		"@types/react": "catalog:",
 		"typescript": "catalog:"

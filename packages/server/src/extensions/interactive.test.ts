@@ -6,7 +6,7 @@ import type { ServerExtensionEntry } from "./registry";
 function entry(name: string, tools: Record<string, InteractiveTool>): ServerExtensionEntry {
 	return {
 		specifier: `@acme/${name}/server`,
-		extension: { name, extensions: [], interactiveTools: tools },
+		extension: { name, interactiveTools: tools },
 	};
 }
 
@@ -45,7 +45,7 @@ describe("interactiveTools", () => {
 			[
 				entry("alpha", { shared: { describeResponse: () => "first" } }),
 				entry("beta", { shared: second }),
-				{ specifier: "@acme/quiet/server", extension: { name: "quiet", extensions: [] } },
+				{ specifier: "@acme/quiet/server", extension: { name: "quiet" } },
 			],
 		);
 		expect(tools.get("shared")).toBe(second);

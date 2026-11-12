@@ -78,15 +78,15 @@ const TOOLS: ToolFixture[] = [
 	},
 	{
 		id: "fetch-local-video",
-		name: "fetch_content",
+		name: "web_fetch",
 		args: { url: "/tmp/video.mp4" },
 		text: "# Fetched content\n\nRead the [external source](https://example.com/source).",
 		details: { urls: ["/tmp/video.mp4"], responseId: "response-123" },
 	},
 	{
-		id: "stored-content",
-		name: "get_search_content",
-		args: { responseId: "response-123", urlIndex: 0 },
+		id: "web-search",
+		name: "web_search",
+		args: { query: "Stored content" },
 		text: "# Stored content\n\nRecovered the complete document.",
 		details: { url: "https://example.com/docs", title: "Stored content" },
 	},
@@ -239,7 +239,7 @@ test("structured tool paths reuse the preview tab while rich tool results stay i
 	await expect(specDelete).toContainText("removed/SPEC.md");
 	await expect(specDelete.getByTestId("tool-file-link")).toHaveCount(0);
 
-	const fetch = await toolStep(page, "fetch_content");
+	const fetch = await toolStep(page, "web_fetch");
 	await expect(fetch).toContainText("/tmp/video.mp4");
 	await expect(fetch.getByTestId("tool-file-link")).toHaveCount(0);
 	await expect(fetch.getByRole("heading", { name: "Fetched content" })).toBeVisible();
@@ -248,7 +248,7 @@ test("structured tool paths reuse the preview tab while rich tool results stay i
 		"https://example.com/source",
 	);
 
-	const stored = await toolStep(page, "get_search_content");
+	const stored = await toolStep(page, "web_search");
 	await expect(stored.getByRole("heading", { name: "Stored content" })).toBeVisible();
 	await expect(stored).not.toContainText('"responseId"');
 });
