@@ -168,6 +168,15 @@ export default function ChatView({
 		commandsRefreshTick,
 	]);
 
+	const openMcpSettings = useCallback(
+		() => useAppStore.getState().openSettings(SettingsSection.Mcp),
+		[],
+	);
+	const readMcpOutput = useCallback(
+		(toolCallId: string) =>
+			getTransport().request("mcp.readOutput", { workspaceId, sessionId, toolCallId }),
+		[workspaceId, sessionId],
+	);
 	const workspaceRoot = useAppStore(
 		(s) => selectWorkspaceById(s, workspaceId)?.worktreePath ?? undefined,
 	);
@@ -590,6 +599,8 @@ export default function ChatView({
 				historyOpen={historyState.open}
 				inspectorOpen={false}
 				stillRunning={undefined}
+				readMcpOutput={readMcpOutput}
+				openMcpSettings={openMcpSettings}
 				openProviderSettings={openProviderSettings}
 				findModel={findModel}
 				dockTarget={dockTarget}

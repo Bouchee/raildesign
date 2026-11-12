@@ -1,8 +1,17 @@
-import { appendFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
 const pidFile = process.env.MCP_FIXTURE_PID_FILE;
 if (pidFile) appendFileSync(pidFile, `${process.pid}\n`);
+if (process.env.MCP_FIXTURE_DESCENDANT_PID_FILE) {
+	const child = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"], {
+		stdin: "ignore",
+		stdout: "inherit",
+		stderr: "inherit",
+		env: {},
+	});
+	writeFileSync(process.env.MCP_FIXTURE_DESCENDANT_PID_FILE, String(child.pid));
+}
 const initializeDelayMs = Number(process.env.MCP_FIXTURE_INITIALIZE_DELAY_MS ?? 0);
 if (process.env.MCP_FIXTURE_STUBBORN === "1") {
 	process.on("SIGTERM", () => {});
@@ -39,6 +48,8 @@ const PIXEL =
 	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
 
 function callResult(name: string, text: string): unknown {
+	if (name === "write_note" && process.env.MCP_FIXTURE_NOTE_FILE)
+		writeFileSync(process.env.MCP_FIXTURE_NOTE_FILE, text);
 	if (name === "rich") {
 		return {
 			_meta: { fixture: "metadata" },
@@ -55,6 +66,12 @@ function callResult(name: string, text: string): unknown {
 			],
 			structuredContent: { rows: [{ id: 1, title: "first" }] },
 		};
+	}
+	if (name === "big" && process.env.MCP_FIXTURE_UTF8 === "1") {
+		return { content: [{ type: "text", text: "汉字\n".repeat(20000) }] };
+	}
+	if (name === "big" && process.env.MCP_FIXTURE_UTF8 === "line") {
+		return { content: [{ type: "text", text: "汉字🧪".repeat(20000) }] };
 	}
 	if (name === "big") {
 		return { content: [{ type: "text", text: "line of output\n".repeat(20_000) }] };
@@ -95,6 +112,12 @@ lines.on("line", (line) => {
 				);
 			return reply(message.id, { tools });
 		case "tools/call": {
+			if (process.env.MCP_FIXTURE_ERROR === "1") {
+				process.stdout.write(
+					`${JSON.stringify({ jsonrpc: "2.0", id: message.id, error: { code: -32000, message: `token=fixture-secret ${"汉字🧪 error ".repeat(20000)}` } })}\n`,
+				);
+				return;
+			}
 			const args = (message.params?.arguments ?? {}) as { text?: string };
 			return reply(message.id, callResult(String(message.params?.name), args.text ?? ""));
 		}

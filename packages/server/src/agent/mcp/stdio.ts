@@ -1,13 +1,11 @@
 import { StringDecoder } from "node:string_decoder";
 import { Client, InMemoryResponseCacheStore } from "@modelcontextprotocol/client";
-import {
-	StdioClientTransport,
-	type StdioServerParameters,
-} from "@modelcontextprotocol/client/stdio";
+import type { StdioServerParameters } from "@modelcontextprotocol/client/stdio";
 import { invalidateServerToolsCache, type MCPServer } from "@openai/agents";
 import { z } from "zod";
 import { isRecord } from "./config";
 import { appendMcpLog } from "./log";
+import { OwnedStdioTransport } from "./transport";
 
 const metaSchema = z.record(z.string(), z.json());
 const STDERR_LIMIT = 64 * 1024;
@@ -18,7 +16,7 @@ export class LoggedStdioMcpServer implements MCPServer {
 	cacheToolsList = false;
 	readonly errorFunction = null;
 	private readonly client: Client;
-	private readonly transport: StdioClientTransport;
+	private readonly transport: OwnedStdioTransport;
 	private readonly cache = new InMemoryResponseCacheStore();
 	private readonly signal: AbortSignal;
 	private readonly timeout: number;
@@ -33,35 +31,28 @@ export class LoggedStdioMcpServer implements MCPServer {
 		this.name = options.name;
 		this.timeout = options.timeout;
 		this.signal = options.signal;
-		this.transport = new StdioClientTransport({
-			command: options.command,
-			args: options.args ?? [],
-			env: options.env ?? {},
-			...(options.cwd ? { cwd: options.cwd } : {}),
-			stderr: "pipe",
-		});
+		this.transport = new OwnedStdioTransport(options, (chunk) => this.readStderr(chunk));
 		this.client = new Client(
 			{ name: "RailDesign", version: "1.0.0" },
 			{ listMaxPages: 64, responseCacheStore: this.cache },
 		);
-		// Attach before start(), including failures that exit before initialization.
-		this.transport.stderr?.on("data", (chunk: unknown) => {
-			if (this.stderrBytes >= STDERR_LIMIT) return;
-			const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
-			const remaining = STDERR_LIMIT - this.stderrBytes;
-			const accepted = bytes.subarray(0, remaining);
-			this.stderrBytes += accepted.byteLength;
-			this.stderrPending += this.decoder.write(accepted);
-			const lines = this.stderrPending.split(/\r?\n/);
-			this.stderrPending = lines.pop() ?? "";
-			if (lines.length) appendMcpLog(this.name, lines.join("\n"));
-			if (this.stderrBytes >= STDERR_LIMIT) {
-				this.flushStderr();
-				appendMcpLog(this.name, "MCP stderr was truncated at 64 KiB.");
-			}
-		});
-		this.transport.stderr?.on("end", () => this.flushStderr());
 	}
+	private readStderr(chunk: Uint8Array): void {
+		if (this.stderrBytes >= STDERR_LIMIT) return;
+		const bytes = Buffer.from(chunk);
+		const remaining = STDERR_LIMIT - this.stderrBytes;
+		const accepted = bytes.subarray(0, remaining);
+		this.stderrBytes += accepted.byteLength;
+		this.stderrPending += this.decoder.write(accepted);
+		const lines = this.stderrPending.split(/\r?\n/);
+		this.stderrPending = lines.pop() ?? "";
+		if (lines.length) appendMcpLog(this.name, lines.join("\n"));
+		if (this.stderrBytes >= STDERR_LIMIT) {
+			this.flushStderr();
+			appendMcpLog(this.name, "MCP stderr was truncated at 64 KiB.");
+		}
+	}
+
 	private flushStderr(): void {
 		const text = this.stderrPending + this.decoder.end();
 		this.stderrPending = "";
@@ -74,26 +65,8 @@ export class LoggedStdioMcpServer implements MCPServer {
 	}
 	close(): Promise<void> {
 		if (this.closing) return this.closing;
-		const pid = this.transport.pid;
 		this.closing = (async () => {
 			const results = await Promise.allSettled([this.client.close(), this.transport.close()]);
-			// The public transport may return just after sending SIGKILL. Observe its public pid until reaped.
-			if (pid !== null) {
-				let alive = true;
-				for (let attempt = 0; attempt < 100; attempt++) {
-					try {
-						process.kill(pid, 0);
-					} catch (error) {
-						if (error instanceof Error && "code" in error && error.code === "ESRCH") {
-							alive = false;
-							break;
-						}
-						throw error;
-					}
-					await new Promise((resolve) => setTimeout(resolve, 10));
-				}
-				if (alive) throw new Error("The MCP subprocess did not finish closing.");
-			}
 			this.flushStderr();
 			const errors = results
 				.filter((result): result is PromiseRejectedResult => result.status === "rejected")

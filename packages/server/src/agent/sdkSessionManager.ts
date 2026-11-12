@@ -51,6 +51,13 @@ import { loadConfig, loadProjects, loadWorkspaces } from "../persistence";
 import { trashFile } from "../trash";
 import { configureLocalSdkTracing } from "./localTracing";
 import {
+	applySessionMcpApproval,
+	pauseSessionMcpConnections,
+	reconcileMcpSessions,
+	sessionMcpApproval,
+	sessionMcpTools,
+} from "./mcpSessions";
+import {
 	createConfiguredModel,
 	listAvailableModels,
 	modelContextBudget,
@@ -482,6 +489,9 @@ async function waitForApproval(
 	assertActive(entry, run);
 	addToolCall(entry, run, call);
 	const saved = entry.store.record.pendingApproval?.request;
+	const consent = sessionMcpApproval(entry.store.record.sessionId, call.name);
+	if (saved?.policyFingerprint && saved.policyFingerprint !== consent?.fingerprint)
+		throw new Error("MCP approval configuration changed");
 	const request: ApprovalRequest =
 		saved?.runId === run.id && saved.toolCallId === call.callId
 			? saved
@@ -490,9 +500,9 @@ async function waitForApproval(
 					sessionId: entry.store.record.sessionId,
 					runId: run.id,
 					revision: entry.store.record.revision + 1,
-					kind: "confirm",
-					title: `Allow ${call.name}?`,
-					message: call.arguments,
+					...(consent
+						? { kind: "select" as const, ...consent, policyFingerprint: consent.fingerprint }
+						: { kind: "confirm" as const, title: `Allow ${call.name}?`, message: call.arguments }),
 					toolCallId: call.callId,
 					toolInput: run.toolCalls.get(call.callId)?.arguments ?? {},
 				};
@@ -659,7 +669,7 @@ export function resolveExtUi(response: ExtUiResponse): void {
 		if (
 			decision.runId !== response.runId ||
 			decision.revision !== response.revision ||
-			decision.value !== response.value ||
+			(decision.selection !== undefined ? decision.selection : decision.value) !== response.value ||
 			decision.toolCallId !== response.toolCallId
 		)
 			throw new Error("Conflicting approval response");
@@ -674,16 +684,42 @@ export function resolveExtUi(response: ExtUiResponse): void {
 		run.id !== response.runId ||
 		pending.request.revision !== response.revision ||
 		pending.request.toolCallId !== response.toolCallId ||
-		typeof response.value !== "boolean"
+		(pending.request.kind === "confirm"
+			? typeof response.value !== "boolean"
+			: response.value !== null &&
+				(typeof response.value !== "string" || !pending.request.options.includes(response.value)))
 	)
 		throw new Error("Approval is stale or belongs to a different run");
 	assertActive(entry, run);
+	if (
+		pending.request.policyFingerprint &&
+		pending.request.policyFingerprint !==
+			sessionMcpApproval(
+				response.sessionId,
+				run.toolCalls.get(pending.request.toolCallId)?.name ?? "",
+			)?.fingerprint
+	)
+		throw new Error("MCP approval configuration changed");
+	const approved =
+		pending.request.kind === "select"
+			? applySessionMcpApproval(
+					response.sessionId,
+					run.toolCalls.get(pending.request.toolCallId)?.name ?? "",
+					typeof response.value === "string" ? response.value : null,
+				)
+			: response.value === true;
 	entry.store.update((record) => {
 		record.decisions[response.id] = {
 			runId: run.id,
 			revision: response.revision,
 			toolCallId: pending.request.toolCallId,
-			value: response.value === true,
+			value: approved,
+			...(pending.request.policyFingerprint
+				? { policyFingerprint: pending.request.policyFingerprint }
+				: {}),
+			...(pending.request.kind === "select"
+				? { selection: typeof response.value === "string" ? response.value : null }
+				: {}),
 		};
 		record.runCheckpoint = {
 			runId: run.id,
@@ -696,7 +732,7 @@ export function resolveExtUi(response: ExtUiResponse): void {
 	});
 	delete run.approval;
 	notifyState(entry);
-	pending.resolve(response.value);
+	pending.resolve(approved);
 }
 export function pendingExtUiDialog(sessionId: string): ApprovalRequest | null {
 	return sessions.get(sessionId)?.store.record.pendingApproval?.request ?? null;
@@ -751,12 +787,12 @@ function captureStructuredToolResults(tools: Tool[], run: ActiveRun): void {
 	}
 }
 
-function buildSessionAgent(
+async function buildSessionAgent(
 	entry: Entry,
 	run: ActiveRun,
 	model: WireModel,
 	sdkModel: Agent["model"] = createConfiguredModel(model, entry.store.record.sessionId),
-): Agent {
+): Promise<Agent> {
 	const skillOptions = {
 		markToolFailed: (callId: string | undefined) => {
 			const call = callId ? run.toolCalls.get(callId) : undefined;
@@ -809,6 +845,17 @@ function buildSessionAgent(
 					})
 				: []),
 			...createSkillTools(skillOptions),
+			...(await sessionMcpTools({
+				sessionId: entry.store.record.sessionId,
+				workspaceId: entry.store.record.workspaceId,
+				cwd: entry.store.record.cwd,
+				signal: run.controller.signal,
+				assertActive: () => assertActive(entry, run),
+				markToolFailed: (callId: string) => {
+					const call = run.toolCalls.get(callId);
+					if (call) call.failed = true;
+				},
+			})),
 			...workspaceTools(
 				{
 					workspaceId: entry.store.record.workspaceId,
@@ -931,7 +978,7 @@ async function executeRun(
 		if (!model) throw new Error("Configure a Responses-compatible model before sending a message");
 		assertActive(entry, run);
 		const buildAgent = () => buildSessionAgent(entry, run, model);
-		let agent = buildAgent();
+		let agent = await buildAgent();
 		configureLocalSdkTracing();
 		const runner = new Runner({
 			tracingDisabled: !loadConfig().sdkTracingEnabled,
@@ -981,6 +1028,13 @@ async function executeRun(
 						(d) => d.runId === run.id && d.toolCallId === callId,
 					);
 					if (!decision) throw new Error("No saved decision for checkpoint");
+					if (
+						decision.policyFingerprint &&
+						decision.policyFingerprint !==
+							sessionMcpApproval(entry.store.record.sessionId, interruption.rawItem.name)
+								?.fingerprint
+					)
+						throw new Error("MCP approval configuration changed");
 					if (decision.value) next.approve(interruption);
 					else next.reject(interruption);
 				} else {
@@ -1057,7 +1111,7 @@ async function executeRun(
 			});
 			run.controller.abort();
 			run.controller = new AbortController();
-			agent = buildAgent();
+			agent = await buildAgent();
 			next = await RunState.fromString(agent, checkpoint);
 			run.state = next;
 		}
@@ -1780,6 +1834,8 @@ export async function reloadSessionResources(
 	run.done = (async () => {
 		try {
 			assertActive(entry, run);
+			await reconcileMcpSessions([sessionId]);
+			assertActive(entry, run);
 			await buildSessionAgent(entry, run, model, model.id);
 			assertActive(entry, run);
 		} finally {
@@ -1796,7 +1852,7 @@ export async function abortSession(sessionId: string): Promise<void> {
 	entry.summaryController?.abort();
 	const run = entry.active;
 	if (!run) {
-		await entry.summaryDone;
+		await Promise.all([entry.summaryDone, pauseSessionMcpConnections(sessionId)]);
 		return;
 	}
 	entry.stopping = true;
@@ -1805,7 +1861,7 @@ export async function abortSession(sessionId: string): Promise<void> {
 	run.approval?.reject(new Error("Run cancelled"));
 	run.toolResponse?.reject(new Error("Run cancelled"));
 	try {
-		await run.done;
+		await Promise.all([run.done, pauseSessionMcpConnections(sessionId)]);
 	} finally {
 		delete entry.stopping;
 	}

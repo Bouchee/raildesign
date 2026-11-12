@@ -47,6 +47,7 @@ import {
 	setMcpLoginPublisher,
 	setMcpProjectResolver,
 	setMcpStatusPublisher,
+	setMcpToolGrantWriter,
 	setSessionCreatedPublisher,
 	setSessionDeletedPublisher,
 	setSessionProjectResolver,
@@ -65,6 +66,7 @@ import { watchLocalLocales } from "../locales";
 import { logger } from "../log";
 import { dataDir, loadWorkspaces } from "../persistence";
 import {
+	grantProjectMcpTool,
 	listProjects,
 	listRecentProjects,
 	openProject,
@@ -285,6 +287,10 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 		} catch {
 			return undefined;
 		}
+	});
+	setMcpToolGrantWriter((workspaceId, server, target, tool) => {
+		const workspace = getWorkspace(workspaceId);
+		grantProjectMcpTool(workspace.projectId, server, target, tool);
 	});
 	setMcpAuthorizationResolver(async (provider) => resolveProviderAuthorization(provider));
 	setSkillPathClassifier(isProjectSkillPath);
@@ -964,6 +970,7 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 function restoreSeamDefaults(): void {
 	setSkillPathClassifier(null);
 	setSessionResourceCleanup(undefined);
+	setMcpToolGrantWriter(undefined);
 	setMcpProjectResolver(undefined);
 	setMcpAuthorizationResolver(undefined);
 	setMcpLoginPublisher(() => {});

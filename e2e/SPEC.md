@@ -129,6 +129,10 @@ wire reply to prove that an ack does not unlock the form before cleanup complete
 and cleanup are exercised separately by the projects and subprocess unit tests. No production Git
 credentials or remote repositories are used.
 
+`mcp-approval.live.spec.ts` is the focused provider-backed MCP consent and execution gate. It uses
+isolated SDK fixture configuration; offline connection, error and approval tests do not substitute for it.
+MCP tool-card browser fixtures validate owned output reads and Settings actions without executing a model.
+
 ## Chat resource controls
 
 Stage 1 has no live background/subagent/MCP resource catalog. `chat-resources-wire.spec.ts` checks
@@ -141,7 +145,7 @@ Props-only inspector/dock/detail rendering remains covered by `resources/resourc
 projection ownership, failures and controls by `useChatResources.test.ts`. Those unit checks cover
 markup, selected state and bounded data behavior; they do not establish native popup focus return or
 phone popup geometry. Resource-only browser focus/layout, archive/history reads and actual process
-execution need a Stage 3 gate when that product entry exists. `mcp-settings.spec.ts` retains real configuration/approval/connection/error/secret-masking coverage through Settings and the actual management routes. It does not require the Stage 3 resource dock. `skills-switches.spec.ts` and `other-agent-skills.spec.ts` preserve catalog, trust and switch behavior. `subagent-settings.spec.ts` reads real global/workspace persistence and authoritative pushes while verifying disabled execution controls, inheritance, limit validation and geometry. Read-only historical MCP tool cards remain separate.
+execution need a Stage 3 gate when that product entry exists. `mcp-settings.spec.ts` retains real configuration/approval/connection/error/secret-masking coverage through Settings and the actual management routes. It does not require the Stage 3 resource dock. `skills-switches.spec.ts` and `other-agent-skills.spec.ts` preserve catalog, trust and switch behavior. `subagent-settings.spec.ts` reads real global/workspace persistence and authoritative pushes while verifying disabled execution controls, inheritance, limit validation and geometry. Historical MCP tool-card fixtures separately exercise owned Full output reads and Settings deep links without granting live resource authority.
 
 `templates-compose.spec.ts` checks that admitted Skill commands appear beside prompt templates.
 `skills-switches.spec.ts` verifies that the idle reload control is enabled and no unavailable-execution
@@ -524,7 +528,7 @@ asks for a before/after UI proposal without naming the tool and expects mockup f
 (`mcp-tool-cards.spec.ts`) seeds historical `mcp__*`, resource and `tool_search` results the same way and pins
 the single shared image strip, the collapsed JSON tree, Full output through the real `mcp.readOutput`
 (a recorded file and an expired one), Sign in deep links into Settings › MCP servers or Providers according
-to pi's reported authentication kind (provider identity remains visible), and the raw-text fallback for a truncated listing; its element shots under `e2e/screenshots/mcp-tool-cards/` are review evidence
+to the host's reported authentication kind (provider identity remains visible), and the raw-text fallback for a truncated listing; its element shots under `e2e/screenshots/mcp-tool-cards/` are review evidence
 only. Questionnaire coverage uses canonical persisted tool-call/ack fixtures (submitting one exercises the
 restart-repaired response path) to pin six-question rounds beyond four, the docked sheet (stub in the
 transcript, pinned controls around a scrolling body under the 60% cap, restored page, collapse kept across

@@ -12,7 +12,7 @@ tags: [chat]
 
 The application owns its message, tool, usage and event types in `sessionProtocol.ts`; browser code does not import engine types. `session.event` carries `{sessionId, runId, seq, event}` with increasing per-session sequence numbers. SDK details and checkpoints remain on the host. The initial transcript snapshot carries its event sequence watermark; events arriving before hydration are buffered and only later events are applied. Stable message IDs join streamed snapshots and final messages. Basic tool approvals use the existing confirmation UI with session, run, interaction and revision ownership; failures keep the pending card visible. A declared tool without an execution result state is pending: its card and routine row use a neutral marker, and execution summaries/bodies begin only after `tool_execution_start`.
 
-Skills catalog, trust management, manual commands and idle session reload use the current SDK host routes in `ChatView`. Reload clears the stale badge only after host success. MCP configuration and OAuth remain reachable in Settings. Stage 1 mounts no advanced resource polling, resource inspector or subagent transcript executor in `ChatView`. Historical tool cards and resource renderers remain usable as pure projections. Queue actions, compaction commands, continuation synchronization, automatic plan summaries and TODO add nudges are absent from active composition. Ordinary prompts send only while idle; Stop remains available during a run. Agent review controls remain disabled until that execution path exists. Protocol-version thresholds alone do not authorize a removed host operation.
+Skills catalog, trust management, manual commands and idle session reload use the current SDK host routes in `ChatView`. Reload clears the stale badge only after host success. MCP configuration and OAuth remain reachable in Settings. `ChatView` supplies owned full-output reads and MCP Settings navigation to tool cards. Stage 1 mounts no advanced resource polling, resource inspector or subagent transcript executor in `ChatView`. Historical tool cards and resource renderers remain usable as pure projections. Queue actions, compaction commands, continuation synchronization, automatic plan summaries and TODO add nudges are absent from active composition. Ordinary prompts send only while idle; Stop remains available during a run. Agent review controls remain disabled until that execution path exists. Protocol-version thresholds alone do not authorize a removed host operation.
 
 ## Responsibility
 
@@ -444,7 +444,7 @@ remain app-local. A registration is:
 
 Every registry read (renderer, summary, chrome, prominence) goes through one resolver: the exact tool
 name, else the longest app-local prefix registration (`registerToolRendererPrefix` — today only `mcp__`,
-because pi names MCP tools per server), else the default. Exact names always win, an empty prefix never
+because the host names MCP tools per server), else the default. Exact names always win, an empty prefix never
 matches, and extension descriptors stay exact-name only.
 
 Unregistered tools fall back to `DefaultToolRenderer`. A tool that needs user input mid-run takes one of
@@ -579,7 +579,7 @@ both message orders. *Rejected:* keeping the modal for non-MCP extensions — ev
   `openProviderSettings()` (Settings › Providers) is supplied by `ChatView` on every host — the MCP
   cards' provider-backed sign-in and the subscription-limit `ErrorTurn` use it. The optional MCP actions —
   `readMcpOutput(toolCallId)` (`mcp.readOutput` for this chat) and `openMcpSettings()` (Settings › MCP
-  servers) — are supplied (through `ChatTranscript`'s provider) only on an MCP-capable host;
+  servers) — are supplied by `ChatView` through `ChatTranscript`'s provider;
   without them (older host, the plan page's provider, or `null`) the MCP cards hide Full output and Sign in
   ([tools/mcp/SPEC.md](tools/mcp/SPEC.md)). Optional `findModel(ref)` resolves a run's `provider/id`
   against the full model catalog (`ChatView` over `useModelCatalog`, hidden models included — a run may use

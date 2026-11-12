@@ -73,7 +73,7 @@ function truncatedPreview(path: string): string {
 	return `Warning: truncated output (original token count: 7500)\nTotal output lines: 2001\n\nline of output\nline of output\n…29970 chars truncated…line of output\nEND OF FULL OUTPUT\n\n[Full output: ${path} (read it with offset/limit)]`;
 }
 
-test("historical MCP cards preserve structured content without unavailable execution actions", async ({
+test("historical MCP cards preserve content and use owned output and settings routes", async ({
 	page,
 }) => {
 	const fullOutput = "/tmp/historical-mcp-output.txt";
@@ -149,12 +149,18 @@ test("historical MCP cards preserve structured content without unavailable execu
 	const big = await expandStep(page, "mcp-big");
 	await expect(big.getByTestId("mcp-output")).toContainText("29970 chars truncated");
 	await expect(big.getByTestId("mcp-output")).toContainText("END OF FULL OUTPUT");
-	await expect(big.getByTestId("mcp-full-output")).toHaveCount(0);
+	await big.getByTestId("mcp-full-output").click();
+	await expect(page.getByTestId("mcp-full-output-unavailable")).toHaveAttribute(
+		"data-reason",
+		"expired",
+	);
+	await page.keyboard.press("Escape");
+	await expect(page.getByTestId("mcp-full-output-dialog")).not.toBeVisible();
 	await shot(big, "mcp-tool-cards", "truncated-result");
 
 	const expired = await expandStep(page, "mcp-big-expired");
 	await expect(expired.getByTestId("mcp-output")).toContainText("29970 chars truncated");
-	await expect(expired.getByTestId("mcp-full-output")).toHaveCount(0);
+	await expect(expired.getByTestId("mcp-full-output")).toBeVisible();
 
 	const signIn = await expandStep(page, "mcp-sign-in");
 	await expect(signIn).toHaveAttribute("data-status", "error");
@@ -162,7 +168,8 @@ test("historical MCP cards preserve structured content without unavailable execu
 	await expect(signIn.getByTestId("mcp-output")).toHaveAttribute("data-failed", "true");
 	await shot(signIn, "mcp-tool-cards", "sign-in");
 	await expect(signIn.getByTestId("mcp-output")).toContainText("requires sign-in");
-	await expect(signIn.getByTestId("mcp-cli-action")).toHaveCount(0);
+	await signIn.getByTestId("mcp-cli-action").click();
+	await expect(page.getByTestId("settings-mcp")).toBeVisible();
 });
 
 test("provider-backed MCP failures open Providers rather than MCP OAuth", async ({ page }) => {
@@ -271,7 +278,7 @@ test("resource listings, resource reads and tool_search render as their own card
 	await expect(all.getByTestId("mcp-listed-item")).toHaveCount(2);
 	await expect(all.getByTestId("mcp-listed-server")).toHaveText(["docs", "wiki"]);
 	await expect(all.getByTestId("mcp-listing-error")).toContainText("requires sign-in");
-	await expect(all.getByTestId("mcp-listing-error").getByTestId("mcp-cli-action")).toHaveCount(0);
+	await expect(all.getByTestId("mcp-listing-error").getByTestId("mcp-cli-action")).toBeVisible();
 	await shot(all, "mcp-tool-cards", "list-resources");
 
 	const truncated = await expandStep(page, "list-templates-truncated");

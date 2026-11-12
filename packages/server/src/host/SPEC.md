@@ -111,12 +111,13 @@ per-entry approvals, OAuth, status and cleanup remain real
 services through `mcp.*`. `provider.loginReply`/`provider.loginCancel` serve only owned MCP OAuth flows;
 obsolete model-provider login routes remain absent. Skills catalog/trust/enable and child configuration
 routes persist their actual settings. `session.getCommands` reads the current admitted Skill commands.
-`session.reloadResources` validates an owned idle session and rebuilds its current SDK instruction/tool graph.
-Busy, pending-approval and recovery states reject reload.
+`session.reloadResources` validates an owned idle session, reconciles MCP and rebuilds the current SDK
+tool graph before acknowledging success. Busy, pending-approval and recovery states reject reload.
 No empty success snapshot, compatibility API, pi runtime, Central, telemetry or survey route remains.
 
-Host injects the own-credential authorization resolver, project policy, addressed OAuth/status publishers
-and per-session MCP cleanup. Trust/config mutations await probe cancellation and transport closure
+Host injects the own-credential authorization resolver, project policy, addressed OAuth/status publishers,
+project tool-grant writer and per-session MCP cleanup. Project grants bind the selected tool to its
+approved command target or URL; the SDK consent owner rechecks the current configuration first. Trust/config mutations await probe cancellation and transport closure
 before reconciliation. User MCP config changes and watched `.raildesign/mcp.json` changes reconcile
 under the current trust/fingerprint policy. Session detach waits for resource cleanup; disconnected
 client reap cancels only that client's MCP login. Shutdown awaits cleanup before writer-lock release.
@@ -137,7 +138,7 @@ concurrency; idle-settled rows are paced at 30 minutes, user-parked rows are lef
 maintenance failures are logged and cannot become unhandled promises.
 
 Host composes review sends with agent sessions and serializes review/change operations per workspace.
-Pure Todo/Spec Graph services remain; their advanced agent tools are not registered yet. History
+SDK Todo/Spec Graph tools use their existing stores. History
 scope labels/readers are injected by host, as are search readers and filesystem preflight checks.
 Settings changes persist in their owner and broadcast a full merged config. Layout/focus/placement
 stay frontend-local. Native actions remain in their own services rather than agent/Git/PTY execution.

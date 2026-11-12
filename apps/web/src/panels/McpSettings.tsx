@@ -938,9 +938,6 @@ function McpWorkspaceSettings({ workspace }: { workspace: Workspace }) {
 					</Button>
 				) : null}
 			</div>
-			<p data-testid="mcp-execution-unavailable" className="text-text-muted tr-text-metadata">
-				{t("mcp.settings.executionUnavailable")}
-			</p>
 			<McpConfirmBanner />
 
 			{!trusted ? (

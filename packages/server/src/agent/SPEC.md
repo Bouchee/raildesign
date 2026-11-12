@@ -217,7 +217,7 @@ Its retained tests validate those rules; the current verified text-only model do
 
 Configuration validation, fingerprints, CRUD, per-project approval/overrides, logs/redaction and status
 projection remain independent of the runner. HTTP uses the pinned SDK's public `MCPServerStreamableHttp`; stdio implements public `MCPServer`
-with the official MCP client's transport so redacted stderr remains available. Management creates an owned transport, never
+with an owned process transport and the official MCP client's public framing so redacted stderr remains available. Management creates an owned transport, never
 another model or a Pi session. The official MCP client handles discovery/DCR/PKCE with an owned token
 store; callbacks and pasted replies bind to flow state and client ownership. Token files use 0600
 under the application data root. Model credentials are not inherited by stdio processes; explicit MCP
@@ -228,6 +228,13 @@ teardown invokes host-injected `setSessionResourceCleanup` before detachment; fa
 session attached for retry. This avoids a dependency cycle with MCP connection state. Reconciliation
 uses current project trust and exact entry fingerprints, and generations reject stale status results.
 Local stdio and HTTP OAuth fixtures validate transport behavior without a live model or external login.
+
+The SDK graph composes current admitted MCP FunctionTools and deferred `tool_search` results. Consent
+uses owned SDK interruptions with once, chat and project choices. Saved decisions retain the complete
+configuration fingerprint; recovery rechecks it before resuming. Stop closes owned connections and
+process trees, while idle reload reconciles them before rebuilding tools. Search failures mark the call
+failed even when SDK validation hides callback details. Remote error text is redacted and UTF-8 bounded.
+MCP execution and consent regressions run through the actual SDK session manager.
 
 
 Resource aggregation accepts explicit current snapshots and a validated application scope. It preserves

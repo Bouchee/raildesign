@@ -4,13 +4,13 @@ import { fileURLToPath } from "node:url";
 import { expect, type Page, test } from "@playwright/test";
 import { expandAllRoutineGroups, openWorkspaceChat, waitForAgentSettled } from "./fixtures/app";
 import { resolveBunExecutable } from "./fixtures/executables";
-import { E2E_PI_AGENT_DIR } from "./fixtures/paths";
+import { E2E_DATA_DIR } from "./fixtures/paths";
 import { shot } from "./fixtures/screenshots";
 
 const STDIO_SERVER = fileURLToPath(
 	new URL("../packages/server/src/agent/mcp/fixtures/stdioServer.ts", import.meta.url),
 );
-const USER_CONFIG = join(E2E_PI_AGENT_DIR, "mcp.json");
+const USER_CONFIG = join(E2E_DATA_DIR, "mcp.json");
 const TOOL = "mcp__fixture__write_note";
 
 async function send(page: Page, prompt: string) {

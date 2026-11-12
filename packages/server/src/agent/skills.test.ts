@@ -197,6 +197,10 @@ test("default content roots retain bundled workflow, TODO, spec and host Skills"
 		.map(({ skill }) => skill.name);
 	for (const name of ["choosing-a-workflow", "todos", "spec-graph", "managing-mcp-servers"])
 		expect(admitted).toContain(name);
+	const mcp = inventory.entries.find(({ skill }) => skill.name === "managing-mcp-servers")?.skill;
+	if (!mcp) throw new Error("Missing bundled MCP instructions");
+	expect(readSkillBody(mcp)).toContain(".raildesign/mcp.json");
+	expect(readSkillBody(mcp)).not.toContain(".pi/");
 });
 
 test("staged launchers select physical host Skills and ignore unregistered extension content", () => {

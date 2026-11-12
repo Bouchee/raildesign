@@ -171,3 +171,16 @@ test("MCP child environment reuses the shared model credential exclusion and exp
 		}
 	}
 });
+
+test.skipIf(process.platform === "win32")(
+	"MCP close terminates an owned descendant before it releases the transport",
+	async () => {
+		const pidFile = join(root, "descendant-pid");
+		const connection = await fixture({ MCP_FIXTURE_DESCENDANT_PID_FILE: pidFile });
+		await connection.connect();
+		const pid = Number(readFileSync(pidFile, "utf8"));
+		expect(Number.isSafeInteger(pid) && pid > 0).toBe(true);
+		await connection.close();
+		expect(() => process.kill(pid, 0)).toThrow();
+	},
+);

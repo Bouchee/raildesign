@@ -23,23 +23,26 @@ symlinks. Status and log summaries retain their existing secret redaction and ou
 
 ## SDK connection boundary
 
-HTTP connections use the pinned OpenAI Agents SDK public `MCPServerStreamableHttp`. Stdio implements
-the SDK's public `MCPServer` interface over the official MCP `Client` and `StdioClientTransport`:
-SDK 0.21's stdio class exposes no stderr option, while the official transport exposes `stderr: "pipe"`.
-This retains bounded (64 KiB per connection), redacted process diagnostics in the owned MCP log without
-reading SDK private fields. The official client owns protocol parsing, pagination and request cancellation.
-The adapter preserves full call result metadata and checks actual transport child exit on close.
-The public transport has no `detached`/process-group option; this gate covers its direct subprocess.
-Descendant cleanup, including common `npx` launcher chains, requires explicit Stage-3 resource testing;
-the command tools' existing `runBounded` process-group behavior is separate and remains in its owner.
+HTTP connections use the pinned SDK's public `MCPServerStreamableHttp`.
+Stdio implements the public `MCPServer` interface through the official MCP Client.
+An application-owned `Transport` uses the SDK's public `ReadBuffer` and `serializeMessage` helpers.
+The shared subprocess `spawnPiped` function owns its pipes and process tree.
+Close kills the owned process tree while its direct process is alive, then waits for direct exit.
+Drain buffered stdout and stderr for at most the shared 250 ms grace, then cancel their readers.
+An exited process must not be signalled through its reusable PID. A descendant that escaped the
+owned process group cannot hold the transport open through inherited pipes.
+Bounded redacted stderr remains available in the MCP log.
+The official client owns protocol validation, pagination and request cancellation.
+The adapter retains full result metadata.
+No SDK private field is read.
 The official MCP client's OAuth implementation owns discovery, PKCE and token protocol processing;
 the application owns protected storage, authorization URL delivery, callback state and client ownership.
 Connection and sign-in teardown must finish before resources or locks are released. No pi extension
 factory, provider login, model request or alternate agent loop is used for MCP management.
 
-The management/configuration APIs are real services and are covered independently of attaching MCP
-tools to a model. Full SDK tool exposure and child/background execution integration remain the explicit
-later-stage work; retained code and tests are the starting implementation, not a reference to Git history.
+Management and model execution share these services.
+Local fixture tests cover tool execution and cleanup.
+Stage 3 still requires complete-workflow live and UI acceptance.
 
 ## Public surface
 
@@ -47,3 +50,38 @@ The module barrel exposes configuration/load/writer/management functions, trust 
 redaction/status/result/log summaries, sign-in locking, the SDK connection engine and owned OAuth provider.
 Sibling modules import this barrel. The host supplies workspace and session ownership; this module does
 not import the host or projects.
+
+## Model tools and consent
+
+`sessionMcpTools` uses the existing session connection owner.
+The SDK converts MCP schemas through public `mcpToFunctionTool`.
+The application supplies invocation checks, bounded results and the complete output store.
+Each call checks its run grant, workspace, connection identity and complete configuration fingerprint.
+A changed or disabled server cannot execute through a captured tool.
+
+Direct tools start enabled.
+The ordinary function tool `tool_search` enables matching deferred tools for the next model step.
+Hidden tools remain absent.
+Completed search receipts restore deferred tool names after restart.
+Current configuration and consent still control each call.
+This function uses ordinary function calling, not the SDK's native tool-search wire type.
+
+SDK interruptions retain the four existing consent choices.
+`sessionMcpApproval` supplies the choice list.
+`applySessionMcpApproval` checks the current binding before it applies the selection.
+The host persists project grants through `setMcpToolGrantWriter`.
+Chat grants use server, tool and complete configuration fingerprint.
+Stop closes owned connections and their process trees. It retains the same chat consent owner and
+disabled-server set for reconnect. True disposal clears in-memory chat policy.
+After host restart, restore chat consent only from approved durable decisions whose tool identity and
+configuration fingerprint still match. Once-only choices never become chat grants.
+Persistent grants remain bound to the actual command target or URL.
+The manager owns interaction IDs, revisions, receipts and SDK continuation.
+
+Model and browser results retain bounded text and `details.thinkrail` summaries.
+The text preview retains a byte prefix, including an oversized first line. Streaming UTF-8 decoding
+omits an incomplete final character. Plan and Spec tools keep their separate complete-line policy.
+Complete results stay in the owned output store.
+No keys or raw stderr enter browser results. Remote call errors are redacted and bounded by the same
+UTF-8 byte budget. Search invocation wraps public SDK validation so revoked bindings and invalid
+arguments both mark the original call as failed, even when SDK error callbacks omit call details.

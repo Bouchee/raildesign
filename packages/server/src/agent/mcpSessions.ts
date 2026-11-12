@@ -13,6 +13,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { dirname, join, sep } from "node:path";
+import { type FunctionTool, mcpToFunctionTool, type Tool, tool } from "@openai/agents";
 import type {
 	McpListResult,
 	McpReadOutputResult,
@@ -22,18 +23,28 @@ import type {
 	Project,
 } from "@thinkrail/contracts";
 import { CodedError } from "@thinkrail/shared/codedError";
+import { z } from "zod";
 import { dataDir } from "../persistence";
 import {
 	appendMcpLog,
 	createMcpConnection,
+	createMcpToolConsent,
 	deriveMcpServerStatuses,
+	fingerprintMcpEntry,
 	isMcpResultTool,
+	isRecord,
 	loadHostMcpConfig,
+	MCP_CONFIRM_CHAT,
+	MCP_CONFIRM_CHOICES,
+	MCP_SUMMARY_BYTES,
 	type McpConnection,
+	type McpConsentCall,
 	type McpServerConfig,
+	mcpNamespace,
 	mcpPolicyOf,
 	redactMcpText,
 	summarizeMcpConfigErrors,
+	summarizeMcpResult,
 	summarizeMcpServers,
 } from "./mcp";
 import { cancelAllMcpProbes } from "./mcpSignIn";
@@ -59,15 +70,33 @@ interface Tracked {
 	loaded: Map<string, McpServerConfig>;
 	snapshot: McpStatusSnapshot;
 	inFlight?: Promise<void>;
+	tools: Map<string, McpToolBinding>;
+	consent: ReturnType<typeof createMcpToolConsent>;
+	exposed: Set<string>;
 }
+interface McpToolBinding {
+	name: string;
+	server: string;
+	originalName: string;
+	description: string;
+	fingerprint: string;
+	assertCurrent: () => McpServerConfig;
+	call: McpConsentCall;
+}
+let writeToolGrant:
+	| ((workspaceId: string, server: string, target: string, tool: string) => void)
+	| undefined;
+
+export function setMcpToolGrantWriter(writer: typeof writeToolGrant): void {
+	writeToolGrant = writer;
+}
+
 const contexts = new Map<string, Context>();
 const tracked = new Map<string, Tracked>();
-const closing = new Map<
-	string,
-	{ workspaceId: string; disabledInChat: Set<string>; done: Promise<void> }
->();
+type ChatPolicy = Pick<Tracked, "disabledInChat" | "consent">;
+const closing = new Map<string, ChatPolicy & { workspaceId: string; done: Promise<void> }>();
 const generations = new Map<string, number>();
-const rememberedDisabled = new Map<string, Set<string>>();
+const rememberedChat = new Map<string, ChatPolicy>();
 let projectOf: ((workspaceId: string) => ProjectPolicy | undefined) | undefined;
 let publish: (snapshot: McpStatusSnapshot) => void = () => {};
 export function setMcpProjectResolver(fn: typeof projectOf): void {
@@ -130,7 +159,7 @@ function emit(sessionId: string, state: Tracked): void {
 }
 function begin(
 	sessionId: string,
-	disabledInChat: Set<string> = rememberedDisabled.get(sessionId) ?? new Set(),
+	chat: ChatPolicy | undefined = rememberedChat.get(sessionId),
 ): Tracked | undefined {
 	const existing = tracked.get(sessionId);
 	if (existing) return existing;
@@ -138,7 +167,7 @@ function begin(
 	const workspaceId = getSessionWorkspaceId(sessionId);
 	const record = readSessionRecord(sessionId);
 	if (!workspaceId || !record || record.workspaceId !== workspaceId) return undefined;
-	rememberedDisabled.delete(sessionId);
+	rememberedChat.delete(sessionId);
 	const state: Tracked = {
 		workspaceId,
 		cwd: record.cwd,
@@ -146,7 +175,18 @@ function begin(
 		connections: new Map(),
 		failures: new Map(),
 		controller: new AbortController(),
-		disabledInChat,
+		disabledInChat: chat?.disabledInChat ?? new Set(),
+		tools: new Map(),
+		exposed: new Set(),
+		consent:
+			chat?.consent ??
+			createMcpToolConsent({
+				policy: () => files(workspaceId, record.cwd).policy,
+				grantTool(server, target, toolName) {
+					if (!writeToolGrant) throw new Error("Persistent MCP tool grants are unavailable");
+					writeToolGrant(workspaceId, server, target, toolName);
+				},
+			}),
 		loaded: new Map(),
 		snapshot: { workspaceId, sessionId, generation: 0, servers: [] },
 	};
@@ -264,7 +304,7 @@ async function settleCleanups(tasks: readonly Promise<unknown>[]): Promise<void>
 		throw new AggregateError(errors, "MCP connections could not all close cleanly.");
 }
 export function closeSessionMcpConnections(sessionId: string): Promise<void> {
-	rememberedDisabled.delete(sessionId);
+	rememberedChat.delete(sessionId);
 	const current = closing.get(sessionId);
 	if (current) return current.done;
 	const state = tracked.get(sessionId);
@@ -280,21 +320,28 @@ export function closeSessionMcpConnections(sessionId: string): Promise<void> {
 	closing.set(sessionId, {
 		workspaceId: state.workspaceId,
 		disabledInChat: state.disabledInChat,
+		consent: state.consent,
 		done,
 	});
 	return done;
 }
+export async function pauseSessionMcpConnections(sessionId: string): Promise<void> {
+	const chat = tracked.get(sessionId) ?? closing.get(sessionId) ?? rememberedChat.get(sessionId);
+	await closeSessionMcpConnections(sessionId);
+	if (chat && getSessionWorkspaceId(sessionId))
+		rememberedChat.set(sessionId, { disabledInChat: chat.disabledInChat, consent: chat.consent });
+}
 export async function closeWorkspaceMcpConnections(workspaceId: string): Promise<void> {
-	const states = new Map<string, { workspaceId: string; disabledInChat: Set<string> }>([
-		...closing,
-		...tracked,
-	]);
+	const states = new Map<string, ChatPolicy & { workspaceId: string }>([...closing, ...tracked]);
 	for (const [sessionId, state] of states)
 		if (state.workspaceId !== workspaceId) states.delete(sessionId);
 	await settleCleanups([...states.keys()].map(closeSessionMcpConnections));
 	for (const [sessionId, state] of states) {
 		if (getSessionWorkspaceId(sessionId) === workspaceId)
-			rememberedDisabled.set(sessionId, state.disabledInChat);
+			rememberedChat.set(sessionId, {
+				disabledInChat: state.disabledInChat,
+				consent: state.consent,
+			});
 	}
 }
 export async function reconcileMcpSessions(
@@ -302,9 +349,9 @@ export async function reconcileMcpSessions(
 ): Promise<Record<string, "reloaded">> {
 	const result: Record<string, "reloaded"> = {};
 	for (const sessionId of sessionIds) {
-		const disabled = tracked.get(sessionId)?.disabledInChat ?? rememberedDisabled.get(sessionId);
+		const chat = tracked.get(sessionId) ?? rememberedChat.get(sessionId);
 		await closeSessionMcpConnections(sessionId);
-		const state = begin(sessionId, disabled);
+		const state = begin(sessionId, chat);
 		if (state) {
 			result[sessionId] = "reloaded";
 		}
@@ -346,7 +393,7 @@ export async function closeAllMcpConnections(): Promise<void> {
 			[...new Set([...tracked.keys(), ...closing.keys()])].map(closeSessionMcpConnections),
 		);
 	} finally {
-		rememberedDisabled.clear();
+		rememberedChat.clear();
 		contexts.clear();
 		generations.clear();
 	}
@@ -456,4 +503,245 @@ export async function readMcpToolOutput(
 	} catch {
 		return { available: false, reason: "expired" };
 	}
+}
+
+function mcpToolError(error: unknown): string {
+	const text = redactMcpText(error instanceof Error ? error.message : String(error));
+	return new TextDecoder("utf-8", { ignoreBOM: true }).decode(
+		Buffer.from(text, "utf8").subarray(0, MCP_SUMMARY_BYTES),
+		{ stream: true },
+	);
+}
+
+export interface SessionMcpToolOptions {
+	sessionId: string;
+	workspaceId: string;
+	cwd: string;
+	signal: AbortSignal;
+	assertActive: () => void;
+	markToolFailed: (toolCallId: string) => void;
+}
+
+export function sessionMcpApproval(
+	sessionId: string,
+	toolName: string,
+): { title: string; options: string[]; fingerprint: string } | undefined {
+	const binding = tracked.get(sessionId)?.tools.get(toolName);
+	if (!binding) return undefined;
+	binding.assertCurrent();
+	return {
+		title: `Allow ${binding.server}/${binding.originalName}? It may change data.`,
+		options: [...MCP_CONFIRM_CHOICES],
+		fingerprint: binding.fingerprint,
+	};
+}
+
+export function applySessionMcpApproval(
+	sessionId: string,
+	toolName: string,
+	value: string | null,
+): boolean {
+	const state = tracked.get(sessionId);
+	const binding = state?.tools.get(toolName);
+	if (!state || !binding) throw new Error("This MCP approval is no longer available");
+	binding.assertCurrent();
+	if (value !== null && !MCP_CONFIRM_CHOICES.includes(value))
+		throw new Error("Invalid MCP approval choice");
+	return state.consent.applyChoice(binding.call, value ?? "Deny");
+}
+
+export async function sessionMcpTools(options: SessionMcpToolOptions): Promise<Tool[]> {
+	options.assertActive();
+	options.signal.throwIfAborted();
+	const state = begin(options.sessionId);
+	if (!state || state.workspaceId !== options.workspaceId || state.cwd !== options.cwd)
+		throw new Error("MCP tools belong to a different session or workspace");
+	await state.inFlight;
+	options.assertActive();
+	options.signal.throwIfAborted();
+	state.tools.clear();
+	const tools: Tool[] = [];
+	for (const [serverName, connection] of state.connections) {
+		if (connection.entry.config.enabled === false || connection.status().state !== "connected")
+			continue;
+		const definitions = await connection.connect();
+		const invokeResult = connection.server.callToolResult?.bind(connection.server);
+		if (!invokeResult) throw new Error("The MCP connection cannot return complete tool results");
+		for (const definition of definitions) {
+			const config = connection.entry.config;
+			const exposure = config.toolExposure?.[definition.name] ?? config.exposure ?? "deferred";
+			if (exposure === "hidden") continue;
+			const name = `${mcpNamespace(serverName)}__${definition.name}`;
+			if (!/^[A-Za-z0-9_-]{1,64}$/.test(name) || state.tools.has(name))
+				throw new Error(
+					"MCP tool names must be unique valid function names of at most 64 characters",
+				);
+			const fingerprint = fingerprintMcpEntry(serverName, config);
+			const assertCurrent = () => {
+				options.assertActive();
+				options.signal.throwIfAborted();
+				const current = loadHostMcpConfig(
+					files(state.workspaceId, state.cwd, state.disabledInChat),
+				).servers.find((entry) => entry.name === serverName)?.config;
+				if (
+					tracked.get(options.sessionId) !== state ||
+					state.connections.get(serverName) !== connection ||
+					!current ||
+					current.enabled === false ||
+					fingerprintMcpEntry(serverName, current) !== fingerprint
+				)
+					throw new Error("MCP trust or configuration changed before this call");
+				return current;
+			};
+			const call: McpConsentCall = {
+				server: serverName,
+				tool: name,
+				config,
+				readOnly:
+					"annotations" in definition &&
+					isRecord(definition.annotations) &&
+					definition.annotations.readOnlyHint === true,
+				signal: options.signal,
+				currentConfig: assertCurrent,
+			};
+			state.tools.set(name, {
+				name,
+				server: serverName,
+				originalName: definition.name,
+				description: (definition.description ?? "").slice(0, 2000),
+				fingerprint,
+				assertCurrent,
+				call,
+			});
+			const converted = mcpToFunctionTool(definition, connection.server, false, {
+				toolNameOverride: name,
+			});
+			const functionTool: FunctionTool<unknown, typeof converted.parameters, unknown> = converted;
+			functionTool.isEnabled = async () => {
+				assertCurrent();
+				return exposure === "direct" || state.exposed.has(name);
+			};
+			functionTool.needsApproval = async () => state.consent.needsApproval(call);
+			functionTool.invoke = async (_context, input, details) => {
+				const toolCallId = details?.toolCall?.callId;
+				try {
+					assertCurrent();
+					if (!toolCallId) throw new Error("MCP calls require a tool call identity");
+					const args = z.record(z.string(), z.unknown()).parse(JSON.parse(input));
+					const signal = details?.signal
+						? AbortSignal.any([options.signal, details.signal])
+						: options.signal;
+					const result = await invokeResult(definition.name, args, null, { signal });
+					assertCurrent();
+					signal.throwIfAborted();
+					storeMcpToolOutput(options.sessionId, toolCallId, JSON.stringify(result));
+					if (result.isError) options.markToolFailed(toolCallId);
+					const text = result.content
+						.flatMap((block) =>
+							isRecord(block) && block.type === "text" && typeof block.text === "string"
+								? [block.text]
+								: [],
+						)
+						.join("\n");
+					const bytes = Buffer.from(text, "utf8");
+					const preview = {
+						content: new TextDecoder("utf-8", { ignoreBOM: true }).decode(
+							bytes.subarray(0, MCP_SUMMARY_BYTES),
+							{ stream: true },
+						),
+						truncated: bytes.length > MCP_SUMMARY_BYTES,
+					};
+					return {
+						content: [
+							{
+								type: "text",
+								text: preview.content,
+							},
+						],
+						details: {
+							server: serverName,
+							tool: definition.name,
+							thinkrail: summarizeMcpResult(name, result, result.isError === true),
+							fullOutput: true,
+							truncated: preview.truncated,
+						},
+						isError: result.isError === true,
+					};
+				} catch (error) {
+					if (toolCallId) options.markToolFailed(toolCallId);
+					return {
+						content: [
+							{
+								type: "text",
+								text: mcpToolError(error),
+							},
+						],
+						isError: true,
+					};
+				}
+			};
+			tools.push(functionTool);
+		}
+	}
+	const saved = readSessionRecord(options.sessionId);
+	for (const decision of Object.values(saved?.decisions ?? {})) {
+		if (!decision.value || decision.selection !== MCP_CONFIRM_CHAT || !decision.policyFingerprint)
+			continue;
+		const effect = saved?.effects[decision.toolCallId];
+		const binding = effect ? state.tools.get(effect.name) : undefined;
+		if (!binding || binding.fingerprint !== decision.policyFingerprint) continue;
+		binding.assertCurrent();
+		state.consent.applyChoice(binding.call, MCP_CONFIRM_CHAT);
+	}
+	for (const effect of Object.values(saved?.effects ?? {})) {
+		if (effect.name !== "tool_search" || effect.status !== "completed" || !effect.result) continue;
+		let matches: unknown;
+		try {
+			matches = JSON.parse(effect.result);
+		} catch {
+			continue;
+		}
+		if (!Array.isArray(matches)) continue;
+		for (const match of matches)
+			if (isRecord(match) && typeof match.name === "string" && state.tools.has(match.name))
+				state.exposed.add(match.name);
+	}
+	if (tools.length) {
+		const search = tool({
+			name: "tool_search",
+			description:
+				"Find approved MCP tools by keywords. Matching tools become available for the next model step.",
+			parameters: z.object({
+				query: z.string().min(1),
+				limit: z.number().int().min(1).max(20).nullable(),
+			}),
+			errorFunction: null,
+			execute({ query, limit }) {
+				options.assertActive();
+				options.signal.throwIfAborted();
+				const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+				const matches = [...state.tools.values()]
+					.filter((binding) => {
+						binding.assertCurrent();
+						const text = `${binding.name} ${binding.description}`.toLowerCase();
+						return words.some((word) => text.includes(word));
+					})
+					.slice(0, limit ?? 8);
+				for (const binding of matches) state.exposed.add(binding.name);
+				return matches.map(({ name, description }) => ({ name, description }));
+			},
+		});
+		const invokeSearch = search.invoke;
+		search.invoke = async (context, input, details) => {
+			try {
+				return await invokeSearch(context, input, details);
+			} catch (error) {
+				const callId = details?.toolCall?.callId;
+				if (callId) options.markToolFailed(callId);
+				return mcpToolError(error);
+			}
+		};
+		tools.unshift(search);
+	}
+	return tools;
 }

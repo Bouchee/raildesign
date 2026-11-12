@@ -24,10 +24,11 @@ import { type CompactOptions, type CompactResult, compactSession } from "./sessi
 
 const log = logger("agent");
 
-export type ApprovalRequest = Extract<ExtUiRequest, { kind: "confirm" }> & {
+export type ApprovalRequest = Extract<ExtUiRequest, { kind: "confirm" | "select" }> & {
 	runId: string;
 	revision: number;
 	toolCallId: string;
+	policyFingerprint?: string | undefined;
 };
 
 export interface StoredInput {
@@ -107,7 +108,14 @@ export interface SessionRecord {
 		| undefined;
 	decisions: Record<
 		string,
-		{ runId: string; revision: number; toolCallId: string; value: boolean }
+		{
+			runId: string;
+			revision: number;
+			toolCallId: string;
+			value: boolean;
+			selection?: string | null | undefined;
+			policyFingerprint?: string | undefined;
+		}
 	>;
 }
 
@@ -198,16 +206,19 @@ const completionSchema = z.union([
 		failure: z.enum(["error", "length"]),
 	}),
 ]);
-const approvalSchema = z.object({
+const approvalAnchorSchema = z.object({
+	policyFingerprint: z.string().optional(),
 	id: z.string(),
 	sessionId: idSchema,
 	runId: z.string(),
 	revision: z.number().int().nonnegative(),
 	toolCallId: z.string(),
-	kind: z.literal("confirm"),
 	title: z.string(),
-	message: z.string(),
 });
+const approvalSchema = z.discriminatedUnion("kind", [
+	approvalAnchorSchema.extend({ kind: z.literal("confirm"), message: z.string() }),
+	approvalAnchorSchema.extend({ kind: z.literal("select"), options: z.array(z.string()) }),
+]);
 const stateSchema = z.object({
 	execution: z.enum(["idle", "running"]),
 	runId: z.string().nullable(),
@@ -340,6 +351,8 @@ const recordSchema = z.object({
 			revision: z.number().int(),
 			toolCallId: z.string(),
 			value: z.boolean(),
+			selection: z.string().nullable().optional(),
+			policyFingerprint: z.string().optional(),
 		}),
 	),
 });

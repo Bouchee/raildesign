@@ -8,13 +8,24 @@ import {
 	modelResponse,
 	ScriptedModel,
 } from "@openai/agents/testing";
+import type { Project } from "@thinkrail/contracts";
 import { SPEC_RULE } from "@thinkrail/spec-graph";
 import { TodoStore } from "@thinkrail/todos/core";
 import { loadWorkspaces, saveWorkspaces } from "../persistence";
+import { MCP_CONFIRM_ALWAYS, MCP_CONFIRM_CHAT, MCP_CONFIRM_ONCE } from "./mcp";
+import {
+	closeAllMcpConnections,
+	closeSessionMcpConnections,
+	reconcileMcpSessions,
+	setMcpProjectResolver,
+	setMcpToolGrantWriter,
+} from "./mcpSessions";
 import { configureAgentModelFactory } from "./modelConfiguration";
 import {
+	abortSession,
 	createSession,
 	disposeAllSessions,
+	ensureSessionAttached,
 	getSessionMessages,
 	getSessionState,
 	promptSession,
@@ -22,6 +33,7 @@ import {
 	removeSession,
 	resolveExtUi,
 	setExtUiPublisher,
+	setSessionResourceCleanup,
 } from "./sdkSessionManager";
 import { readSessionRecord } from "./sessionStore";
 
@@ -35,6 +47,9 @@ const previous = {
 let root: string;
 let cwd: string;
 let sessionId: string;
+let policy:
+	| Pick<Project, "resourceTrust" | "mcpApprovals" | "mcpOverrides" | "mcpToolGrants">
+	| undefined;
 beforeEach(async () => {
 	root = mkdtempSync(join(tmpdir(), "sdk-capabilities-"));
 	cwd = join(root, "workspace");
@@ -57,11 +72,23 @@ beforeEach(async () => {
 		},
 	]);
 	({ sessionId } = await createSession({ workspaceId: "workspace", cwd }));
+	policy = undefined;
+	setMcpProjectResolver(() => policy);
+	setSessionResourceCleanup(closeSessionMcpConnections);
+	setMcpToolGrantWriter((_workspaceId, server, target, name) => {
+		policy ??= {};
+		policy.mcpToolGrants ??= {};
+		policy.mcpToolGrants[server] = { target, tools: [name] };
+	});
 });
 afterEach(async () => {
+	await closeAllMcpConnections();
 	disposeAllSessions();
 	configureAgentModelFactory();
 	setExtUiPublisher(() => {});
+	setMcpProjectResolver(undefined);
+	setMcpToolGrantWriter(undefined);
+	setSessionResourceCleanup(undefined);
 	for (const [key, value] of Object.entries(previous)) {
 		if (value === undefined) delete process.env[key];
 		else process.env[key] = value;
@@ -71,6 +98,22 @@ afterEach(async () => {
 const done = () => modelResponse([assistantMessage("done")]);
 const call = (name: string, args: Record<string, unknown>, callId: string) =>
 	modelResponse([functionCall(name, args, { callId })]);
+function configureMcp(exposure = "direct", env: Record<string, string> = {}) {
+	writeFileSync(
+		join(root, "data/mcp.json"),
+		JSON.stringify({
+			mcpServers: {
+				docs: {
+					command: process.execPath,
+					args: [join(import.meta.dir, "mcp/fixtures/stdioServer.ts")],
+					env: { MCP_FIXTURE_NOTE_FILE: join(root, "note.txt"), ...env },
+					exposure,
+				},
+			},
+		}),
+	);
+}
+
 test("the session manager supplies workspace instructions and executes admitted Skill search and reads", async () => {
 	const skill = join(root, "data/skills/fixture");
 	mkdirSync(skill, { recursive: true });
@@ -98,39 +141,114 @@ test("the session manager supplies workspace instructions and executes admitted 
 	expect(readSessionRecord(sessionId)?.effects["read-skill"]?.status).toBe("completed");
 });
 
-async function until(predicate: () => boolean): Promise<void> {
-	const deadline = Date.now() + 5000;
-	while (!predicate()) {
-		if (Date.now() > deadline) throw new Error("Timed out waiting for fixture");
-		await Bun.sleep(5);
-	}
+for (const choice of [MCP_CONFIRM_ONCE, MCP_CONFIRM_CHAT, MCP_CONFIRM_ALWAYS]) {
+	test(`the session manager preserves MCP ${choice} scope across SDK continuation`, async () => {
+		configureMcp();
+		const model = new ScriptedModel([
+			call("mcp__docs__write_note", { text: "first" }, "first"),
+			call("mcp__docs__write_note", { text: "second" }, "second"),
+			done(),
+		]);
+		configureAgentModelFactory(() => model);
+		let choices = 0;
+		setExtUiPublisher((request) => {
+			if (request.kind !== "select") return;
+			if (!request.runId || request.revision === undefined || !request.toolCallId)
+				throw new Error("MCP selection lacks ownership");
+			if (choices === 0) expect(existsSync(join(root, "note.txt"))).toBe(false);
+			choices++;
+			resolveExtUi({
+				id: request.id,
+				sessionId: request.sessionId,
+				runId: request.runId,
+				revision: request.revision,
+				toolCallId: request.toolCallId,
+				value: choice,
+			});
+		});
+		await promptSession(sessionId, "Write both notes through MCP.");
+		expect(readFileSync(join(root, "note.txt"), "utf8")).toBe("second");
+		expect(choices).toBe(choice === MCP_CONFIRM_ONCE ? 2 : 1);
+		const record = readSessionRecord(sessionId);
+		expect(record?.effects.first?.status).toBe("completed");
+		expect(record?.effects.second?.status).toBe("completed");
+		const result = record?.messages.find(
+			(message) => message.role === "toolResult" && message.toolCallId === "second",
+		);
+		expect(result?.role === "toolResult" && result.details).toMatchObject({
+			server: "docs",
+			thinkrail: { blocks: [{ kind: "text" }] },
+		});
+		expect(
+			Object.values(record?.decisions ?? {}).every((decision) => decision.selection === choice),
+		).toBe(true);
+		if (choice === MCP_CONFIRM_ALWAYS)
+			expect(policy?.mcpToolGrants?.docs?.tools).toEqual(["mcp__docs__write_note"]);
+	});
 }
-test("idle resource reload validates fresh resources without a model call and refuses pending recovery", async () => {
+
+test("the session manager exposes a deferred MCP tool after ordinary tool_search in the same run", async () => {
+	configureMcp("deferred");
 	const model = new ScriptedModel([
-		call("bash", { command: "true", timeoutMs: 1000 }, "reload-bash"),
+		call("tool_search", { query: "Echo", limit: null }, "discover"),
+		call("mcp__docs__echo", { text: "dispatched" }, "echo"),
+		done(),
 	]);
-	const created = await createSession({ cwd, workspaceId: "workspace" });
 	configureAgentModelFactory(() => model);
-	writeFileSync(join(cwd, "AGENTS.md"), "Current workspace rules");
-	await reloadSessionResources(created.sessionId, "workspace", cwd);
-	expect(model.calls).toHaveLength(0);
-	await expect(reloadSessionResources(created.sessionId, "foreign", cwd)).rejects.toThrow(
-		"unavailable",
-	);
-	writeFileSync(join(cwd, "AGENTS.md"), "x".repeat(128 * 1024 + 1));
-	await expect(reloadSessionResources(created.sessionId, "workspace", cwd)).rejects.toThrow(
-		"128 KiB",
-	);
-	writeFileSync(join(cwd, "AGENTS.md"), "Repaired rules");
-	await reloadSessionResources(created.sessionId, "workspace", cwd);
-	setExtUiPublisher(() => {});
-	const running = promptSession(created.sessionId, "Run the check");
-	await until(() => getSessionState(created.sessionId).needsInput?.kind === "dialog");
-	await expect(reloadSessionResources(created.sessionId, "workspace", cwd)).rejects.toThrow("idle");
-	await removeSession(created.sessionId);
-	await running;
-	await expect(reloadSessionResources(created.sessionId, "workspace", cwd)).rejects.toThrow("idle");
-	expect(model.calls).toHaveLength(1);
+	await promptSession(sessionId, "Find the Echo tool and call it.");
+	const messages = (await getSessionMessages(sessionId, "workspace", cwd)).messages;
+	const result = messages.find((item) => item.role === "toolResult" && item.toolCallId === "echo");
+	expect(JSON.stringify(result)).toContain("echo: dispatched");
+	expect(result?.role === "toolResult" && result.isError).toBe(false);
+	const first = model.calls[0]?.request.tools.map((entry) => ("name" in entry ? entry.name : ""));
+	const second = model.calls[1]?.request.tools.map((entry) => ("name" in entry ? entry.name : ""));
+	expect(first).not.toContain("mcp__docs__echo");
+	expect(second).toContain("mcp__docs__echo");
+});
+
+test("chat consent survives Stop and host reattachment only for its approved MCP fingerprint", async () => {
+	const pidFile = join(root, "descendant-pid");
+	configureMcp("direct", { MCP_FIXTURE_DESCENDANT_PID_FILE: pidFile });
+	let approvals = 0;
+	setExtUiPublisher((request) => {
+		if (request.kind !== "select") return;
+		if (!request.runId || request.revision === undefined || !request.toolCallId)
+			throw new Error("Missing approval ownership");
+		approvals++;
+		resolveExtUi({
+			id: request.id,
+			sessionId,
+			runId: request.runId,
+			revision: request.revision,
+			toolCallId: request.toolCallId,
+			value: MCP_CONFIRM_CHAT,
+		});
+	});
+	const write = async (text: string) => {
+		configureAgentModelFactory(
+			() => new ScriptedModel([call("mcp__docs__write_note", { text }, text), done()]),
+		);
+		await promptSession(sessionId, text);
+		expect(readFileSync(join(root, "note.txt"), "utf8")).toBe(text);
+	};
+	await write("before-stop");
+	const pid = Number(readFileSync(pidFile, "utf8"));
+	await abortSession(sessionId);
+	expect(() => process.kill(pid, 0)).toThrow();
+	await write("after-stop");
+	expect(approvals).toBe(1);
+	await removeSession(sessionId);
+	await closeAllMcpConnections();
+	expect(await ensureSessionAttached(sessionId, "workspace", cwd)).toBe(true);
+	await write("after-restart");
+	expect(approvals).toBe(1);
+	configureMcp("direct", {
+		MCP_FIXTURE_DESCENDANT_PID_FILE: pidFile,
+		MCP_FIXTURE_CONFIG: "changed",
+	});
+	await reconcileMcpSessions([sessionId]);
+	await write("after-change");
+	expect(approvals).toBe(2);
 });
 
 test("manual-only Skill commands expand under the run grant and rejected commands leave the session idle", async () => {
@@ -283,3 +401,54 @@ for (const approved of [true, false]) {
 		} else expect(record?.effects["create-spec"]).toBeUndefined();
 	});
 }
+
+async function until(predicate: () => boolean): Promise<void> {
+	const deadline = Date.now() + 5000;
+	while (!predicate()) {
+		if (Date.now() > deadline) throw new Error("Timed out waiting for fixture");
+		await Bun.sleep(5);
+	}
+}
+test("idle resource reload validates fresh resources without a model call and refuses pending recovery", async () => {
+	const model = new ScriptedModel([
+		call("bash", { command: "true", timeoutMs: 1000 }, "reload-bash"),
+	]);
+	const created = await createSession({ cwd, workspaceId: "workspace" });
+	configureAgentModelFactory(() => model);
+	writeFileSync(join(cwd, "AGENTS.md"), "Current workspace rules");
+	await reloadSessionResources(created.sessionId, "workspace", cwd);
+	expect(model.calls).toHaveLength(0);
+	await expect(reloadSessionResources(created.sessionId, "foreign", cwd)).rejects.toThrow(
+		"unavailable",
+	);
+	writeFileSync(join(cwd, "AGENTS.md"), "x".repeat(128 * 1024 + 1));
+	await expect(reloadSessionResources(created.sessionId, "workspace", cwd)).rejects.toThrow(
+		"128 KiB",
+	);
+	writeFileSync(join(cwd, "AGENTS.md"), "Repaired rules");
+	await reloadSessionResources(created.sessionId, "workspace", cwd);
+	setExtUiPublisher(() => {});
+	const running = promptSession(created.sessionId, "Run the check");
+	await until(() => getSessionState(created.sessionId).needsInput?.kind === "dialog");
+	await expect(reloadSessionResources(created.sessionId, "workspace", cwd)).rejects.toThrow("idle");
+	await removeSession(created.sessionId);
+	await running;
+	await expect(reloadSessionResources(created.sessionId, "workspace", cwd)).rejects.toThrow("idle");
+	expect(model.calls).toHaveLength(1);
+});
+
+test("SDK MCP search argument failures remain errors in the saved transcript", async () => {
+	configureMcp("deferred");
+	const model = new ScriptedModel([
+		call("tool_search", { query: "", limit: null }, "invalid-search"),
+		done(),
+	]);
+	configureAgentModelFactory(() => model);
+	await promptSession(sessionId, "Search MCP tools");
+	const record = readSessionRecord(sessionId);
+	const result = record?.messages.find(
+		(message) => message.role === "toolResult" && message.toolCallId === "invalid-search",
+	);
+	expect(result?.role === "toolResult" && result.isError).toBe(true);
+	expect(record?.effects["invalid-search"]?.isError).toBe(true);
+});
