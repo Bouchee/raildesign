@@ -4,10 +4,18 @@ import { join, resolve } from "node:path";
 
 export type CompatibilitySkillProvider = "claude" | "codex" | "github-copilot" | "gemini";
 
-const PROJECT_SKILL_PATH = /^\.(claude|github|gemini|raildesign|agents)\/skills(?:\/|$)/;
+const PROJECT_SKILL_ALIASES = "claude|github|gemini|raildesign|agents";
+const PROJECT_SKILL_PATH = new RegExp(`^\\.(${PROJECT_SKILL_ALIASES})/skills(?:/|$)`);
+const PROJECT_SKILL_FOLDER = new RegExp(
+	`^\\.(${PROJECT_SKILL_ALIASES})(?:/skills(?:/[^./][^/]*)*)?$`,
+);
 
 export function isProjectSkillPath(relativePath: string): boolean {
 	return PROJECT_SKILL_PATH.test(relativePath.replaceAll("\\", "/"));
+}
+
+export function mayHoldProjectSkills(relativePath: string): boolean {
+	return PROJECT_SKILL_FOLDER.test(relativePath.replaceAll("\\", "/"));
 }
 
 export interface CompatibilitySkillSource {

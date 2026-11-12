@@ -12,5 +12,5 @@ export {
 	sessionRecordPath,
 } from "./sessionStore";
 export { admissionContextFor } from "./skillAdmission";
-export { isProjectSkillPath } from "./skillSources";
+export { isProjectSkillPath, mayHoldProjectSkills } from "./skillSources";
 export { listProjectAliasSkillNames, listSkillCatalog, listSkillCommands } from "./skills";

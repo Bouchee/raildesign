@@ -9,10 +9,12 @@ import { useModelPreferences } from "@/chat/useModelPreferences";
 import { selectCatalogModel, selectPickerModels, toast, useAppStore } from "@/store";
 import { getTransport } from "@/transport";
 import { SettingsGroup, SettingsPageContainer } from "./SettingsGroup";
+import { useSettingsDialogContainer } from "./settingsDialogContainer";
 import { VisibleModelsSettings } from "./VisibleModelsSettings";
 
 export function ModelsSettings() {
 	const t = useT();
+	const container = useSettingsDialogContainer();
 	const defaultModel = useAppStore((s) => s.defaultModel);
 	const defaultEffort = useAppStore((s) => s.defaultEffort);
 	const { models: allModels, refreshing, refresh } = useModelCatalog(true);
@@ -97,6 +99,7 @@ export function ModelsSettings() {
 								placeholder={t("settings.models.firstAvailable")}
 								disabled={saving || reading}
 								preferences={preferences}
+								container={container}
 							/>
 							<ThinkingSelector
 								level={level}
@@ -105,6 +108,7 @@ export function ModelsSettings() {
 									void saveConfig({ defaultEffort }, t("settings.models.saveEffortFailed"))
 								}
 								disabled={saving || reading}
+								container={container}
 							/>
 						</div>
 					</div>

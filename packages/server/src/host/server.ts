@@ -26,8 +26,10 @@ import {
 	USER_THEMES_PROTOCOL_VERSION,
 	WORKSPACE_CREATION_PROTOCOL_VERSION,
 	WS_CHANNELS,
+	WS_MAX_FRAME_BYTES,
 } from "@thinkrail/contracts";
 import { errorCodeOf } from "@thinkrail/shared/codedError";
+import { WORKSPACE_CONTEXT_DIR } from "@thinkrail/shared/paths";
 import { lockSync } from "proper-lockfile";
 import {
 	cancelAllMcpProbes,
@@ -38,6 +40,7 @@ import {
 	getSessionWorkspaceId,
 	initializeSessionStates,
 	isProjectSkillPath,
+	mayHoldProjectSkills,
 	resolveProviderAuthorization,
 	setExtUiPublisher,
 	setMcpAuthorizationResolver,
@@ -57,6 +60,7 @@ import {
 import { forgetOpenBranchReview } from "../branch-review";
 
 import { watchUserFonts } from "../fonts";
+import { ignoredPaths } from "../git";
 import { watchLocalLocales } from "../locales";
 import { logger } from "../log";
 import { dataDir, loadWorkspaces } from "../persistence";
@@ -91,6 +95,7 @@ import {
 import { watchUserThemes } from "../themes";
 import { setTurnPublisher, TurnTracker } from "../turns";
 import {
+	setIgnoredPathsResolver,
 	setRepoMetaPublisher,
 	setSkillPathClassifier,
 	setWatchPublisher,
@@ -178,6 +183,11 @@ const RECENT_FOLDER_CHECK_BUDGET_MS = 250;
 const log = logger("host");
 
 const isRequestId = (id: unknown): id is string => typeof id === "string";
+
+const onScratchDirPath = (path: string) =>
+	path === WORKSPACE_CONTEXT_DIR ||
+	WORKSPACE_CONTEXT_DIR.startsWith(`${path}/`) ||
+	path.startsWith(`${WORKSPACE_CONTEXT_DIR}/`);
 
 function formatReplayLoad(load: ReplayLoad): string {
 	const occupancy = ({ pending, settled, abandoned }: ReplayLoad[string]) =>
@@ -374,6 +384,7 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 				return new Response("not found", { status: 404 });
 			},
 			websocket: {
+				maxPayloadLength: WS_MAX_FRAME_BYTES,
 				open(ws) {
 					if (shuttingDown) {
 						ws.close();
@@ -784,7 +795,12 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 	);
 	void initSpeech().catch((err) => log.warn("voice input state could not be read", err));
 	setWatchPublisher(publishFsChanged);
-
+	setIgnoredPathsResolver((worktreePath, paths) =>
+		ignoredPaths(
+			worktreePath,
+			paths.filter((path) => !mayHoldProjectSkills(path) && !onScratchDirPath(path)),
+		),
+	);
 	setFsNudgePublisher(publishFsChanged);
 
 	setWatchStartedPublisher(seedWorkspaceHead);
@@ -958,6 +974,7 @@ function restoreSeamDefaults(): void {
 	setProjectPathGuard(null);
 	setSpeechPublisher(null);
 	setWatchPublisher(null);
+	setIgnoredPathsResolver(null);
 	setFsNudgePublisher(null);
 	setWatchStartedPublisher(null);
 	setRepoMetaPublisher(null);

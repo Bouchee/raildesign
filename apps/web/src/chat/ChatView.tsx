@@ -7,6 +7,7 @@ import {
 import { t as translate, useT } from "@thinkrail/locales/react";
 import { useCallback, useEffect, useInsertionEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
+import { randomUuid } from "@/lib";
 import { type ParsedTemplate, templateToSlashCommand, useTemplateCommandPicker } from "@/prompt";
 import {
 	EMPTY_RUNTIME,
@@ -21,7 +22,7 @@ import {
 	useAppStore,
 	workspaceName,
 } from "@/store";
-import { errorText, getTransport } from "@/transport";
+import { errorText, getTransport, wsErrorCode } from "@/transport";
 import { ChatHeader } from "./ChatHeader";
 import ChatTranscript, { type ChatTranscriptHandle } from "./ChatTranscript";
 import {
@@ -41,6 +42,7 @@ import {
 	parseNativeChatCommand,
 	prepareNameChatCommand,
 } from "./nativeCommands";
+import type { PromptImagesOwner } from "./promptImages";
 import { QueueStrip } from "./QueueStrip";
 import { deriveRecentPrompts } from "./recentPrompts";
 import { SkillsDialog } from "./SkillsDialog";
@@ -69,6 +71,18 @@ export default function ChatView({
 		(s) => awaitingToolCallIdOf(s.sessions[sessionId]?.hostState ?? null) != null,
 	);
 	const draft = useAppStore((s) => s.sessions[sessionId]?.draft ?? "");
+	const imageDraft = useAppStore(
+		(s) => s.sessions[sessionId]?.promptImages ?? EMPTY_RUNTIME.promptImages,
+	);
+	const imageOwner = useMemo<PromptImagesOwner>(
+		() => ({
+			state: imageDraft,
+			read: () =>
+				useAppStore.getState().sessions[sessionId]?.promptImages ?? EMPTY_RUNTIME.promptImages,
+			update: (change) => useAppStore.getState().updateChatPromptImages(sessionId, change),
+		}),
+		[imageDraft, sessionId],
+	);
 	const queue = useAppStore((s) => s.sessions[sessionId]?.queue ?? EMPTY_RUNTIME.queue);
 	const sessionModel = useAppStore((s) => s.sessions[sessionId]?.model ?? null);
 	const thinkingLevel = useAppStore(
@@ -332,7 +346,7 @@ export default function ChatView({
 	const performSend = (text: string, attachments: ChatAttachment[], behavior: SubmitBehavior) => {
 		const streaming = useAppStore.getState().sessions[sessionId]?.isStreaming ?? false;
 		const mode = behavior === "send" && streaming ? "steer" : behavior;
-		const messageId = crypto.randomUUID();
+		const messageId = randomUuid();
 		if (mode === "send" && (text || attachments.length > 0)) {
 			transcriptRef.current?.armImmediateTurn();
 			useAppStore.getState().appendUserMessage(sessionId, text, attachments, messageId);
@@ -360,7 +374,9 @@ export default function ChatView({
 				...(runtime?.queue.steering ?? []),
 				...(runtime?.queue.followUp ?? []),
 			].some((item) => item.id === messageId);
-			if (!retained && mode !== "send") {
+			// The host refuses a message over the WebSocket frame cap; give it back to edit.
+			const tooLarge = wsErrorCode(err) === "FRAME_TOO_LARGE";
+			if (!retained && (mode !== "send" || tooLarge)) {
 				const currentDraft = runtime?.draft ?? "";
 				useAppStore
 					.getState()
@@ -390,7 +406,7 @@ export default function ChatView({
 			void getTransport()
 				.request("session.compact", {
 					sessionId,
-					operationId: crypto.randomUUID(),
+					operationId: randomUuid(),
 					instructions: nativeCommand.instructions,
 				})
 				.catch((error: unknown) =>
@@ -586,6 +602,7 @@ export default function ChatView({
 					ref={composerRef}
 					value={draft}
 					onChange={(v) => useAppStore.getState().setChatDraft(sessionId, v)}
+					imageOwner={imageOwner}
 					isStreaming={isStreaming}
 					awaitingResponse={awaitingResponse}
 					growthLimit={composerGrowthLimit}

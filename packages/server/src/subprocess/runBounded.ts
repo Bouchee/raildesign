@@ -20,6 +20,7 @@ export type BoundedRunOptions = {
 	idleTimeoutMs?: number;
 	onStderr?: (text: string) => void;
 	maxOutputBytes?: number;
+	stdin?: Blob;
 };
 
 export type BoundedBytesRunOptions = Omit<BoundedRunOptions, "stdout"> & {
@@ -28,7 +29,7 @@ export type BoundedBytesRunOptions = Omit<BoundedRunOptions, "stdout"> & {
 
 export type BoundedStreamOptions = Omit<
 	BoundedRunOptions,
-	"stdout" | "signal" | "idleTimeoutMs" | "onStderr" | "maxOutputBytes"
+	"stdout" | "signal" | "idleTimeoutMs" | "onStderr" | "maxOutputBytes" | "stdin"
 >;
 export type BoundedStream = {
 	stdout: ReadableStream<Uint8Array>;
@@ -325,7 +326,7 @@ export async function runBounded(
 
 	let proc: Bun.Subprocess<"ignore", "pipe", "pipe">;
 	try {
-		proc = Bun.spawn(argv, spawnOptions(opts));
+		proc = Bun.spawn(argv, { ...spawnOptions(opts), stdin: opts.stdin ?? "ignore" });
 	} catch (cause) {
 		const failed = launchFailure(cause, waitedMs());
 		return opts.stdout === "bytes" ? { ...failed, out: new Uint8Array() } : { ...failed, out: "" };

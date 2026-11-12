@@ -37,6 +37,7 @@ import {
 	toast,
 	useAppStore,
 } from "./appStore";
+import type { PromptImage } from "./promptImageState";
 import {
 	selectActiveFilePath,
 	selectChatAttended,
@@ -422,6 +423,19 @@ test("a host-fired USER message folds into the transcript; the composer's optimi
 
 	store.handleSessionEvent(userStart("[thinkrail:todo-nudge] plan changed"), "a");
 	expect(rt("a").turns.filter((t) => t.kind === "user")).toHaveLength(2);
+});
+
+test("sending a message works where crypto.randomUUID is unavailable (plain-http origin)", () => {
+	const original = crypto.randomUUID;
+	Object.defineProperty(crypto, "randomUUID", { value: undefined, configurable: true });
+	try {
+		const store = useAppStore.getState();
+		store.openChatSession("ws1", "insecure", null, "medium");
+		store.appendUserMessage("insecure", "hello");
+		expect(rt("insecure").turns.filter((t) => t.kind === "user")).toHaveLength(1);
+	} finally {
+		Object.defineProperty(crypto, "randomUUID", { value: original, configurable: true });
+	}
 });
 
 test("a matching user echo adopts the host clock while retaining optimistic identity and attachment labels", () => {
@@ -1568,6 +1582,44 @@ test("closeChatRuntime drops only its own runtime", () => {
 	expect(rt("b").isStreaming).toBe(true);
 });
 
+test("image drafts stay with their own runtime and unknown-session updates are ignored", () => {
+	const store = useAppStore.getState();
+	store.openChatSession("ws1", "a", null, "medium");
+	store.openChatSession("ws1", "b", null, "medium");
+	const image: PromptImage = {
+		id: "picked",
+		name: "picked.png",
+		content: { type: "image", mimeType: "image/png", data: "eA==" },
+	};
+	store.updateChatPromptImages("a", (current) => ({ ...current, images: [image], pending: 1 }));
+	store.setChatDraft("a", "keep this image");
+	expect(rt("a").promptImages.images).toEqual([image]);
+	expect(rt("a").promptImages.pending).toBe(1);
+	expect(rt("b").promptImages.images).toEqual([]);
+	expect(rt("b").promptImages.pending).toBe(0);
+	store.updateChatPromptImages("missing", () => {
+		throw new Error("a missing runtime must not run an image update");
+	});
+	expect(useAppStore.getState().sessions.missing).toBeUndefined();
+});
+
+test("closing a chat drops its image draft and reopening gets a new decode generation", () => {
+	const store = useAppStore.getState();
+	store.openChatSession("ws1", "a", null, "medium");
+	store.updateChatPromptImages("a", (current) => ({ ...current, pending: 1 }));
+	const generation = rt("a").promptImages.generation;
+	store.closeChatRuntime("a");
+	store.updateChatPromptImages("a", () => {
+		throw new Error("a late decode must not resurrect its closed runtime");
+	});
+	expect(useAppStore.getState().sessions.a).toBeUndefined();
+	store.openChatSession("ws1", "a", null, "medium");
+	expect(rt("a").promptImages.generation).not.toBe(generation);
+	expect(rt("a").promptImages.images).toEqual([]);
+	expect(rt("a").promptImages.pending).toBe(0);
+	expect(rt("a").promptImages.errors).toEqual([]);
+});
+
 test("applyExtUi routes a dialog to its session; the reply clears only that one", () => {
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "a", null, "medium");
@@ -2280,6 +2332,8 @@ test("reconcileSession replaces stale host state while preserving browser-local 
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "sync", null, "medium");
 	store.setChatDraft("sync", "keep my draft");
+	store.updateChatPromptImages("sync", (current) => ({ ...current, pending: 1 }));
+	store.setChatReadingAnchor("sync", { rowId: "row-1", offset: -24 });
 	store.appendUserMessage("sync", "old summarized prompt");
 	store.handleSessionEvent(agentStart, "sync");
 	store.handleSessionEvent({ type: "compaction_start", reason: "overflow" }, "sync");
@@ -2345,6 +2399,8 @@ test("reconcileSession replaces stale host state while preserving browser-local 
 		resuming: true,
 	});
 	expect(after.draft).toBe("keep my draft");
+	expect(after.promptImages).toBe(before.promptImages);
+	expect(after.readingAnchor).toEqual({ rowId: "row-1", offset: -24 });
 	expect(after.queue).toEqual({
 		steering: [],
 		followUp: [{ id: "later", text: "continue afterward", state: "pending" }],
@@ -2353,6 +2409,21 @@ test("reconcileSession replaces stale host state while preserving browser-local 
 	expect(after.syncedConnectionGeneration).toBe(7);
 	expect(after.eventRevision).toBe(before.eventRevision + 1);
 	expect(after.statsRefreshTick).toBe(before.statsRefreshTick);
+});
+
+test("setChatReadingAnchor stores a detached reading position and skips an identical write", () => {
+	const store = useAppStore.getState();
+	store.openChatSession("ws1", "reading", null, "medium");
+	expect(rt("reading").readingAnchor).toBeNull();
+
+	store.setChatReadingAnchor("reading", { rowId: "row-3", offset: -40 });
+	const saved = rt("reading");
+	expect(saved.readingAnchor).toEqual({ rowId: "row-3", offset: -40 });
+	store.setChatReadingAnchor("reading", { rowId: "row-3", offset: -40 });
+	expect(rt("reading")).toBe(saved);
+
+	store.setChatReadingAnchor("reading", null);
+	expect(rt("reading").readingAnchor).toBeNull();
 });
 
 test("reconcileSession rejects a transcript read crossed by even a UI-ignored Pi event", () => {
