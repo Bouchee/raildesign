@@ -7,7 +7,7 @@ export function reconcileAnnotationSlots<T>(
 	previous: readonly AnnotationSlot<T>[],
 	current: readonly AnnotationSlot<T>[],
 	equal: (left: T, right: T) => boolean,
-): AnnotationSlot<T>[] {
+): readonly AnnotationSlot<T>[] {
 	const currentById = new Map(current.map((slot) => [slot.id, slot]));
 	const known = new Set(previous.map((slot) => slot.id));
 	const slots = previous.map((slot) => {
@@ -18,5 +18,7 @@ export function reconcileAnnotationSlots<T>(
 	for (const slot of current) {
 		if (!known.has(slot.id)) slots.push(slot);
 	}
+	if (slots.length === previous.length && slots.every((slot, index) => slot === previous[index]))
+		return previous;
 	return slots;
 }

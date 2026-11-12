@@ -29,6 +29,17 @@ export const nativeChatCommands = (t: Translator): readonly SlashCommandItem[] =
 			origin: "top-level",
 		},
 	},
+	{
+		name: "compact",
+		description: t("chat.commands.compactDescription"),
+		source: "builtin",
+		sourceInfo: {
+			path: "<builtin:compact>",
+			source: "raildesign",
+			scope: "temporary",
+			origin: "top-level",
+		},
+	},
 ];
 
 export function isModelCommand(command: Pick<SlashCommandItem, "name" | "source">): boolean {
@@ -46,12 +57,14 @@ export interface NameChatCommand {
 	title: string;
 }
 
-export type NativeChatCommand = NameChatCommand;
+export type NativeChatCommand = NameChatCommand | { kind: "compact"; instructions: string };
 
 export function parseNativeChatCommand(
 	text: string,
 	supportsSessionRename = false,
 ): NativeChatCommand | null {
+	if (text === "/compact") return { kind: "compact", instructions: "" };
+	if (text.startsWith("/compact ")) return { kind: "compact", instructions: text.slice(9).trim() };
 	if (!supportsSessionRename) return null;
 	if (text === "/name") return { kind: "name", title: "" };
 	return text.startsWith("/name ") ? { kind: "name", title: text.slice(6) } : null;

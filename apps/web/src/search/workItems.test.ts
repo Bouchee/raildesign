@@ -80,7 +80,13 @@ const failedRead = record("s-failed", {
 	completion: { completionId: "c1", outcome: "failed", failure: "error" },
 });
 const waiting = record("s-waiting", {
-	needsInput: { interactionId: "i1", kind: "tool-response", toolCallId: "q1" },
+	needsInput: {
+		interactionId: "i1",
+		kind: "tool-response",
+		runId: "run",
+		revision: 1,
+		toolCallId: "q1",
+	},
 });
 
 describe("buildWorkItems", () => {

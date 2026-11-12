@@ -73,7 +73,7 @@ test("saved capability knobs cannot advertise unverified context, reasoning or i
 	if (!model) throw new Error("No verified model");
 	expect(model).toMatchObject({
 		id: "deepseek-v4.1-flash",
-		contextWindow: 0,
+		contextWindow: 1_000_000,
 		reasoning: false,
 		thinkingLevels: ["off"],
 		input: ["text"],
@@ -81,7 +81,7 @@ test("saved capability knobs cannot advertise unverified context, reasoning or i
 	expect(model).not.toHaveProperty("cost");
 	expect(modelOutputBudget(model)).toBe(512);
 	expect((await listCustomEndpoints())[0]?.models[0]).toMatchObject({
-		contextWindow: null,
+		contextWindow: 1_000_000,
 		reasoning: false,
 		vision: false,
 		tools: true,

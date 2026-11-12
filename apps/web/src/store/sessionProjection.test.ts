@@ -6,6 +6,7 @@ import type {
 	SessionState,
 	SessionSummary,
 	UserMessage,
+	WireCompactionSummary,
 } from "@thinkrail/contracts";
 import { messagesToRuntime } from "../chat/hydrate";
 import { EMPTY_RUNTIME, reduceSessionEvent, useAppStore } from "./appStore";
@@ -107,20 +108,44 @@ test("a final correction updates its stable message even after streaming ends", 
 	expect(messagesToRuntime([assistant("corrected final")]).turns[0]?.id).toBe("assistant-1");
 });
 
-test("a finalized user message reaches peers and replaces the optimistic ID", () => {
+test("a finalized user message reaches peers under the sender's stable ID", () => {
 	const message: UserMessage = { id: "host-user", role: "user", content: "hello", timestamp: 1 };
 	const peer = reduceSessionEvent(EMPTY_RUNTIME, { type: "message_end", message });
 	expect(peer.turns).toEqual([{ kind: "user", id: "host-user", message }]);
 	const sender = reduceSessionEvent(
 		{
 			...EMPTY_RUNTIME,
-			turns: [
-				{ kind: "user", id: "optimistic-user", message: { ...message, id: "optimistic-user" } },
-			],
+			turns: [{ kind: "user", id: "host-user", message }],
 		},
 		{ type: "message_end", message },
 	);
 	expect(sender.turns).toEqual(peer.turns);
+});
+
+test("equal-text inputs with distinct IDs stay distinct across live and restored projection", () => {
+	const first: UserMessage = { id: "first", role: "user", content: "same text", timestamp: 1 };
+	const second: UserMessage = { ...first, id: "second", timestamp: 2 };
+	let runtime = reduceSessionEvent(EMPTY_RUNTIME, { type: "message_end", message: first });
+	runtime = reduceSessionEvent(runtime, { type: "message_end", message: second });
+	runtime = reduceSessionEvent(runtime, { type: "message_end", message: second });
+	expect(runtime.turns.map((turn) => turn.id)).toEqual(["first", "second"]);
+	expect(runtime.turns).toEqual(messagesToRuntime([first, second]).turns);
+});
+
+test("a canonical summary marker keeps prior turns and converges live with restored history", () => {
+	const message: WireCompactionSummary = {
+		id: "summary-1",
+		role: "compactionSummary",
+		summary: "Older decisions",
+		tokensBefore: 1200,
+		timestamp: 3,
+	};
+	const previous = assistant("full earlier reply");
+	let runtime = reduceSessionEvent(EMPTY_RUNTIME, { type: "message_end", message: previous });
+	runtime = reduceSessionEvent(runtime, { type: "message_end", message });
+	runtime = reduceSessionEvent(runtime, { type: "message_end", message });
+	expect(runtime.turns).toHaveLength(2);
+	expect(runtime.turns).toEqual(messagesToRuntime([previous, message]).turns);
 });
 
 test("initial hydration replays only events above the snapshot watermark", () => {
@@ -159,6 +184,60 @@ test("closing a pending hydration clears its buffered events", () => {
 	store.handleSessionEvents([payload(1, "pending")]);
 	store.closeChatRuntime("session");
 	expect(useAppStore.getState().sessionEventsBeforeHydration.session).toBeUndefined();
+});
+
+test("queue hydration ignores covered deltas and keeps newer admission errors and states", () => {
+	const store = useAppStore.getState();
+	store.beginSessionHydration("session");
+	store.handleSessionEvents([
+		{
+			sessionId: "session",
+			runId: "run",
+			seq: 1,
+			event: {
+				type: "queue_update",
+				steering: [{ id: "withdrawn", text: "old", state: "pending" }],
+				followUp: [],
+			},
+		},
+		{
+			sessionId: "session",
+			runId: "run",
+			seq: 3,
+			event: {
+				type: "queue_update",
+				steering: [{ id: "next", text: "continue", state: "staged" }],
+				followUp: [
+					{ id: "later", text: "afterward", state: "pending", error: "Input was not admitted" },
+				],
+			},
+		},
+	]);
+	store.hydrateSession(
+		{
+			sessionId: "session",
+			workspaceId: "workspace",
+			title: "Task",
+			model: null,
+			thinkingLevel: "off",
+			isStreaming: true,
+			messageCount: 0,
+			updatedAt: 1,
+			live: true,
+			eventSeq: 2,
+			queue: { steering: [{ id: "next", text: "continue", state: "pending" }], followUp: [] },
+		},
+		messagesToRuntime([]),
+	);
+	const runtime = useAppStore.getState().sessions.session;
+	expect(runtime?.queue).toEqual({
+		steering: [{ id: "next", text: "continue", state: "staged" }],
+		followUp: [
+			{ id: "later", text: "afterward", state: "pending", error: "Input was not admitted" },
+		],
+	});
+	expect(runtime?.turns).toHaveLength(0);
+	expect(runtime?.lastEventSeq).toBe(3);
 });
 
 test("fresh attachment and refresh recover approval from the transcript summary alone", () => {

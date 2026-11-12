@@ -26,6 +26,7 @@ The host retains registration, lifecycle and ordering; `define*` helpers preserv
   - server: `ServerExtension.interactiveTools?: Record<toolName, InteractiveTool>` names the tools whose
     calls wait, so the host can repair a call left dangling by a restart (it writes the pending marker,
     not an error) and derive needs-input from a transcript it is not live on.
+    `InteractiveTool.validateArgs?` validates a call before the host publishes its interaction; `parseResponse?` validates the response against the original call. Those hooks stay extension-owned.
     `InteractiveTool.describeResponse?(args, response)` returns the model-facing text for a response
     delivered **after a host restart** (the only path where the tool's own `execute` is gone); `undefined`
     or no hook ⇒ the host writes a generic preface plus the response as JSON. Live responses never pass
@@ -62,10 +63,9 @@ The host retains registration, lifecycle and ordering; `define*` helpers preserv
 - `WebExtension` is `{ name, toolRenderers }`, with each tool-name entry carrying a `renderer` and
   optional `ToolRegistrationOptions` under `options`. `defineWebExtension` is a typed identity helper:
   it preserves the descriptor and its inferred tool keys without registration or default injection.
-- `./server` exposes `ServerExtension` and `defineServerExtension`, with pi `ExtensionFactory` types
-  only. Descriptors carry `name` (the identity — the Settings on/off switch and `disabledExtensions` key
+- `./server` exposes `ServerExtension` and `defineServerExtension`, with server-only SDK `Tool` and pi `ExtensionFactory` types. Descriptors carry `name` (the identity — the Settings on/off switch and `disabledExtensions` key
   on it), optional display copy `title` / `description` for the Settings catalog, `extensions`, optional
-  `sessionExtensions`, optional `interactiveTools`, optional `settings` (declared per-extension settings —
+  `sessionExtensions`, optional `sdkTools(session:SdkToolServices):Tool[]`, optional `interactiveTools`, optional `settings` (declared per-extension settings —
   today only `{ type: "boolean", default }`; the values live in the host's config keyed by extension name
   and the Settings copy is the app's locale keys), optional `childExtensions` and optional
   `skillPackages` specifiers. Its identity
@@ -103,3 +103,8 @@ Package tests exercise descriptors through their public entries, pure argument/r
 browser bundling of both the root and `./web`. Browser bundles permit only contracts at runtime and
 reject React, pi, host and server imports; `./server` separately verifies its pi dependency is erased.
 The app's registry and common-image-layer tests retain coverage of the host-owned rendering behavior.
+
+The SDK factory receives fresh `SdkToolServices`: run-grant validation, the saved owned response,
+explicit tool-failure reporting, workspace path checks and frozen per-extension settings. The host uses
+public SDK interruptions for interactive calls and recreates the factories before checkpoint restoration.
+The SDK import is server-only and type-only in this contract package; browser entries stay SDK-free.

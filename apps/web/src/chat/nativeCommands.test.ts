@@ -25,13 +25,17 @@ function command(name: string, source: SlashCommandInfo["source"] = "extension")
 }
 
 describe("native chat command parsing", () => {
-	it("does not intercept unsupported compaction as a host operation", () => {
-		for (const text of ["/compact", "/compact keep exact filenames", "/compact "]) {
-			expect(parseNativeChatCommand(text, true)).toBeNull();
-		}
+	it("routes compaction and its instructions to the host", () => {
+		expect(parseNativeChatCommand("/compact")).toEqual({ kind: "compact", instructions: "" });
+		expect(parseNativeChatCommand("/compact keep exact filenames")).toEqual({
+			kind: "compact",
+			instructions: "keep exact filenames",
+		});
+		expect(parseNativeChatCommand("/compact ")).toEqual({ kind: "compact", instructions: "" });
 		expect(nativeChatCommands(currentTranslator()).map(({ name }) => name)).toEqual([
 			"name",
 			"model",
+			"compact",
 		]);
 	});
 
@@ -82,6 +86,7 @@ describe("native chat command catalog", () => {
 		expect(merged.map(({ name }) => name)).toEqual([
 			"name",
 			"model",
+			"compact",
 			"review",
 			"skill:name",
 			"Compact",
@@ -93,7 +98,7 @@ describe("native chat command catalog", () => {
 			mergeNativeChatCommands(currentTranslator(), [command("name")], false).map(
 				({ name }) => name,
 			),
-		).toEqual(["model", "name"]);
+		).toEqual(["model", "compact", "name"]);
 	});
 
 	it("recognizes only the built-in /model and hands its search text to the picker", () => {

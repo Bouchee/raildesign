@@ -1,4 +1,5 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
+import type { Tool } from "@openai/agents";
 
 export type ToolResponse =
 	| { kind: "response"; value: unknown }
@@ -24,7 +25,18 @@ export interface ExtensionBooleanSetting {
 
 export type ExtensionSetting = ExtensionBooleanSetting;
 
+export interface SdkToolServices {
+	cwd: string;
+	assertActive(): void;
+	toolResponse(toolCallId: string): ToolResponse;
+	markToolFailed(toolCallId: string): void;
+	setting(key: string): boolean;
+	workspaceFiles: WorkspaceFiles;
+}
+
 export interface InteractiveTool {
+	validateArgs?: (args: unknown) => void;
+	parseResponse?: (args: unknown, response: unknown) => unknown;
 	describeResponse?: (args: unknown, response: unknown) => string | undefined;
 }
 
@@ -35,6 +47,7 @@ export interface ServerExtension {
 	extensions: ExtensionFactory[];
 	sessionExtensions?: (session: ExtensionSessionServices) => ExtensionFactory[];
 	interactiveTools?: Record<string, InteractiveTool>;
+	sdkTools?: (session: SdkToolServices) => Tool[];
 	settings?: Record<string, ExtensionSetting>;
 	childExtensions?: ExtensionFactory[];
 	skillPackages?: string[];

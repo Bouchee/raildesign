@@ -17,7 +17,7 @@ export interface ExtractedSession {
 }
 
 const searchableRecord = z.object({
-	version: z.literal(1),
+	version: z.literal(2),
 	sessionId: z.string().regex(/^[A-Za-z0-9_-]+$/),
 	cwd: z.string().min(1),
 	title: z.string().optional(),

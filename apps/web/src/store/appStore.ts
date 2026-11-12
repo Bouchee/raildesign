@@ -732,7 +732,7 @@ export function reduceSessionEvent(rt: SessionRuntime, event: SessionEvent): Ses
 				const text = userText(message.content);
 				if (isControlMessage(text)) return rt;
 				const last = rt.turns[rt.turns.length - 1];
-				if (last?.kind === "user") {
+				if (last?.kind === "user" && (!last.message.id || last.message.id === message.id)) {
 					const optimisticText = userText(last.message.content);
 					const invocation = parseSkillInvocation(text);
 					if (
@@ -749,7 +749,7 @@ export function reduceSessionEvent(rt: SessionRuntime, event: SessionEvent): Ses
 					...rt,
 					turns: rt.turns.some((turn) => turn.id === message.id)
 						? rt.turns.map((turn) =>
-								turn.id === message.id ? { kind: "user", id: turn.id, message } : turn,
+								turn.id === message.id && turn.kind === "user" ? { ...turn, message } : turn,
 							)
 						: [...rt.turns, { kind: "user", id: message.id ?? crypto.randomUUID(), message }],
 				};
@@ -780,6 +780,23 @@ export function reduceSessionEvent(rt: SessionRuntime, event: SessionEvent): Ses
 			};
 		}
 		case "message_end": {
+			if (event.message.role === "compactionSummary") {
+				const message = event.message;
+				const id = message.id ?? crypto.randomUUID();
+				const turn: ChatTurn = {
+					kind: "compaction",
+					id,
+					status: "done",
+					summary: message.summary,
+					tokensBefore: message.tokensBefore,
+				};
+				return {
+					...rt,
+					turns: rt.turns.some((current) => current.id === id)
+						? rt.turns.map((current) => (current.id === id ? turn : current))
+						: [...rt.turns, turn],
+				};
+			}
 			if (event.message.role === "user")
 				return reduceSessionEvent(rt, { type: "message_start", message: event.message });
 			const toolResponse = readToolResponseMessage(event.message);
@@ -1163,6 +1180,7 @@ interface AppState {
 	systemThemePair: SystemThemePair | undefined;
 	notificationsEnabled: boolean;
 	subagentsEnabled: boolean;
+	sdkTracingEnabled: boolean;
 	subagentMaxConcurrent: number;
 	settleIdleDays: number | null;
 	terminalReplayKb: number;
@@ -1470,7 +1488,12 @@ interface AppState {
 		expectedEventRevision: number,
 		connectionGeneration: number,
 	) => boolean;
-	appendUserMessage: (sessionId: string, text: string, attachments?: ChatAttachment[]) => void;
+	appendUserMessage: (
+		sessionId: string,
+		text: string,
+		attachments?: ChatAttachment[],
+		messageId?: string,
+	) => void;
 	appendErrorTurn: (sessionId: string, text: string) => void;
 	appendCompactionFailureUnlessObserved: (
 		sessionId: string,
@@ -1561,6 +1584,7 @@ function configPatch(config: AppConfig) {
 				? config.notificationsEnabled
 				: DEFAULT_CONFIG.notificationsEnabled,
 		subagentsEnabled: config.subagentsEnabled ?? DEFAULT_CONFIG.subagentsEnabled,
+		sdkTracingEnabled: config.sdkTracingEnabled ?? DEFAULT_CONFIG.sdkTracingEnabled,
 		subagentMaxConcurrent: isSubagentMaxConcurrent(config.subagentMaxConcurrent)
 			? config.subagentMaxConcurrent
 			: DEFAULT_CONFIG.subagentMaxConcurrent,
@@ -2519,6 +2543,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 	systemThemePair: DEFAULT_CONFIG.systemThemePair,
 	notificationsEnabled: DEFAULT_CONFIG.notificationsEnabled,
 	subagentsEnabled: DEFAULT_CONFIG.subagentsEnabled,
+	sdkTracingEnabled: DEFAULT_CONFIG.sdkTracingEnabled,
 	subagentMaxConcurrent: DEFAULT_CONFIG.subagentMaxConcurrent,
 	settleIdleDays: DEFAULT_CONFIG.settleIdleDays,
 	terminalReplayKb: DEFAULT_CONFIG.terminalReplayKb,
@@ -4498,7 +4523,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 		});
 		return applied;
 	},
-	appendUserMessage: (sessionId, text, attachments) =>
+	appendUserMessage: (sessionId, text, attachments, messageId) =>
 		set((s) =>
 			withRuntime(s, sessionId, (rt) => ({
 				...rt,
@@ -4506,8 +4531,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 					...consumeFailureRecoveries(rt.turns),
 					{
 						kind: "user",
-						id: crypto.randomUUID(),
+						id: messageId ?? crypto.randomUUID(),
 						message: {
+							...(messageId ? { id: messageId } : {}),
 							role: "user",
 							content:
 								attachments && attachments.length > 0

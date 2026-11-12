@@ -660,6 +660,10 @@ export function loadConfig(): AppConfig {
 			typeof value.subagentsEnabled === "boolean"
 				? value.subagentsEnabled
 				: DEFAULT_CONFIG.subagentsEnabled,
+		sdkTracingEnabled:
+			typeof value.sdkTracingEnabled === "boolean"
+				? value.sdkTracingEnabled
+				: DEFAULT_CONFIG.sdkTracingEnabled,
 		subagentMaxConcurrent: isSubagentMaxConcurrent(value.subagentMaxConcurrent)
 			? value.subagentMaxConcurrent
 			: DEFAULT_CONFIG.subagentMaxConcurrent,

@@ -144,7 +144,13 @@ export interface AgentSettlement {
 export type SessionInputKind = "tool-response" | "dialog";
 
 export type SessionInputState =
-	| { interactionId: string; kind: "tool-response"; toolCallId: string }
+	| {
+			interactionId: string;
+			kind: "tool-response";
+			toolCallId: string;
+			runId: string;
+			revision: number;
+	  }
 	| {
 			interactionId: string;
 			kind: "dialog";
@@ -211,12 +217,7 @@ export type SessionEvent =
 	  }
 	| { type: "agent_end"; messages: WireAgentMessage[]; willRetry: boolean }
 	| { type: "agent_settled"; terminal: AgentSettlement | null }
-	| {
-			type: "queue_update";
-			steering: readonly string[];
-			followUp: readonly string[];
-			hasImages?: true;
-	  }
+	| ({ type: "queue_update" } & SessionQueueState)
 	| { type: "compaction_start"; reason: "manual" | "threshold" | "overflow" }
 	| { type: "session_info_changed"; name: string | undefined }
 	| { type: "entry_appended"; entryType: string }
@@ -281,14 +282,20 @@ export interface SessionStats {
 
 export type QueueLane = "steering" | "followUp";
 
+export interface QueuedMessage {
+	id: string;
+	text: string;
+	state: "pending" | "staged";
+	error?: string;
+}
+
 export interface SessionQueueState {
-	steering: readonly string[];
-	followUp: readonly string[];
+	steering: readonly QueuedMessage[];
+	followUp: readonly QueuedMessage[];
 	hasImages?: true;
 }
 
-export interface QueuedMessageContent {
-	text: string;
+export interface QueuedMessageContent extends QueuedMessage {
 	images?: readonly ImageContent[];
 }
 
@@ -407,6 +414,7 @@ export interface ExtUiResponse {
 	runId: string;
 	revision: number;
 	id: string;
+	toolCallId?: string;
 	value: string | boolean | null;
 }
 

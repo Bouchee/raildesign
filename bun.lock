@@ -167,16 +167,19 @@
       },
       "devDependencies": {
         "@earendil-works/pi-coding-agent": "catalog:",
+        "@openai/agents": "catalog:",
         "@types/bun": "catalog:",
         "@types/react": "catalog:",
         "typescript": "catalog:",
       },
       "peerDependencies": {
         "@earendil-works/pi-coding-agent": "catalog:",
+        "@openai/agents": "catalog:",
         "react": "catalog:",
       },
       "optionalPeers": [
         "@earendil-works/pi-coding-agent",
+        "@openai/agents",
         "react",
       ],
     },
@@ -473,6 +476,7 @@
       "name": "@thinkrail/ext-ask-user-question",
       "version": "0.0.0",
       "dependencies": {
+        "@openai/agents": "catalog:",
         "@remixicon/react": "catalog:",
         "@thinkrail/contracts": "workspace:*",
         "@thinkrail/extension-api": "workspace:*",
@@ -481,6 +485,7 @@
         "@thinkrail/resource-renderers": "workspace:*",
         "@thinkrail/ui": "workspace:*",
         "react": "catalog:",
+        "typebox": "catalog:",
       },
       "devDependencies": {
         "@earendil-works/pi-coding-agent": "catalog:",

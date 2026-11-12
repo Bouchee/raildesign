@@ -1406,6 +1406,7 @@ export interface AppConfig extends ThemePreference {
 	/** When false, the worker's in-session `request_review` tool is withheld; the Review button still works. */
 	agentReviewEnabled: boolean;
 	subagentsEnabled: boolean;
+	sdkTracingEnabled: boolean;
 	/** How many subagents one chat may run at once; more spawns queue FIFO. */
 	subagentMaxConcurrent: number;
 	/** Which shell new workspace terminals start on Windows; ignored on other platforms. */
@@ -1699,6 +1700,7 @@ export const DEFAULT_CONFIG: AppConfig = {
 	reviewAutoFix: false,
 	agentReviewEnabled: false,
 	subagentsEnabled: true,
+	sdkTracingEnabled: false,
 	subagentMaxConcurrent: SUBAGENT_MAX_CONCURRENT.default,
 	settleIdleDays: SETTLE_IDLE_DAYS.default,
 	disabledExtensions: [],

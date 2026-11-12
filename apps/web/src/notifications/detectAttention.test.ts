@@ -33,7 +33,13 @@ describe("isLit / attentionReason", () => {
 
 	test("needs-input lights up", () => {
 		const s = state({
-			needsInput: { interactionId: "tool:i", kind: "tool-response", toolCallId: "i" },
+			needsInput: {
+				interactionId: "tool:i",
+				kind: "tool-response",
+				runId: "run",
+				revision: 1,
+				toolCallId: "i",
+			},
 		});
 		expect(isLit(s)).toBe(true);
 		expect(attentionReason(s)).toEqual({ kind: "needs-input" });
@@ -82,7 +88,13 @@ describe("isLit / attentionReason", () => {
 
 	test("needs-input wins over completion when both set", () => {
 		const s = state({
-			needsInput: { interactionId: "tool:i", kind: "tool-response", toolCallId: "i" },
+			needsInput: {
+				interactionId: "tool:i",
+				kind: "tool-response",
+				runId: "run",
+				revision: 1,
+				toolCallId: "i",
+			},
 			completion: { completionId: "c", outcome: "succeeded" },
 			completionUnread: true,
 		});
@@ -93,7 +105,13 @@ describe("isLit / attentionReason", () => {
 describe("diffAttention", () => {
 	test("rising edge emits an event", () => {
 		const litState = state({
-			needsInput: { interactionId: "tool:i", kind: "tool-response", toolCallId: "i" },
+			needsInput: {
+				interactionId: "tool:i",
+				kind: "tool-response",
+				runId: "run",
+				revision: 1,
+				toolCallId: "i",
+			},
 		});
 		const { events, litNow } = diffAttention(new Map(), [candidate({ state: litState })]);
 		expect(events).toHaveLength(1);
@@ -103,7 +121,13 @@ describe("diffAttention", () => {
 
 	test("staying lit is not a new edge", () => {
 		const litState = state({
-			needsInput: { interactionId: "tool:i", kind: "tool-response", toolCallId: "i" },
+			needsInput: {
+				interactionId: "tool:i",
+				kind: "tool-response",
+				runId: "run",
+				revision: 1,
+				toolCallId: "i",
+			},
 		});
 		const { events } = diffAttention(new Map([["s1", true]]), [candidate({ state: litState })]);
 		expect(events).toHaveLength(0);
@@ -120,7 +144,13 @@ describe("diffAttention", () => {
 			candidate({
 				sessionId: "s1",
 				state: state({
-					needsInput: { interactionId: "tool:i", kind: "tool-response", toolCallId: "i" },
+					needsInput: {
+						interactionId: "tool:i",
+						kind: "tool-response",
+						runId: "run",
+						revision: 1,
+						toolCallId: "i",
+					},
 				}),
 			}),
 			candidate({

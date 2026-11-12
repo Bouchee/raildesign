@@ -127,11 +127,13 @@ test.each(["removeSession", "shutdown"] as const)(
 			server = await createServer({ port: 0 });
 			setExtUiPublisher((request) => {
 				if (request.kind !== "confirm" || !request.runId || request.revision === undefined) return;
+				if (!request.toolCallId) throw new Error("Approval is missing its tool call ID");
 				resolveExtUi({
 					id: request.id,
 					sessionId: request.sessionId,
 					runId: request.runId,
 					revision: request.revision,
+					toolCallId: request.toolCallId,
 					value: true,
 				});
 			});

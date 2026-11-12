@@ -59,6 +59,24 @@ test("getConfig falls back to DEFAULT_CONFIG when no config.json exists", () => 
 	expect(getConfig()).toEqual(DEFAULT_CONFIG);
 });
 
+test("SDK tracing starts disabled, persists explicit consent and rejects malformed updates", () => {
+	expect(getConfig().sdkTracingEnabled).toBe(false);
+	const published: AppConfig[] = [];
+	setSettingsPublisher((config) => published.push(config));
+	expect(updateConfig({ sdkTracingEnabled: true }).sdkTracingEnabled).toBe(true);
+	resetConfigCache();
+	expect(getConfig().sdkTracingEnabled).toBe(true);
+	const bytes = readFileSync(join(dataDir, "config.json"), "utf8");
+	expect(() => updateConfig({ sdkTracingEnabled: "yes" } as unknown as AppConfigUpdate)).toThrow(
+		"sdkTracingEnabled must be a boolean",
+	);
+	expect(readFileSync(join(dataDir, "config.json"), "utf8")).toBe(bytes);
+	expect(published).toHaveLength(1);
+	writeFileSync(join(dataDir, "config.json"), JSON.stringify({ sdkTracingEnabled: "yes" }));
+	resetConfigCache();
+	expect(getConfig().sdkTracingEnabled).toBe(false);
+});
+
 test("updateConfig merges, persists an opaque theme id, and returns the merged config", () => {
 	const opaqueTheme = "acme.solarized";
 	const next = updateConfig({ theme: opaqueTheme });

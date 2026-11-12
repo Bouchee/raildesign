@@ -36,6 +36,7 @@ const configSchema = z.object({ version: z.literal(1), endpoints: z.array(endpoi
 type Endpoint = z.infer<typeof endpointSchema>;
 const VERIFIED_BASE_URL = "https://opencode.ai/inference/go/openai/v1";
 const VERIFIED_MODEL = "deepseek-v4.1-flash";
+const VERIFIED_CONTEXT_WINDOW = 1_000_000;
 const CLIENT_USER_AGENT = "RailDesign/0.1";
 export const responsesClientSettings = {
 	providerData: { extra_headers: { "User-Agent": CLIENT_USER_AGENT } },
@@ -140,7 +141,14 @@ function endpoints(): Endpoint[] {
 			baseUrl: parsed,
 			apiKey: "$OPENAI_API_KEY",
 			models: [
-				{ id, contextWindow: 0, maxTokens: 8192, reasoning: false, vision: false, tools: true },
+				{
+					id,
+					contextWindow: VERIFIED_CONTEXT_WINDOW,
+					maxTokens: 8192,
+					reasoning: false,
+					vision: false,
+					tools: true,
+				},
 			],
 		});
 	}
@@ -152,7 +160,7 @@ function wireModel(endpoint: Endpoint, model: Endpoint["models"][number]): WireM
 		id: model.id,
 		name: model.id,
 		provider: endpoint.id,
-		contextWindow: 0,
+		contextWindow: VERIFIED_CONTEXT_WINDOW,
 		reasoning: false,
 		thinkingLevels: ["off"],
 		input: ["text"],
@@ -232,6 +240,10 @@ export function createConfiguredModel(model: WireModel, sessionId: string): Mode
 	);
 }
 
+export function modelContextBudget(model: Pick<WireModel, "provider" | "id">): number {
+	return VERIFIED_CONTEXT_WINDOW - modelOutputBudget(model) - 8192;
+}
+
 export function modelOutputBudget(model: Pick<WireModel, "provider" | "id">): number {
 	const configured = endpoints()
 		.find((endpoint) => endpoint.id === model.provider)
@@ -260,7 +272,7 @@ export async function saveCustomEndpoint(draft: CustomEndpointDraft): Promise<Cu
 		...draft,
 		models: draft.models.map((model) => ({
 			...model,
-			contextWindow: null,
+			contextWindow: VERIFIED_CONTEXT_WINDOW,
 			reasoning: false,
 			vision: false,
 			tools: true,

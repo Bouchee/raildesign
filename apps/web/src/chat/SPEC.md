@@ -456,12 +456,10 @@ two routes:
   transcript row `placement: "stub"` (the context's `dockedToolCallId`) and the dock's copy
   `placement: "dock"`. Its `state.accepting` is
   true only while the host's `needsInput` names this call (`awaitingToolCallIdOf`, carried in the
-  interaction context; a pre-v93 host's `kind: "question"` / `question:<id>` is read the same way for one
-  compatibility window) or no host state has arrived yet, so a call the host is not waiting on (another
+  interaction context) or no host state has arrived yet, so a call the host is not waiting on (another
   package's same-name tool, a call to the switched-off tool) cannot submit a response. `respond(value)`
-  forwards the value as is through the transport's `respondToTool` (`session.respondToTool`, or the
-  retired `session.answerQuestion` below `TOOL_RESPONSE_PROTOCOL_VERSION`); the tool validates its
-  shape. The renderer never reads those contexts itself.
+  forwards the value through `respondToTool`, which binds the exact current run/call/interaction/revision
+  and sends only `session.respondToTool`; the host validates the answer before continuation. The renderer never reads those contexts itself.
 
 Worked example: the `ask_user_question` flow in [tools/SPEC.md](tools/SPEC.md).
 
@@ -1081,28 +1079,14 @@ both message orders. *Rejected:* keeping the modal for non-MCP extensions — ev
   `silenceNotice`, toast on failure) turns off pi's own setting. The `signIn` variant is
   informational, for the Connect dialog ([[submodule-web-panels]]). When the host warns, and how often,
   is [[submodule-server-agent]]'s Billing warnings.
-- **Queued messages: the pending strip** (`QueueStrip.tsx`, props-driven: `queue` + `onEdit`/`onRemove`)
-  — the web mirror of pi's interactive-mode pending-messages area. A **streaming send never renders an
-  optimistic transcript bubble** (see the store SPEC's echo contract): `ChatView.onSubmit` skips
-  `appendUserMessage` for `steer`/`followUp`, and the queued texts render between transcript and
-  composer as dim rows — one truncated `Steering:`/`Follow-up:` line per message (`queue-strip` /
-  `queue-item` testids, `data-kind` + `data-index`; full text + delivery meaning in the row `title`),
-  sourced from the runtime's `queue`. **Each row carries its own edit and remove actions**
-  (`queue-item-edit` / `queue-item-remove`) — both call `session.removeQueued { kind, index }` (rows
-  are position-addressed, matching the wire op); edit additionally restores the removed message's text
-  and images to the draft and refocuses. Per-row actions exist because the original all-or-nothing dequeue
-  (click strip → `clearQueue` → every message merged into one draft blob) proved undiscoverable and lossy
-  in use. **Abort atomically restores the complete queue** (`onAbort` →
-  `session.abort { restoreQueue: true }`): the host drains both Pi lanes and signals abort as one operation,
-  waits for idle, then returns each queued message's text + image content; the web prepends the texts and
-  reattaches every image. Stop therefore cannot let a queued continuation run or silently discard an
-  attachment. A **rejected** streaming send likewise restores its text to the draft alongside the
-  `appendErrorTurn`. The ordinary `queue_update` projection still carries only displayable text plus a
-  conservative `hasImages` aggregate — no image bytes — so a queued image shows no chip in the strip; the
-  canonical transcript turn later renders its image blocks with hydrated fallback labels. E2e:
-  `queue.live.spec.ts` (@agent).
-- **Streaming send modes: split send + interrupt** (`Composer`) — steer/queue semantics are pi's loop
-  design (steer = injected at the next turn boundary, after the current assistant message + its tool
+- **Queued messages: the pending strip** (`QueueStrip.tsx`, props-driven). The host projects durable
+  pending/staged entries by ID. A queued send does not append an optimistic transcript row; only the
+  canonical user message proves admission. Rows expose admission errors and address their stable ID
+  when edited or removed, so concurrent admission cannot shift an action onto another input. Editing
+  withdraws that input and restores its full text and images to the composer. Staged entries cannot be
+  edited or removed. Stop waits for cancellation and leaves the durable queue available. Failed sends
+  preserve queued entries; a request rejected before queue persistence restores its composer content.
+- **Streaming send modes: split send + interrupt** (`Composer`) — steer/queue semantics follow the SDK run boundaries (steer = injected at the next turn boundary, after the current assistant message + its tool
   calls; queue = runs after the agent settles; only abort halts an in-flight response) and proved
   illegible from key-name hints alone. While streaming the composer therefore self-documents: the
   primary pill reads **Steer ↩** instead of Send, the placeholder states *when* a steer lands ("Steer the
@@ -1605,6 +1589,12 @@ both message orders. *Rejected:* keeping the modal for non-MCP extensions — ev
 
 ## Chat Resources
 
+Stage 2 restores the composer steering/follow-up/interrupt modes and the pending queue strip. Queue rows
+show pending or staged input and a retained admission error. Rows address stable input IDs; editing
+withdraws exactly that input and restores its full content to the composer. Stop preserves the durable
+queue. Only the host's canonical user message represents admission. `/compact` requests an idempotent
+host summary operation and preserves the transcript. Approval replies include the saved call identity.
+
 [[submodule-web-chat-resources]] owns the three presentation surfaces — header trigger, composer
 dock, transcript-region inspector — and their shared row grammar. `ChatView` composes its barrel with
 the `useChatResources` integration hook: it mounts the trigger in the header, the dock between the queue
@@ -1780,7 +1770,7 @@ on the live and read paths). The view re-derives rows each render
 (`deriveRows` is pure; `ChatTranscript` memoizes it, then reuses unchanged row objects via `stabilizeRows`
 kept in state) — stable row/step ids keep fold state across snapshots.
 
-**One live indicator, always.** pi splits a run into several assistant messages, so the reducer sweeps
+**One live indicator while execution can progress.** A run can contain several assistant messages, so the reducer sweeps
 the per-message `streaming` flag on new-message start and the final `agent_settled` (at most one turn is
 ever flagged). The session remains live across attempt-level `agent_end` events. The loader
 is a **single footer** (`StreamIndicator`: the shared `RunningIcon` brand badge, decorative here, + a phase
@@ -1791,6 +1781,10 @@ pre-prompt compaction pi runs inside `prompt()` before `agent_start`) the footer
 the running `CompactionNotice` row itself carries the spinner, so the beat is never dead air. The trailing Activity fold's live ticker is a *status* line (spinner,
 like a running card header), not a second loader. `data-testid="stream-indicator"` + `data-phase` make
 the lifecycle assertable.
+
+Tool-call intent alone does not mean execution started. `streamStatus` uses the existing tool-result
+status to show `running-tool` only after an executor starts. A pending host interaction suppresses the
+footer; its approval or question card shows the waiting state, including after snapshot restoration.
 
 ## Get right
 

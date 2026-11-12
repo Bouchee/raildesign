@@ -18,7 +18,13 @@ function state(overrides: Partial<SessionState> = {}): SessionState {
 }
 
 const lit = state({
-	needsInput: { interactionId: "tool:i", kind: "tool-response", toolCallId: "i" },
+	needsInput: {
+		interactionId: "tool:i",
+		kind: "tool-response",
+		runId: "run",
+		revision: 1,
+		toolCallId: "i",
+	},
 });
 
 function candidate(sessionId: string, s: SessionState): AttentionCandidate {

@@ -43,7 +43,13 @@ function idle(): SessionState {
 }
 const question: SessionState = {
 	...idle(),
-	needsInput: { interactionId: "tool:i", kind: "tool-response", toolCallId: "i" },
+	needsInput: {
+		interactionId: "tool:i",
+		kind: "tool-response",
+		runId: "run",
+		revision: 1,
+		toolCallId: "i",
+	},
 };
 const finished: SessionState = {
 	...idle(),

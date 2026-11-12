@@ -83,8 +83,10 @@ unregistered names. Handler errors return a typed failure and a coded error wher
 
 The host injects workspace-to-project and session/event/interaction publishers into the single agent
 module. `session.event` includes session/run IDs and monotonic `seq`; initial message snapshots include
-an `eventSeq` watermark. Approval cards use `session.interaction`, and replies carry session/run/card/
-revision ownership. SDK objects, full checkpoints and private keys remain on the host.
+an `eventSeq` watermark. Approval cards use `session.interaction`, and replies carry session/run/tool/card/
+revision ownership. Reply handlers attach the owning persisted session before processing, so identical
+completed receipts replay after restart without prior client hydration. Missing, closing or mismatched
+workspaces reject replies before continuation. SDK objects, full checkpoints and private keys remain on the host.
 
 The event publisher feeds `TurnTracker` and emits the same application event to clients. Turns retain
 actual before/after worktree snapshots; shutdown drains a still-recording receipt. Workspace watchers
@@ -96,8 +98,11 @@ immediate failure; model/tool failures after admission appear through the sessio
 kickoff returns its newly created chat after synchronous prompt admission, without waiting for the
 model round. Stop delegates to agent cancellation and completes after owned execution cleanup.
 
-Stage-2 queue, steering, compaction and recovery operations and stage-3 model tool execution controls are
-unavailable. MCP configuration, validation, per-entry approvals, OAuth, status and cleanup remain real
+Stage-2 queue, steering, compaction and recovery operations call the durable session owner. Stable input
+IDs survive wire replay; queue mutation addresses the input ID. Stop preserves queued input and completes
+after cleanup. Compaction carries an operation ID, and approval replies bind the tool call as well as the
+interaction. Stage-3 model tool execution controls remain unavailable. MCP configuration, validation,
+per-entry approvals, OAuth, status and cleanup remain real
 services through `mcp.*`. `provider.loginReply`/`provider.loginCancel` serve only owned MCP OAuth flows;
 obsolete model-provider login routes remain absent. Skills catalog/trust/enable and child configuration
 routes persist their actual settings. Resource reload is disabled until it can rebuild SDK tools.

@@ -308,8 +308,11 @@ const ChatTranscript = forwardRef<
 	);
 
 	const currentStreamStatus = useMemo<StreamStatus | null>(
-		() => (isStreaming ? streamStatus(turns, currentAssistantId) : null),
-		[turns, isStreaming, currentAssistantId],
+		() =>
+			isStreaming && !runtime.hostState?.needsInput
+				? streamStatus(turns, currentAssistantId, toolResults)
+				: null,
+		[turns, isStreaming, currentAssistantId, toolResults, runtime.hostState?.needsInput],
 	);
 
 	const latestDividerRowId = useMemo(
@@ -548,7 +551,7 @@ const ChatTranscript = forwardRef<
 		return {
 			request: pendingExtUiRequest,
 			reply: (value) => {
-				const { id, runId, revision } = pendingExtUiRequest;
+				const { id, runId, revision, toolCallId } = pendingExtUiRequest;
 				if (replying) return;
 				if (runId === undefined || revision === undefined) {
 					toast.error(translate("app.transport.requestFailedFallback"));
@@ -556,7 +559,16 @@ const ChatTranscript = forwardRef<
 				}
 				replying = true;
 				getTransport()
-					.request("session.extUiReply", { response: { id, sessionId, runId, revision, value } })
+					.request("session.extUiReply", {
+						response: {
+							id,
+							sessionId,
+							runId,
+							revision,
+							value,
+							...(toolCallId ? { toolCallId } : {}),
+						},
+					})
 					.then(() => useAppStore.getState().clearPendingExtUi(sessionId, id))
 					.catch((error: unknown) => {
 						replying = false;

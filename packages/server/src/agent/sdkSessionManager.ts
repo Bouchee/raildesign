@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import {
 	Agent,
 	type AgentInputItem,
 	MaxTurnsExceededError,
 	Runner,
-	type RunState,
+	RunState,
 	type RunStreamEvent,
 } from "@openai/agents";
 import type {
@@ -14,10 +15,14 @@ import type {
 	ExtUiRequest,
 	ExtUiResponse,
 	ImageContent,
+	QueueLane,
+	RemovedQueuedMessage,
 	SessionCreatedPayload,
 	SessionDeletedPayload,
 	SessionEvent,
 	SessionEventPayload,
+	SessionQueueContent,
+	SessionQueueState,
 	SessionState,
 	SessionStateRecord,
 	SessionStats,
@@ -27,12 +32,22 @@ import type {
 	WireModel,
 } from "@thinkrail/contracts";
 import { firstPromptOfTexts, normalizeSessionTitle } from "@thinkrail/contracts";
+import { z } from "zod";
+import {
+	interactiveTools,
+	registrySdkTools,
+	type SdkExtensionSnapshot,
+	snapshotSdkExtensions,
+	workspaceFiles,
+} from "../extensions";
 import { logger } from "../log";
-import { loadWorkspaces } from "../persistence";
+import { loadConfig, loadWorkspaces } from "../persistence";
 import { trashFile } from "../trash";
+import { configureLocalSdkTracing } from "./localTracing";
 import {
 	createConfiguredModel,
 	listAvailableModels,
+	modelContextBudget,
 	modelOutputBudget,
 	responsesClientSettings,
 } from "./modelConfiguration";
@@ -42,11 +57,19 @@ import {
 	listSessionRecords,
 	PersistentSession,
 	readSessionRecord,
+	type SessionRecord,
+	type StoredInput,
 	sessionRecordPath,
 } from "./sessionStore";
 
 const log = logger("agent");
 interface ActiveRun {
+	state?: RunState<unknown, Agent>;
+	suspended?: boolean;
+	inputId?: string;
+	enabledExtensions: SdkExtensionSnapshot[];
+	ready?: Promise<void>;
+	markReady?: () => void;
 	id: string;
 	controller: AbortController;
 	granted: boolean;
@@ -61,6 +84,11 @@ interface ActiveRun {
 		cacheRead: number;
 		cacheWrite: number;
 	};
+	toolResponse?: {
+		request: NonNullable<SessionRecord["pendingToolResponse"]>;
+		resolve: () => void;
+		reject: (error: Error) => void;
+	};
 	approval?: {
 		request: ApprovalRequest;
 		resolve: (approved: boolean) => void;
@@ -68,6 +96,9 @@ interface ActiveRun {
 	};
 }
 interface Entry {
+	summaryController?: AbortController;
+	summaryDone?: Promise<void>;
+	stopping?: boolean;
 	store: PersistentSession;
 	active?: ActiveRun;
 	flush?: ReturnType<typeof setTimeout>;
@@ -219,6 +250,7 @@ function summaryOf(entry: Entry): SessionSummary {
 		live: sessions.has(record.sessionId),
 		state: state.state,
 		eventSeq: record.eventSeq,
+		queue: queueStateOf(record),
 	};
 }
 function appendMessage(entry: Entry, message: TranscriptMessage): void {
@@ -298,6 +330,7 @@ function recordToolResult(
 	name: string,
 	output: string,
 	isError = false,
+	completed = true,
 ): void {
 	const previous = entry.store.record.messages.find(
 		(message) => message.role === "toolResult" && message.toolCallId === callId,
@@ -317,12 +350,32 @@ function recordToolResult(
 		isError,
 		timestamp: previous?.timestamp ?? Date.now(),
 	};
+	const answer = Object.values(entry.store.record.toolResponses).find(
+		(receipt) => receipt.toolCallId === callId,
+	);
+	if (answer && message.role === "toolResult")
+		message.details = isSupersededAnswer(answer.response) ? { kind: "ack" } : answer.response;
 	appendMessage(entry, message);
+	const effect = entry.store.record.effects[callId];
+	if (effect)
+		entry.store.update((record) => {
+			const current = record.effects[callId];
+			if (current) {
+				current.status = completed ? "completed" : "unknown";
+				current.result = output;
+				current.isError = isError;
+			}
+		});
 	emit(entry, {
 		type: "tool_execution_end",
 		toolCallId: callId,
 		toolName: name,
-		result: { content: message.content },
+		result: {
+			content: message.content,
+			...(message.role === "toolResult" && message.details !== undefined
+				? { details: message.details }
+				: {}),
+		},
 		isError,
 	});
 	emit(entry, { type: "message_end", message });
@@ -401,27 +454,175 @@ async function waitForApproval(
 ): Promise<boolean> {
 	assertActive(entry, run);
 	addToolCall(entry, run, call);
-	const request: ApprovalRequest = {
-		id: randomUUID(),
-		sessionId: entry.store.record.sessionId,
-		runId: run.id,
-		revision: entry.store.record.revision + 1,
-		kind: "confirm",
-		title: `Allow ${call.name}?`,
-		message: call.arguments,
-		toolCallId: call.callId,
-		toolInput: run.toolCalls.get(call.callId)?.arguments ?? {},
-	};
+	const saved = entry.store.record.pendingApproval?.request;
+	const request: ApprovalRequest =
+		saved?.runId === run.id && saved.toolCallId === call.callId
+			? saved
+			: {
+					id: randomUUID(),
+					sessionId: entry.store.record.sessionId,
+					runId: run.id,
+					revision: entry.store.record.revision + 1,
+					kind: "confirm",
+					title: `Allow ${call.name}?`,
+					message: call.arguments,
+					toolCallId: call.callId,
+					toolInput: run.toolCalls.get(call.callId)?.arguments ?? {},
+				};
 	const approved = new Promise<boolean>((resolveApproval, reject) => {
 		run.approval = { request, resolve: resolveApproval, reject };
 	});
 	entry.store.update((record) => {
 		record.pendingApproval = { request, checkpoint: state.toString() };
+		record.runCheckpoint = {
+			runId: run.id,
+			checkpoint: state.toString(),
+			granted: run.granted,
+			enabledExtensions: run.enabledExtensions,
+		};
 		record.state.needsInput = { interactionId: request.id, kind: "dialog", request };
 	});
 	publishDialog(request);
 	notifyState(entry);
+	run.markReady?.();
 	return approved;
+}
+
+function isSupersededAnswer(response: unknown): boolean {
+	return (
+		typeof response === "object" &&
+		response !== null &&
+		"kind" in response &&
+		response.kind === "superseded"
+	);
+}
+async function waitForToolResponse(
+	entry: Entry,
+	run: ActiveRun,
+	state: RunState<unknown, Agent>,
+	call: { callId: string; name: string; arguments: string },
+): Promise<void> {
+	assertActive(entry, run);
+	addToolCall(entry, run, call);
+	const args = z.record(z.string(), z.unknown()).parse(JSON.parse(call.arguments));
+	const policy = interactiveTools(
+		(name) => !run.enabledExtensions.some((extension) => extension.name === name),
+	).get(call.name);
+	if (!policy) throw new Error("The interactive tool is unavailable");
+	policy.validateArgs?.(args);
+	if (
+		Object.values(entry.store.record.toolResponses).some(
+			(answer) => answer.runId === run.id && answer.toolCallId === call.callId,
+		)
+	)
+		return;
+	const saved = entry.store.record.pendingToolResponse;
+	const request: NonNullable<SessionRecord["pendingToolResponse"]> =
+		saved?.runId === run.id && saved.toolCallId === call.callId
+			? saved
+			: {
+					id: randomUUID(),
+					sessionId: entry.store.record.sessionId,
+					runId: run.id,
+					revision: entry.store.record.revision + 1,
+					toolCallId: call.callId,
+					toolName: call.name,
+					args: { ...args },
+					checkpoint: state.toString(),
+				};
+	const answered = new Promise<void>((resolve, reject) => {
+		run.toolResponse = { request, resolve, reject };
+	});
+	entry.store.update((record) => {
+		record.pendingToolResponse = { ...request, checkpoint: state.toString() };
+		record.runCheckpoint = {
+			runId: run.id,
+			checkpoint: state.toString(),
+			granted: run.granted,
+			enabledExtensions: run.enabledExtensions,
+		};
+		record.state.needsInput = {
+			interactionId: request.id,
+			kind: "tool-response",
+			toolCallId: call.callId,
+			runId: run.id,
+			revision: request.revision,
+		};
+	});
+	notifyState(entry);
+	run.markReady?.();
+	await answered;
+}
+export function respondToTool(
+	sessionId: string,
+	toolCallId: string,
+	response: unknown,
+	ownership: { runId: string; interactionId: string; revision: number },
+): void {
+	const entry = mustGet(sessionId);
+	let parsed = response;
+	const previous = entry.store.record.toolResponses[ownership.interactionId];
+	if (previous) {
+		if (
+			previous.runId !== ownership.runId ||
+			previous.revision !== ownership.revision ||
+			previous.toolCallId !== toolCallId ||
+			!isDeepStrictEqual(previous.response, parsed)
+		)
+			throw new Error("Conflicting tool response");
+		return;
+	}
+	const run = entry.active;
+	const pending = run?.toolResponse;
+	if (
+		!run ||
+		!pending ||
+		pending.request.id !== ownership.interactionId ||
+		run.id !== ownership.runId ||
+		pending.request.toolCallId !== toolCallId ||
+		pending.request.revision !== ownership.revision
+	)
+		throw new Error("Tool response is stale or belongs to a different run");
+	assertActive(entry, run);
+	const args = pending.request.args;
+	const policy = interactiveTools(
+		(name) => !run.enabledExtensions.some((extension) => extension.name === name),
+	).get(pending.request.toolName);
+	if (!policy) throw new Error("The interactive tool is unavailable");
+	policy.validateArgs?.(args);
+	if (policy.parseResponse) parsed = policy.parseResponse(args, response);
+	const message: TranscriptMessage = {
+		id: `answer:${ownership.interactionId}`,
+		role: "custom",
+		customType: "tool-response",
+		content: [
+			{ type: "text", text: policy.describeResponse?.(args, parsed) ?? JSON.stringify(parsed) },
+		],
+		details: { toolCallId, response: parsed },
+		display: false,
+		timestamp: Date.now(),
+	};
+	entry.store.update((record) => {
+		record.toolResponses[ownership.interactionId] = {
+			runId: run.id,
+			toolCallId,
+			revision: ownership.revision,
+			response: parsed,
+		};
+		record.runCheckpoint = {
+			runId: run.id,
+			checkpoint: run.state?.toString() ?? pending.request.checkpoint,
+			granted: run.granted,
+			enabledExtensions: run.enabledExtensions,
+		};
+		record.messages.push(message);
+		delete record.pendingToolResponse;
+		record.state.needsInput = null;
+	});
+	emit(entry, { type: "message_end", message });
+	delete run.toolResponse;
+	notifyState(entry);
+	pending.resolve();
 }
 
 export function resolveExtUi(response: ExtUiResponse): void {
@@ -431,7 +632,8 @@ export function resolveExtUi(response: ExtUiResponse): void {
 		if (
 			decision.runId !== response.runId ||
 			decision.revision !== response.revision ||
-			decision.value !== response.value
+			decision.value !== response.value ||
+			decision.toolCallId !== response.toolCallId
 		)
 			throw new Error("Conflicting approval response");
 		return;
@@ -444,6 +646,7 @@ export function resolveExtUi(response: ExtUiResponse): void {
 		pending.request.id !== response.id ||
 		run.id !== response.runId ||
 		pending.request.revision !== response.revision ||
+		pending.request.toolCallId !== response.toolCallId ||
 		typeof response.value !== "boolean"
 	)
 		throw new Error("Approval is stale or belongs to a different run");
@@ -452,7 +655,14 @@ export function resolveExtUi(response: ExtUiResponse): void {
 		record.decisions[response.id] = {
 			runId: run.id,
 			revision: response.revision,
+			toolCallId: pending.request.toolCallId,
 			value: response.value === true,
+		};
+		record.runCheckpoint = {
+			runId: run.id,
+			checkpoint: run.state?.toString() ?? record.pendingApproval?.checkpoint ?? "",
+			granted: run.granted,
+			enabledExtensions: run.enabledExtensions,
 		};
 		delete record.pendingApproval;
 		record.state.needsInput = null;
@@ -482,9 +692,15 @@ function startStream(
 	return runner.run(agent, input, { stream: true, session, signal, maxTurns: 20 });
 }
 
-async function executeRun(entry: Entry, run: ActiveRun, input: AgentInputItem[]): Promise<void> {
+async function executeRun(
+	entry: Entry,
+	run: ActiveRun,
+	input: AgentInputItem[],
+	recovery?: string,
+): Promise<void> {
 	let terminal: AgentSettlement = { stopReason: "stop" };
 	try {
+		assertActive(entry, run);
 		const selected = entry.store.record.model;
 		const model = selected
 			? (await listAvailableModels()).find(
@@ -493,60 +709,166 @@ async function executeRun(entry: Entry, run: ActiveRun, input: AgentInputItem[])
 			: undefined;
 		if (!model) throw new Error("Configure a Responses-compatible model before sending a message");
 		assertActive(entry, run);
-		const agent = new Agent({
-			name: "RailDesign",
-			instructions: `You are RailDesign, a coding assistant. Work only in the assigned worktree: ${entry.store.record.cwd}. Use read and search to inspect files. Use apply_patch for edits and bash to run project checks. Request approval for commands and edits. A denied operation is not permission to try another route. Report actual checks and remaining limits.`,
-			model: createConfiguredModel(model, entry.store.record.sessionId),
-			tools: workspaceTools(
-				{
-					workspaceId: entry.store.record.workspaceId,
-					cwd: entry.store.record.cwd,
-					signal: run.controller.signal,
-					assertActive: () => assertActive(entry, run),
+		const buildAgent = () => {
+			const agent = new Agent({
+				name: "RailDesign",
+				instructions: `You are RailDesign, a coding assistant. Work only in the assigned worktree: ${entry.store.record.cwd}. Use read and search to inspect files. Use apply_patch for edits and bash to run project checks. Request approval for commands and edits. A denied operation is not permission to try another route. Report actual checks and remaining limits.`,
+				model: createConfiguredModel(model, entry.store.record.sessionId),
+				tools: [
+					...workspaceTools(
+						{
+							workspaceId: entry.store.record.workspaceId,
+							cwd: entry.store.record.cwd,
+							signal: run.controller.signal,
+							assertActive: () => assertActive(entry, run),
+						},
+						(callId) => {
+							const call = run.toolCalls.get(callId);
+							if (call) call.failed = true;
+						},
+					),
+					...registrySdkTools(
+						{
+							cwd: entry.store.record.cwd,
+							workspaceFiles,
+							assertActive: () => assertActive(entry, run),
+							markToolFailed: (callId) => {
+								const call = run.toolCalls.get(callId);
+								if (call) call.failed = true;
+							},
+							toolResponse: (callId) => {
+								const answer = Object.values(entry.store.record.toolResponses).find(
+									(receipt) => receipt.runId === run.id && receipt.toolCallId === callId,
+								);
+								if (!answer) throw new Error("The tool has no saved response");
+								return isSupersededAnswer(answer.response)
+									? { kind: "deferred" }
+									: { kind: "response", value: answer.response };
+							},
+						},
+						run.enabledExtensions,
+					),
+				],
+				modelSettings: {
+					...responsesClientSettings,
+					maxTokens: modelOutputBudget(model),
+					...(model.reasoning && entry.store.record.thinkingLevel !== "off"
+						? { reasoning: { effort: entry.store.record.thinkingLevel } }
+						: {}),
 				},
-				(callId) => {
-					const call = run.toolCalls.get(callId);
-					if (call) call.failed = true;
-				},
-			),
-			modelSettings: {
-				...responsesClientSettings,
-				maxTokens: modelOutputBudget(model),
-				...(model.reasoning && entry.store.record.thinkingLevel !== "off"
-					? { reasoning: { effort: entry.store.record.thinkingLevel } }
-					: {}),
+			});
+			agent.on("agent_tool_start", (_context, _tool, details) => {
+				assertActive(entry, run);
+				if (details.toolCall.type !== "function_call") return;
+				const toolCall = details.toolCall;
+				addToolCall(entry, run, toolCall);
+				const previous = entry.store.record.effects[toolCall.callId];
+				if (previous) throw new Error("A recorded tool effect cannot be replayed");
+				entry.store.update((record) => {
+					delete record.runCheckpoint;
+					record.effects[toolCall.callId] = {
+						runId: run.id,
+						name: toolCall.name,
+						arguments: run.toolCalls.get(toolCall.callId)?.arguments ?? {},
+						status: "started",
+					};
+				});
+				run.startedTools.add(toolCall.callId);
+				const call = run.toolCalls.get(toolCall.callId);
+				emit(entry, {
+					type: "tool_execution_start",
+					toolCallId: toolCall.callId,
+					toolName: toolCall.name,
+					args: call?.arguments ?? {},
+				});
+			});
+			agent.on("agent_tool_end", (_context, _tool, result, details) => {
+				if (!run.granted || details.toolCall.type !== "function_call") return;
+				recordToolResult(
+					entry,
+					details.toolCall.callId,
+					details.toolCall.name,
+					result,
+					run.toolCalls.get(details.toolCall.callId)?.failed,
+				);
+			});
+			return agent;
+		};
+		let agent = buildAgent();
+		configureLocalSdkTracing();
+		const runner = new Runner({
+			tracingDisabled: !loadConfig().sdkTracingEnabled,
+			traceIncludeSensitiveData: false,
+			callModelInputFilter: ({ modelData }) => {
+				assertActive(entry, run);
+				if (entry.store.record.runCheckpoint && !entry.store.record.pendingApproval)
+					entry.store.update((record) => {
+						delete record.runCheckpoint;
+					});
+				return modelData;
 			},
 		});
-		agent.on("agent_tool_start", (_context, _tool, details) => {
-			assertActive(entry, run);
-			if (details.toolCall.type !== "function_call") return;
-			addToolCall(entry, run, details.toolCall);
-			run.startedTools.add(details.toolCall.callId);
-			const call = run.toolCalls.get(details.toolCall.callId);
-			emit(entry, {
-				type: "tool_execution_start",
-				toolCallId: details.toolCall.callId,
-				toolName: details.toolCall.name,
-				args: call?.arguments ?? {},
-			});
-		});
-		agent.on("agent_tool_end", (_context, _tool, result, details) => {
-			if (!run.granted || details.toolCall.type !== "function_call") return;
-			recordToolResult(
-				entry,
-				details.toolCall.callId,
-				details.toolCall.name,
-				result,
-				run.toolCalls.get(details.toolCall.callId)?.failed,
-			);
-		});
-		const runner = new Runner({ tracingDisabled: true });
-		let next: AgentInputItem[] | RunState<unknown, Agent<unknown, "text">> = input;
+		let next: AgentInputItem[] | RunState<unknown, Agent<unknown, "text">> = recovery
+			? await RunState.fromString(agent, recovery)
+			: input;
+		if (recovery && next instanceof RunState) {
+			run.state = next;
+			const pendingIds = new Set(next.pendingInput.map((item) => item.id));
+			if (
+				entry.store.record.queue.some(
+					(input) => input.state === "staged" && !pendingIds.has(input.id),
+				)
+			)
+				entry.store.update((record) => {
+					for (const input of record.queue)
+						if (input.state === "staged" && !pendingIds.has(input.id)) input.state = "pending";
+				});
+			stageSteering(entry);
+			for (const interruption of next.getInterruptions()) {
+				if (interruption.rawItem.type !== "function_call")
+					throw new Error("Unsupported approval type");
+				if (
+					interactiveTools(
+						(name) => !run.enabledExtensions.some((extension) => extension.name === name),
+					).has(interruption.rawItem.name)
+				) {
+					await waitForToolResponse(entry, run, next, interruption.rawItem);
+					assertActive(entry, run);
+					next.approve(interruption);
+					continue;
+				}
+				const saved = entry.store.record.pendingApproval;
+				const callId = interruption.rawItem.callId;
+				if (!saved) {
+					const decision = Object.values(entry.store.record.decisions).find(
+						(d) => d.runId === run.id && d.toolCallId === callId,
+					);
+					if (!decision) throw new Error("No saved decision for checkpoint");
+					if (decision.value) next.approve(interruption);
+					else next.reject(interruption);
+				} else {
+					const approved = await waitForApproval(entry, run, next, interruption.rawItem);
+					assertActive(entry, run);
+					if (approved) next.approve(interruption);
+					else next.reject(interruption);
+				}
+			}
+		}
+		run.markReady?.();
 		while (true) {
 			assertActive(entry, run);
 			const stream = await startStream(runner, agent, next, entry.store, run.controller.signal);
-			for await (const event of stream) projectStream(entry, run, event);
+			run.state = stream.state;
+			stageSteering(entry);
+			for await (const event of stream) {
+				projectStream(entry, run, event);
+				stageSteering(entry);
+			}
 			await stream.completed;
+			const lastUsage = stream.state.usage.requestUsageEntries?.at(-1);
+			entry.store.record.modelContextTokens =
+				lastUsage?.totalTokens ??
+				(stream.state.usage.requests === 1 ? stream.state.usage.totalTokens : 0);
 			run.usage = {
 				inputTokens: stream.state.usage.inputTokens,
 				outputTokens: stream.state.usage.outputTokens,
@@ -568,6 +890,16 @@ async function executeRun(entry: Entry, run: ActiveRun, input: AgentInputItem[])
 			for (const interruption of stream.interruptions) {
 				if (interruption.rawItem.type !== "function_call")
 					throw new Error("Unsupported approval type");
+				if (
+					interactiveTools(
+						(name) => !run.enabledExtensions.some((extension) => extension.name === name),
+					).has(interruption.rawItem.name)
+				) {
+					await waitForToolResponse(entry, run, stream.state, interruption.rawItem);
+					assertActive(entry, run);
+					stream.state.approve(interruption);
+					continue;
+				}
 				const approved = await waitForApproval(entry, run, stream.state, interruption.rawItem);
 				assertActive(entry, run);
 				if (approved) stream.state.approve(interruption);
@@ -577,9 +909,24 @@ async function executeRun(entry: Entry, run: ActiveRun, input: AgentInputItem[])
 					stream.state.reject(interruption);
 				}
 			}
-			next = stream.state;
+			const checkpoint = stream.state.toString();
+			entry.store.update((record) => {
+				record.runCheckpoint = {
+					runId: run.id,
+					checkpoint,
+					granted: run.granted,
+					enabledExtensions: run.enabledExtensions,
+				};
+			});
+			run.controller.abort();
+			run.controller = new AbortController();
+			agent = buildAgent();
+			next = await RunState.fromString(agent, checkpoint);
+			run.state = next;
 		}
 	} catch (error) {
+		run.markReady?.();
+		if (run.suspended) return;
 		terminal = {
 			stopReason:
 				!run.granted || run.controller.signal.aborted
@@ -607,63 +954,468 @@ async function executeRun(entry: Entry, run: ActiveRun, input: AgentInputItem[])
 		}
 	} finally {
 		try {
-			for (const [callId, call] of run.toolCalls) {
-				if (
-					entry.store.record.messages.some(
-						(message) => message.role === "toolResult" && message.toolCallId === callId,
+			if (!run.suspended) {
+				for (const [callId, call] of run.toolCalls) {
+					if (
+						entry.store.record.messages.some(
+							(message) => message.role === "toolResult" && message.toolCallId === callId,
+						)
 					)
-				)
-					continue;
-				const output = run.startedTools.has(callId)
-					? "Operation interrupted; its result is unknown. Inspect the worktree before retrying."
-					: "Operation was not executed because its approval or run was cancelled.";
-				recordToolResult(entry, callId, call.name, output, true);
-				if (
-					!entry.store.record.history.some(
-						(item) => item.type === "function_call_result" && item.callId === callId,
+						continue;
+					const output = run.startedTools.has(callId)
+						? "Operation interrupted; its result is unknown. Inspect the worktree before retrying."
+						: "Operation was not executed because its approval or run was cancelled.";
+					recordToolResult(entry, callId, call.name, output, true, false);
+					if (
+						!entry.store.record.history.some(
+							(item) => item.type === "function_call_result" && item.callId === callId,
+						)
 					)
-				)
-					await entry.store.addItems([
-						{ type: "function_call_result", callId, name: call.name, status: "incomplete", output },
-					]);
+						await entry.store.addItems([
+							{
+								type: "function_call_result",
+								callId,
+								name: call.name,
+								status: "incomplete",
+								output,
+							},
+						]);
+				}
+				const lastAssistant = entry.store.record.messages.findLast(
+					(message) => message.role === "assistant",
+				);
+				if (lastAssistant?.role === "assistant" && run.usage) {
+					lastAssistant.usage.input = run.usage.inputTokens;
+					lastAssistant.usage.output = run.usage.outputTokens;
+					lastAssistant.usage.totalTokens = run.usage.totalTokens;
+					lastAssistant.usage.cacheRead = run.usage.cacheRead;
+					lastAssistant.usage.cacheWrite = run.usage.cacheWrite;
+					emit(entry, { type: "message_end", message: lastAssistant });
+				}
+				run.granted = false;
+				if (run.approval) {
+					publishDialog({
+						id: run.approval.request.id,
+						sessionId: entry.store.record.sessionId,
+						kind: "dismiss",
+					});
+					delete run.approval;
+				}
+				entry.store.record.state.execution = "idle";
+				entry.store.record.state.needsInput = null;
+				entry.store.record.state.completion =
+					terminal.stopReason === "aborted"
+						? { completionId: run.id, outcome: "cancelled" }
+						: terminal.stopReason === "error" || terminal.stopReason === "length"
+							? { completionId: run.id, outcome: "failed", failure: terminal.stopReason }
+							: { completionId: run.id, outcome: "succeeded" };
+				entry.store.record.state.completionUnread = terminal.stopReason !== "aborted";
+				delete entry.store.record.pendingApproval;
+				delete entry.store.record.pendingToolResponse;
+				delete run.toolResponse;
+				delete entry.store.record.runCheckpoint;
+				for (const queued of entry.store.record.queue) {
+					queued.state = "pending";
+					if (terminal.errorMessage) queued.error = terminal.errorMessage;
+				}
+				emit(entry, { type: "agent_end", messages: entry.store.record.messages, willRetry: false });
+				emit(entry, { type: "agent_settled", terminal });
 			}
-			const lastAssistant = entry.store.record.messages.findLast(
-				(message) => message.role === "assistant",
-			);
-			if (lastAssistant?.role === "assistant" && run.usage) {
-				lastAssistant.usage.input = run.usage.inputTokens;
-				lastAssistant.usage.output = run.usage.outputTokens;
-				lastAssistant.usage.totalTokens = run.usage.totalTokens;
-				lastAssistant.usage.cacheRead = run.usage.cacheRead;
-				lastAssistant.usage.cacheWrite = run.usage.cacheWrite;
-				emit(entry, { type: "message_end", message: lastAssistant });
-			}
-			run.granted = false;
-			if (run.approval) {
-				publishDialog({
-					id: run.approval.request.id,
-					sessionId: entry.store.record.sessionId,
-					kind: "dismiss",
-				});
-				delete run.approval;
-			}
-			entry.store.record.state.execution = "idle";
-			entry.store.record.state.needsInput = null;
-			entry.store.record.state.completion =
-				terminal.stopReason === "aborted"
-					? { completionId: run.id, outcome: "cancelled" }
-					: terminal.stopReason === "error" || terminal.stopReason === "length"
-						? { completionId: run.id, outcome: "failed", failure: terminal.stopReason }
-						: { completionId: run.id, outcome: "succeeded" };
-			entry.store.record.state.completionUnread = terminal.stopReason !== "aborted";
-			delete entry.store.record.pendingApproval;
-			emit(entry, { type: "agent_end", messages: entry.store.record.messages, willRetry: false });
-			emit(entry, { type: "agent_settled", terminal });
 		} finally {
 			run.granted = false;
 			run.controller.abort();
 			delete entry.active;
 			notifyState(entry);
+		}
+	}
+	if (terminal.stopReason === "stop" && !entry.stopping) {
+		try {
+			await compactSession(entry.store.record.sessionId, { force: false });
+		} catch (error) {
+			log.warn("Automatic summary kept the prior history", error);
+		}
+		await drainQueue(entry);
+	}
+}
+
+function userItem(input: Pick<StoredInput, "id" | "text" | "images">): AgentInputItem {
+	return {
+		type: "message",
+		id: input.id,
+		role: "user",
+		content: input.images?.length
+			? [
+					{ type: "input_text", text: input.text },
+					...input.images.map((image) => ({
+						type: "input_image" as const,
+						image: `data:${image.mimeType};base64,${image.data}`,
+					})),
+				]
+			: input.text,
+	};
+}
+function queuedContent(input: StoredInput) {
+	return {
+		id: input.id,
+		text: input.text,
+		state: input.state,
+		...(input.images?.length ? { images: structuredClone(input.images) } : {}),
+		...(input.error ? { error: input.error } : {}),
+	};
+}
+function queueOf(record: SessionRecord): SessionQueueContent {
+	const queue = record.queue;
+	return {
+		steering: queue.filter((input) => input.kind === "steering").map(queuedContent),
+		followUp: queue.filter((input) => input.kind === "followUp").map(queuedContent),
+	};
+}
+export function getQueuedMessageContent(sessionId: string): SessionQueueContent {
+	return queueOf(mustGet(sessionId).store.record);
+}
+
+function queueStateOf(record: SessionRecord): SessionQueueState {
+	const project = (input: StoredInput) => ({
+		id: input.id,
+		text: input.text,
+		state: input.state,
+		...(input.error ? { error: input.error } : {}),
+	});
+	return {
+		steering: record.queue.filter((input) => input.kind === "steering").map(project),
+		followUp: record.queue.filter((input) => input.kind === "followUp").map(project),
+		...(record.queue.some((input) => input.images?.length) ? { hasImages: true as const } : {}),
+	};
+}
+export function queuedMessages(sessionId: string): SessionQueueState {
+	return queueStateOf(mustGet(sessionId).store.record);
+}
+
+function publishQueue(entry: Entry): void {
+	entry.store.record.state.queuedCount = entry.store.record.queue.length;
+	emit(entry, { type: "queue_update", ...queuedMessages(entry.store.record.sessionId) });
+	notifyState(entry);
+}
+function observeStore(entry: Entry): void {
+	entry.store.onUpdate = (previous) => {
+		if (JSON.stringify(previous.queue) === JSON.stringify(entry.store.record.queue)) return;
+		const admitted = previous.queue.filter(
+			(input) =>
+				!entry.store.record.queue.some((current) => current.id === input.id) &&
+				entry.store.record.history.some((item) => item.id === input.id),
+		);
+		for (const input of admitted) {
+			const message = entry.store.record.messages.find((item) => item.id === input.id);
+			if (!message || previous.messages.some((item) => item.id === input.id)) continue;
+			emit(entry, { type: "message_end", message });
+		}
+		publishQueue(entry);
+	};
+}
+function stageSteering(entry: Entry): void {
+	const run = entry.active;
+	if (!run?.state || !run.granted || run.controller.signal.aborted || entry.stopping) return;
+	const waiting = entry.store.record.queue.filter(
+		(input) => input.kind === "steering" && input.state === "pending",
+	);
+	if (!waiting.length) return;
+	const previous = run.state.pendingInput;
+	try {
+		run.state.addInput(waiting.map(userItem));
+		entry.store.update((record) => {
+			for (const input of record.queue)
+				if (waiting.some((item) => item.id === input.id)) {
+					input.state = "staged";
+					delete input.error;
+				}
+			if (record.runCheckpoint)
+				record.runCheckpoint = {
+					runId: run.id,
+					checkpoint: run.state?.toString() ?? record.runCheckpoint.checkpoint,
+					granted: run.granted,
+					enabledExtensions: run.enabledExtensions,
+				};
+			if (record.pendingToolResponse) {
+				record.pendingToolResponse.checkpoint =
+					run.state?.toString() ?? record.pendingToolResponse.checkpoint;
+				record.runCheckpoint = {
+					runId: run.id,
+					checkpoint: record.pendingToolResponse.checkpoint,
+					granted: run.granted,
+					enabledExtensions: run.enabledExtensions,
+				};
+			}
+			if (record.pendingApproval) {
+				record.pendingApproval.checkpoint =
+					run.state?.toString() ?? record.pendingApproval.checkpoint;
+				record.runCheckpoint = {
+					runId: run.id,
+					checkpoint: record.pendingApproval.checkpoint,
+					granted: run.granted,
+					enabledExtensions: run.enabledExtensions,
+				};
+			}
+		});
+	} catch (error) {
+		run.state.clearPendingInput();
+		if (previous.length) run.state.addInput(previous);
+		const message = error instanceof Error ? error.message : String(error);
+		if (waiting.some((input) => input.error !== message))
+			entry.store.update((record) => {
+				for (const input of record.queue)
+					if (waiting.some((item) => item.id === input.id)) input.error = message;
+			});
+	}
+}
+function enqueue(
+	sessionId: string,
+	kind: QueueLane,
+	text: string,
+	images?: readonly ImageContent[],
+	messageId: string = randomUUID(),
+): void {
+	const entry = mustGet(sessionId);
+	if (
+		closingSessions.has(sessionId) ||
+		deletingSessions.has(sessionId) ||
+		closingWorkspaces.has(entry.store.record.workspaceId)
+	)
+		throw new Error("Session is closing");
+	if (typeof text !== "string" || (!text.trim() && !images?.length))
+		throw new Error("Message is empty");
+	if (!/^[A-Za-z0-9_-]{1,200}$/.test(messageId)) throw new Error("Invalid input ID");
+	if (images?.length && !entry.store.record.model?.input?.includes("image"))
+		throw new Error("The selected model does not accept images");
+	const existing = entry.store.record.queue.find((input) => input.id === messageId);
+	if (existing) {
+		if (
+			existing.kind !== kind ||
+			existing.text !== text ||
+			JSON.stringify(existing.images ?? []) !== JSON.stringify(images ?? [])
+		)
+			throw new Error("Conflicting input ID");
+		return;
+	}
+	const previous = entry.store.record.messages.find((item) => item.id === messageId);
+	if (previous) {
+		if (
+			previous.role !== "user" ||
+			JSON.stringify(previous.content) !==
+				JSON.stringify(images?.length ? [{ type: "text", text }, ...images] : text)
+		)
+			throw new Error("Conflicting input ID");
+		return;
+	}
+	const pendingToolResponse = kind === "steering" ? entry.active?.toolResponse : undefined;
+	entry.store.update((record) => {
+		if (pendingToolResponse && entry.active) {
+			record.toolResponses[pendingToolResponse.request.id] = {
+				runId: entry.active.id,
+				toolCallId: pendingToolResponse.request.toolCallId,
+				revision: pendingToolResponse.request.revision,
+				response: { kind: "superseded", inputId: messageId },
+			};
+			delete record.pendingToolResponse;
+			record.state.needsInput = null;
+		}
+		record.queue.push({
+			id: messageId,
+			text,
+			...(images?.length ? { images: structuredClone([...images]) } : {}),
+			kind,
+			state: "pending",
+		});
+	});
+	if (kind === "steering") stageSteering(entry);
+	if (pendingToolResponse && entry.active) {
+		delete entry.active.toolResponse;
+		pendingToolResponse.resolve();
+	}
+	if (!entry.active && !entry.stopping)
+		void drainQueue(entry).catch((error) => log.error("Could not start queued input", error));
+}
+export function steerSession(
+	sessionId: string,
+	text: string,
+	images?: readonly ImageContent[],
+	messageId?: string,
+): void {
+	enqueue(sessionId, "steering", text, images, messageId);
+}
+export function followUpSession(
+	sessionId: string,
+	text: string,
+	images?: readonly ImageContent[],
+	messageId?: string,
+): void {
+	enqueue(sessionId, "followUp", text, images, messageId);
+}
+export function clearSessionQueue(sessionId: string, requireTextOnly = false): SessionQueueContent {
+	const entry = mustGet(sessionId);
+	const content = getQueuedMessageContent(sessionId);
+	if (requireTextOnly && entry.store.record.queue.some((input) => input.images?.length))
+		throw new Error("The queue contains images");
+	if (entry.store.record.queue.some((input) => input.state === "staged"))
+		throw new Error("Staged input cannot be withdrawn before settlement");
+	entry.store.update((record) => {
+		record.queue = [];
+	});
+	return content;
+}
+export function removeQueuedMessage(sessionId: string, messageId: string): RemovedQueuedMessage {
+	const entry = mustGet(sessionId);
+	const input = entry.store.record.queue.find((item) => item.id === messageId);
+	if (input?.state === "staged")
+		throw new Error("Staged input cannot be withdrawn before settlement");
+	if (input)
+		entry.store.update((record) => {
+			record.queue = record.queue.filter((item) => item.id !== messageId);
+		});
+	return { removed: input ? queuedContent(input) : null, queue: queuedMessages(sessionId) };
+}
+export function updateQueuedMessage(
+	sessionId: string,
+	messageId: string,
+	text: string,
+	images?: readonly ImageContent[],
+): void {
+	const entry = mustGet(sessionId);
+	const input = entry.store.record.queue.find((item) => item.id === messageId);
+	if (!input || input.state === "staged")
+		throw new Error("Queued input is unavailable for editing");
+	if (!text.trim() && !images?.length) throw new Error("Message is empty");
+	if (images?.length && !entry.store.record.model?.input?.includes("image"))
+		throw new Error("The selected model does not accept images");
+	entry.store.update((record) => {
+		const current = record.queue.find((item) => item.id === messageId);
+		if (current) {
+			current.text = text;
+			if (images?.length) current.images = structuredClone([...images]);
+			else delete current.images;
+			delete current.error;
+		}
+	});
+}
+async function drainQueue(entry: Entry, steeringOnly = false): Promise<void> {
+	if (
+		entry.active ||
+		entry.stopping ||
+		closingSessions.has(entry.store.record.sessionId) ||
+		deletingSessions.has(entry.store.record.sessionId)
+	)
+		return;
+	const next =
+		entry.store.record.queue.find((input) => input.kind === "steering") ??
+		(steeringOnly ? undefined : entry.store.record.queue[0]);
+	if (!next) return;
+	try {
+		await promptSession(entry.store.record.sessionId, next.text, next.images, next.id);
+	} catch (error) {
+		entry.store.update((record) => {
+			const current = record.queue.find((input) => input.id === next.id);
+			if (current) {
+				current.state = "pending";
+				current.error = error instanceof Error ? error.message : String(error);
+			}
+		});
+		throw error;
+	}
+}
+export async function sendSteeringNow(sessionId: string): Promise<void> {
+	const entry = mustGet(sessionId);
+	if (entry.active) {
+		stageSteering(entry);
+		return;
+	}
+	await drainQueue(entry, true);
+}
+export async function compactSession(
+	sessionId: string,
+	options: {
+		operationId?: string | undefined;
+		instructions?: string | undefined;
+		force?: boolean | undefined;
+	} = {},
+): Promise<void> {
+	const entry = mustGet(sessionId);
+	if (
+		entry.active ||
+		entry.store.record.pendingApproval ||
+		entry.store.record.pendingToolResponse ||
+		entry.store.record.runCheckpoint ||
+		entry.stopping
+	)
+		throw new Error("Wait for the run to settle before summarizing");
+	if (entry.summaryController) throw new Error("A summary is already running");
+	const selected = entry.store.record.model;
+	if (!selected) throw new Error("Configure a model before summarizing");
+	const controller = new AbortController();
+	entry.summaryController = controller;
+	let finishSummary: () => void = () => {};
+	entry.summaryDone = new Promise((resolve) => {
+		finishSummary = resolve;
+	});
+	try {
+		const operationId = options.operationId ?? randomUUID();
+		const summaryUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+		const result = await entry.store.compact({
+			operationId,
+			usage: summaryUsage,
+			tokensBefore: entry.store.record.modelContextTokens ?? 0,
+			force: options.force ?? true,
+			instructions: options.instructions,
+			tokenBudget: modelContextBudget(selected),
+			signal: controller.signal,
+			summarize: async (prefix, signal) => {
+				const agent = new Agent({
+					name: "RailDesign summary",
+					model: createConfiguredModel(selected, sessionId),
+					instructions:
+						"Summarize the older conversation for continuation. Preserve user requirements, decisions, file paths, exact facts, tool outcomes and unfinished work. Do not invent facts. Return only the summary.",
+					modelSettings: { ...responsesClientSettings, maxTokens: modelOutputBudget(selected) },
+				});
+				configureLocalSdkTracing();
+				const runner = new Runner({
+					tracingDisabled: !loadConfig().sdkTracingEnabled,
+					traceIncludeSensitiveData: false,
+				});
+				const response = await runner.run(
+					agent,
+					[
+						{
+							role: "user",
+							content: `${options.instructions ?? ""}\nConversation:\n${JSON.stringify(prefix)}`,
+						},
+					],
+					{ signal, maxTurns: 1 },
+				);
+				summaryUsage.input = response.state.usage.inputTokens;
+				summaryUsage.output = response.state.usage.outputTokens;
+				summaryUsage.total = response.state.usage.totalTokens;
+				summaryUsage.cacheRead = response.state.usage.inputTokensDetails.reduce(
+					(sum, detail) =>
+						sum + (typeof detail.cached_tokens === "number" ? detail.cached_tokens : 0),
+					0,
+				);
+				summaryUsage.cacheWrite = response.state.usage.inputTokensDetails.reduce(
+					(sum, detail) =>
+						sum + (typeof detail.cache_write_tokens === "number" ? detail.cache_write_tokens : 0),
+					0,
+				);
+				return response.finalOutput ?? "";
+			},
+		});
+		if (result.status === "compacted") {
+			const message = entry.store.record.messages.find(
+				(item) => item.id === `summary:${operationId}`,
+			);
+			if (message) emit(entry, { type: "message_end", message });
+		}
+	} finally {
+		finishSummary();
+		if (entry.summaryController === controller) {
+			delete entry.summaryController;
+			delete entry.summaryDone;
 		}
 	}
 }
@@ -695,7 +1447,7 @@ export async function createSession(input: CreateSessionInput): Promise<CreateSe
 	const sessionId = randomUUID();
 	const entry: Entry = {
 		store: new PersistentSession({
-			version: 1,
+			version: 2,
 			sessionId,
 			workspaceId: input.workspaceId,
 			cwd: resolve(input.cwd),
@@ -710,10 +1462,18 @@ export async function createSession(input: CreateSessionInput): Promise<CreateSe
 			state: idleState(),
 			updatedAt: Date.now(),
 			decisions: {},
+			toolResponses: {},
+			queue: [],
+			effects: {},
+			historyOperations: {},
+			summaryOperations: {},
+			retiredInputIds: [],
+			inputItems: {},
 		}),
 	};
 	flush(entry);
 	sessions.set(sessionId, entry);
+	observeStore(entry);
 	publishCreated(summaryOf(entry));
 	notifyState(entry);
 	return {
@@ -726,6 +1486,7 @@ export function promptSession(
 	sessionId: string,
 	text: string,
 	images?: readonly ImageContent[],
+	messageId?: string,
 ): Promise<void> {
 	const entry = mustGet(sessionId);
 	if (typeof text !== "string") throw new Error("Message must be text");
@@ -735,13 +1496,34 @@ export function promptSession(
 		closingWorkspaces.has(entry.store.record.workspaceId)
 	)
 		throw new Error("Session is closing");
+	if (messageId) {
+		const previous = entry.store.record.messages.find((item) => item.id === messageId);
+		if (previous) {
+			if (
+				previous.role !== "user" ||
+				JSON.stringify(previous.content) !==
+					JSON.stringify(images?.length ? [{ type: "text", text }, ...images] : text)
+			)
+				throw new Error("Conflicting input ID");
+			if (entry.active?.inputId === messageId) return entry.active.done;
+			if (!entry.store.record.queue.some((item) => item.id === messageId)) return Promise.resolve();
+		}
+	}
 	if (entry.active) throw new Error("A run is already active in this session");
+	entry.summaryController?.abort();
+	if (entry.stopping) throw new Error("Session is stopping");
 	if (!text.trim() && !images?.length) throw new Error("Message is empty");
 	if (images?.length && !entry.store.record.model?.input?.includes("image"))
 		throw new Error("The selected model does not accept images");
-	const id = randomUUID();
+	const id = messageId ?? randomUUID();
+	if (!/^[A-Za-z0-9_-]{1,200}$/.test(id)) throw new Error("Invalid input ID");
 	const run: ActiveRun = {
 		id: randomUUID(),
+		inputId: id,
+		enabledExtensions: snapshotSdkExtensions(
+			loadConfig().disabledExtensions,
+			loadConfig().extensionSettings,
+		),
 		controller: new AbortController(),
 		granted: true,
 		done: Promise.resolve(),
@@ -769,33 +1551,56 @@ export function promptSession(
 		content: images?.length ? [{ type: "text", text }, ...images] : text,
 		timestamp: Date.now(),
 	};
+	const queuedInput = entry.store.record.queue.some((input) => input.id === id);
 	const firstSeq = entry.store.record.eventSeq + 1;
 	entry.store.update((record) => {
-		record.messages.push(message);
-		record.state = { ...idleState(), execution: "running", runId: run.id };
-		record.eventSeq += 2;
+		const existing = record.messages.findIndex((item) => item.id === message.id);
+		if (!queuedInput) {
+			if (existing === -1) record.messages.push(message);
+			else record.messages[existing] = message;
+		}
+		record.state = {
+			...idleState(),
+			execution: "running",
+			runId: run.id,
+			queuedCount: record.queue.length,
+		};
+		record.eventSeq += queuedInput ? 1 : 2;
 	});
 	entry.active = run;
 	publish(
 		{ sessionId, runId: run.id, seq: firstSeq, event: { type: "agent_start" } },
 		entry.store.record.workspaceId,
 	);
-	publish(
-		{ sessionId, runId: run.id, seq: firstSeq + 1, event: { type: "message_end", message } },
-		entry.store.record.workspaceId,
-	);
+	if (!queuedInput)
+		publish(
+			{ sessionId, runId: run.id, seq: firstSeq + 1, event: { type: "message_end", message } },
+			entry.store.record.workspaceId,
+		);
 	notifyState(entry);
-	run.done = executeRun(entry, run, content);
+	run.done = entry.summaryDone
+		? entry.summaryDone.then(() => executeRun(entry, run, content))
+		: executeRun(entry, run, content);
 	return run.done;
 }
 export async function abortSession(sessionId: string): Promise<void> {
 	const entry = mustGet(sessionId);
+	entry.summaryController?.abort();
 	const run = entry.active;
-	if (!run) return;
+	if (!run) {
+		await entry.summaryDone;
+		return;
+	}
+	entry.stopping = true;
 	run.granted = false;
 	run.controller.abort();
 	run.approval?.reject(new Error("Run cancelled"));
-	await run.done;
+	run.toolResponse?.reject(new Error("Run cancelled"));
+	try {
+		await run.done;
+	} finally {
+		delete entry.stopping;
+	}
 }
 export function hasSession(sessionId: string): boolean {
 	return sessions.has(sessionId);
@@ -828,26 +1633,106 @@ export async function ensureSessionAttached(
 	)
 		return false;
 	const existing = sessions.get(sessionId);
-	if (existing)
+	if (existing) {
+		await existing.active?.ready;
 		return (
 			existing.store.record.workspaceId === workspaceId &&
 			existing.store.record.cwd === resolve(cwd)
 		);
+	}
 	const record = readSessionRecord(sessionId);
 	if (!record || record.workspaceId !== workspaceId || record.cwd !== resolve(cwd)) return false;
-	if (record.state.execution === "running" || record.pendingApproval) {
-		record.state.execution = "idle";
-		record.state.needsInput = null;
-		record.state.completion = {
-			completionId: record.state.runId ?? randomUUID(),
-			outcome: "interrupted",
-		};
-		record.state.completionUnread = true;
-		delete record.pendingApproval;
-	}
 	const entry: Entry = { store: new PersistentSession(record) };
-	flush(entry);
 	sessions.set(sessionId, entry);
+	observeStore(entry);
+	const interruptedEffects = Object.entries(record.effects).filter(
+		([, effect]) => effect.status !== "completed" && effect.runId === record.state.runId,
+	);
+	const checkpoint = record.runCheckpoint;
+	if (
+		checkpoint?.granted &&
+		interruptedEffects.length === 0 &&
+		(record.pendingApproval || record.pendingToolResponse || record.state.execution === "running")
+	) {
+		const run: ActiveRun = {
+			id: checkpoint.runId,
+			enabledExtensions: checkpoint.enabledExtensions,
+			controller: new AbortController(),
+			granted: true,
+			done: Promise.resolve(),
+			toolCalls: new Map(),
+			startedTools: new Set(),
+		};
+		run.ready = new Promise((resolveReady) => {
+			run.markReady = resolveReady;
+		});
+		entry.active = run;
+		run.done = executeRun(entry, run, [], checkpoint.checkpoint);
+		await run.ready;
+	} else if (
+		record.state.execution === "running" ||
+		record.pendingApproval ||
+		record.pendingToolResponse
+	) {
+		entry.store.update((current) => {
+			current.state.execution = "idle";
+			current.state.needsInput = null;
+			current.state.completion = {
+				completionId: current.state.runId ?? randomUUID(),
+				outcome: "interrupted",
+			};
+			current.state.completionUnread = true;
+			for (const queued of current.queue) queued.state = "pending";
+			for (const [, effect] of Object.entries(current.effects))
+				if (effect.status === "started") effect.status = "unknown";
+			delete current.pendingApproval;
+			delete current.pendingToolResponse;
+			delete current.runCheckpoint;
+		});
+		for (const [callId, effect] of interruptedEffects)
+			recordToolResult(
+				entry,
+				callId,
+				effect.name,
+				"Operation interrupted; its result is unknown. Inspect the worktree before retrying.",
+				true,
+				false,
+			);
+	}
+	if (!entry.active && record.state.runId) {
+		for (const [callId, effect] of Object.entries(entry.store.record.effects)) {
+			if (effect.runId !== record.state.runId) continue;
+			const items: AgentInputItem[] = [];
+			if (
+				!entry.store.record.history.some(
+					(item) => item.type === "function_call" && item.callId === callId,
+				)
+			)
+				items.push({
+					type: "function_call",
+					callId,
+					name: effect.name,
+					arguments: JSON.stringify(effect.arguments),
+					status: "completed",
+				});
+			if (
+				!entry.store.record.history.some(
+					(item) => item.type === "function_call_result" && item.callId === callId,
+				)
+			)
+				items.push({
+					type: "function_call_result",
+					callId,
+					name: effect.name,
+					status: "completed",
+					output:
+						effect.result ??
+						"Operation interrupted; its result is unknown. Inspect the worktree before retrying.",
+				});
+			if (items.length) await entry.store.addItems(items);
+		}
+	}
+	flush(entry);
 	return true;
 }
 export async function getSessionMessages(sessionId: string, workspaceId: string, cwd: string) {
@@ -1005,6 +1890,14 @@ export function getSessionStats(sessionId: string): SessionStats {
 			tokens.cacheWrite += message.usage.cacheWrite;
 			tokens.total += message.usage.totalTokens;
 		}
+	for (const receipt of Object.values(entry.store.record.summaryOperations)) {
+		if (!receipt.usage) continue;
+		tokens.input += receipt.usage.input;
+		tokens.output += receipt.usage.output;
+		tokens.cacheRead += receipt.usage.cacheRead;
+		tokens.cacheWrite += receipt.usage.cacheWrite;
+		tokens.total += receipt.usage.total;
+	}
 	return { sessionId, totalMessages: entry.store.record.messages.length, tokens, cost: null };
 }
 export async function readFinalAssistantTexts(
@@ -1030,7 +1923,18 @@ export async function removeSession(sessionId: string): Promise<void> {
 	if (!entry) return;
 	closingSessions.add(sessionId);
 	try {
-		await abortSession(sessionId);
+		if (
+			entry.active &&
+			(entry.store.record.pendingApproval || entry.store.record.pendingToolResponse)
+		) {
+			const run = entry.active;
+			run.suspended = true;
+			run.granted = false;
+			run.controller.abort();
+			run.approval?.reject(new Error("Approval saved for continuation"));
+			run.toolResponse?.reject(new Error("Tool response saved for continuation"));
+			await run.done;
+		} else await abortSession(sessionId);
 		await releaseSessionResources?.(sessionId);
 		flush(entry);
 		sessions.delete(sessionId);
@@ -1080,10 +1984,13 @@ export async function settleSessionsForShutdown(): Promise<void> {
 }
 export function disposeAllSessions(): void {
 	for (const entry of sessions.values()) {
+		entry.summaryController?.abort();
 		if (entry.active) {
+			entry.active.suspended = true;
 			entry.active.granted = false;
 			entry.active.controller.abort();
 			entry.active.approval?.reject(new Error("Host stopped"));
+			entry.active.toolResponse?.reject(new Error("Host stopped"));
 		}
 		if (entry.flush) clearTimeout(entry.flush);
 	}

@@ -33,7 +33,7 @@ test("fixture sessions use the real flat JSON record and stable transcript ident
 		const json = readFileSync(written.path, "utf8");
 		const stored = JSON.parse(json);
 		expect(stored).toMatchObject({
-			version: 1,
+			version: 2,
 			sessionId: "fixture-a",
 			workspaceId: "workspace-a",
 			cwd: resolve(root, "repo"),

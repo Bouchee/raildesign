@@ -442,14 +442,14 @@ test("a matching user echo adopts the host clock while retaining optimistic iden
 	expect(rt("clock").turns[0]).toMatchObject({ attachmentNames: ["screen.png"] });
 });
 
-test("queue_update folds pi's queue into the runtime; the canonical echo lands the turn at its true position", () => {
+test("queue updates retain stable admission state; only the canonical echo adds a transcript turn", () => {
 	const queueUpdate = (steering: string[], followUp: string[], hasImages = false) =>
 		({
 			type: "queue_update",
-			steering,
-			followUp,
+			steering: steering.map((text) => ({ id: text, text, state: "pending" })),
+			followUp: followUp.map((text) => ({ id: text, text, state: "pending" })),
 			...(hasImages ? { hasImages: true } : {}),
-		}) as unknown as SessionEvent;
+		}) satisfies SessionEvent;
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "a", null, "medium");
 	store.handleSessionEvent(agentStart, "a");
@@ -458,8 +458,8 @@ test("queue_update folds pi's queue into the runtime; the canonical echo lands t
 
 	store.handleSessionEvent(queueUpdate(["course-correct"], ["queued question"], true), "a");
 	expect(rt("a").queue).toEqual({
-		steering: ["course-correct"],
-		followUp: ["queued question"],
+		steering: [{ id: "course-correct", text: "course-correct", state: "pending" }],
+		followUp: [{ id: "queued question", text: "queued question", state: "pending" }],
 		hasImages: true,
 	});
 	expect(rt("a").turns.filter((t) => t.kind === "user")).toHaveLength(0);
@@ -533,10 +533,16 @@ test("hydrateSession seeds the queue from the summary snapshot", () => {
 		messageCount: 1,
 		updatedAt: 0,
 		live: true,
-		queue: { steering: [], followUp: ["waiting in line"] },
+		queue: {
+			steering: [],
+			followUp: [{ id: "waiting", text: "waiting in line", state: "pending" }],
+		},
 	};
 	store.hydrateSession(summary, emptyHydration());
-	expect(rt("q1").queue).toEqual({ steering: [], followUp: ["waiting in line"] });
+	expect(rt("q1").queue).toEqual({
+		steering: [],
+		followUp: [{ id: "waiting", text: "waiting in line", state: "pending" }],
+	});
 
 	const { queue, ...bare } = summary;
 	void queue;
@@ -2301,7 +2307,10 @@ test("reconcileSession replaces stale host state while preserving browser-local 
 		messageCount: 2,
 		updatedAt: 2,
 		live: true,
-		queue: { steering: [], followUp: ["continue afterward"] },
+		queue: {
+			steering: [],
+			followUp: [{ id: "later", text: "continue afterward", state: "pending" }],
+		},
 	};
 	const applied = store.reconcileSession(
 		summary,
@@ -2336,7 +2345,10 @@ test("reconcileSession replaces stale host state while preserving browser-local 
 		resuming: true,
 	});
 	expect(after.draft).toBe("keep my draft");
-	expect(after.queue).toEqual({ steering: [], followUp: ["continue afterward"] });
+	expect(after.queue).toEqual({
+		steering: [],
+		followUp: [{ id: "later", text: "continue afterward", state: "pending" }],
+	});
 	expect(after.thinkingLevel).toBe("high");
 	expect(after.syncedConnectionGeneration).toBe(7);
 	expect(after.eventRevision).toBe(before.eventRevision + 1);

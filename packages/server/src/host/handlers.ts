@@ -1,4 +1,5 @@
 import { mkdirSync } from "node:fs";
+import { resolve } from "node:path";
 import type {
 	OpenBranchReview,
 	ReviewComment,
@@ -24,9 +25,12 @@ import {
 	cancelMcpProbe,
 	cancelMcpProbesForWorkspace,
 	clampThinkingForModel,
+	clearSessionQueue,
 	closeWorkspaceMcpConnections,
+	compactSession,
 	deleteSession,
 	ensureSessionAttached,
+	followUpSession,
 	getSessionMessages,
 	getSessionStats,
 	isMcpLoginId,
@@ -43,16 +47,22 @@ import {
 	probeCustomEndpoint,
 	projectTrustSummary,
 	promptSession,
+	readSessionRecord,
 	refreshAvailableModels,
 	removeCustomEndpoint,
+	removeQueuedMessage,
 	removeSession,
 	removeWorkspaceSessions,
 	renameSession,
 	replyMcpProbe,
 	resolveExtUi,
+	respondToTool,
 	saveCustomEndpoint,
+	sendSteeringNow,
 	setSessionModel,
 	setSessionThinkingLevel,
+	steerSession,
+	updateQueuedMessage,
 } from "../agent";
 
 import { suggestPrDescription } from "../assist";
@@ -291,6 +301,18 @@ async function sendUserMessage(operation: () => Promise<void>): Promise<{ ok: tr
 	return { ok: true };
 }
 
+const sessionInputSchema = z.object({
+	sessionId: z.string().min(1),
+	text: z.string(),
+	messageId: z
+		.string()
+		.regex(/^[A-Za-z0-9_-]{1,200}$/)
+		.optional(),
+	images: z
+		.array(z.object({ type: z.literal("image"), data: z.string(), mimeType: z.string() }))
+		.optional(),
+});
+
 export const workspaceCreationHandoff: CreationHandoff = async (workspace, kickoff) => {
 	provisionInitialTerminal(workspace);
 	if (!kickoff) return {};
@@ -306,6 +328,17 @@ export const workspaceCreationHandoff: CreationHandoff = async (workspace, kicko
 		return { ...chat, kickoffError: error instanceof Error ? error.message : String(error) };
 	}
 };
+
+async function attachInteractionSession(sessionId: string): Promise<void> {
+	const record = readSessionRecord(sessionId);
+	if (!record) throw new Error("Unknown session");
+	const workspace = getWorkspace(record.workspaceId);
+	if (
+		resolve(record.cwd) !== resolve(workspace.worktreePath) ||
+		!(await ensureSessionAttached(sessionId, workspace.id, workspace.worktreePath))
+	)
+		throw new Error("Session is unavailable in its workspace");
+}
 
 function revealDataFolder(dir: string) {
 	mkdirSync(dir, { recursive: true });
@@ -867,7 +900,48 @@ const handlers: WsHandlers = {
 		return startChatSession(ws, p, { pick: true });
 	},
 	"session.prompt": (p) => {
-		return sendUserMessage(() => promptSession(p.sessionId, p.text, p.images));
+		const input = sessionInputSchema.parse(p);
+		return sendUserMessage(() =>
+			promptSession(input.sessionId, input.text, input.images, input.messageId),
+		);
+	},
+	"session.steer": async (p) => {
+		const input = sessionInputSchema.parse(p);
+		await steerSession(input.sessionId, input.text, input.images, input.messageId);
+		return { ok: true };
+	},
+	"session.followUp": async (p) => {
+		const input = sessionInputSchema.parse(p);
+		await followUpSession(input.sessionId, input.text, input.images, input.messageId);
+		return { ok: true };
+	},
+	"session.clearQueue": (p) => clearSessionQueue(p.sessionId, p.requireTextOnly),
+	"session.removeQueued": (p) => {
+		const input = z.object({ sessionId: z.string().min(1), messageId: z.string().min(1) }).parse(p);
+		return removeQueuedMessage(input.sessionId, input.messageId);
+	},
+	"session.updateQueued": async (p) => {
+		const input = sessionInputSchema.required({ messageId: true }).parse(p);
+		await updateQueuedMessage(input.sessionId, input.messageId, input.text, input.images);
+		return { ok: true };
+	},
+	"session.sendSteeringNow": async (p) => {
+		await sendSteeringNow(p.sessionId);
+		return { ok: true };
+	},
+	"session.compact": async (p) => {
+		const input = z
+			.object({
+				sessionId: z.string().min(1),
+				operationId: z
+					.string()
+					.regex(/^[A-Za-z0-9_-]{1,200}$/)
+					.optional(),
+				instructions: z.string().optional(),
+			})
+			.parse(p);
+		await compactSession(input.sessionId, input);
+		return { ok: true };
 	},
 
 	"session.abort": async (p) => {
@@ -952,8 +1026,24 @@ const handlers: WsHandlers = {
 		return getSessionMessages(p.sessionId, p.workspaceId, getWorkspace(p.workspaceId).worktreePath);
 	},
 
-	"session.extUiReply": (params) => {
-		resolveExtUi(params.response);
+	"session.extUiReply": async (params) => {
+		await attachInteractionSession(params.response.sessionId);
+		await resolveExtUi(params.response);
+		return { ok: true } as const;
+	},
+	"session.respondToTool": async (p) => {
+		const input = z
+			.object({
+				sessionId: z.string().min(1),
+				toolCallId: z.string().min(1),
+				runId: z.string().min(1),
+				interactionId: z.string().min(1),
+				revision: z.number().int().nonnegative(),
+				response: z.unknown(),
+			})
+			.parse(p);
+		await attachInteractionSession(input.sessionId);
+		await respondToTool(input.sessionId, input.toolCallId, input.response, input);
 		return { ok: true } as const;
 	},
 

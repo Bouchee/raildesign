@@ -99,8 +99,10 @@ function useThreadAnnotations(
 	review: ResourceDiffProps["review"],
 	placedThreadIds: ReadonlySet<string>,
 ) {
-	const slotsRef = useRef<AnnotationSlot<DiffLineAnnotation<DiffAnnotationMetadata>>[]>([]);
-	return useMemo(() => {
+	const slotsRef = useRef<readonly AnnotationSlot<DiffLineAnnotation<DiffAnnotationMetadata>>[]>(
+		[],
+	);
+	const slots = useMemo(() => {
 		const current: {
 			id: string;
 			annotation: DiffLineAnnotation<DiffAnnotationMetadata>;
@@ -125,8 +127,9 @@ function useThreadAnnotations(
 		}
 		const slots = reconcileAnnotationSlots(slotsRef.current, current, sameDiffAnnotation);
 		slotsRef.current = slots;
-		return slots.map((slot) => slot.annotation);
+		return slots;
 	}, [placedThreadIds, review?.base.threads, review?.worktree.threads]);
+	return useMemo(() => slots.map((slot) => slot.annotation), [slots]);
 }
 
 function HunkToolbar({
@@ -297,8 +300,8 @@ function PierreDiffSurface({
 	}, [onPlacedThreadIds, placedThreadIds]);
 	const threadAnnotations = useThreadAnnotations(review, placedThreadIds);
 	const hunkAnnotations = useMemo(
-		() => (hunkActions ? blocks.map(actionAnnotation) : []),
-		[blocks, hunkActions],
+		() => (hasHunkActions ? blocks.map(actionAnnotation) : []),
+		[blocks, hasHunkActions],
 	);
 	const pending = useStampedComposer<{
 		composer: OpenComposer | BlockedSelection;

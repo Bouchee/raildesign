@@ -40,7 +40,13 @@ function seedQuestionnaire(
 		state: {
 			execution: "idle",
 			runId: `${toolCallId}-run`,
-			needsInput: { interactionId: toolCallId, kind: "tool-response", toolCallId },
+			needsInput: {
+				interactionId: toolCallId,
+				kind: "tool-response",
+				toolCallId,
+				runId: `${toolCallId}-run`,
+				revision: 0,
+			},
 			completion: null,
 			completionUnread: false,
 			queuedCount: 0,

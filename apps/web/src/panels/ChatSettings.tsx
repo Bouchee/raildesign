@@ -15,6 +15,7 @@ import { LineWidthControl } from "./LineWidthSettings";
 import { SegmentedControl, type SegmentedControlOption } from "./SegmentedControl";
 import { SettingsGroup, SettingsPageContainer } from "./SettingsGroup";
 import { SettingsRow } from "./SettingsRow";
+import { SettingsSwitch } from "./SettingsSwitch";
 import { SubagentSettings } from "./SubagentSettings";
 import { saveSettings } from "./saveSettings";
 import { SETTINGS_INPUT, useSettingsDraft } from "./settingsDraft";
@@ -117,6 +118,7 @@ export function ChatSettings() {
 	const panelHeight = useAppStore((state) => state.questionPanelHeight);
 	const protocolVersion = useAppStore((state) => state.protocolVersion);
 	const subagentsEnabled = useAppStore((state) => state.subagentsEnabled);
+	const sdkTracingEnabled = useAppStore((state) => state.sdkTracingEnabled);
 	const subagentMaxConcurrent = useAppStore((state) => state.subagentMaxConcurrent);
 	const activeWorkspace = useAppStore(selectActiveWorkspace);
 	const setChatMessageOrder = useAppStore((state) => state.setChatMessageOrder);
@@ -185,6 +187,23 @@ export function ChatSettings() {
 				/>
 				<QuestionPanelHeightControl protocolVersion={protocolVersion} value={panelHeight} />
 				<LineWidthControl kind="chat" />
+				<SettingsRow
+					label={t("settings.chat.sdkTracing")}
+					description={t("settings.chat.sdkTracingDescription")}
+					control={
+						<SettingsSwitch
+							checked={sdkTracingEnabled}
+							label={t("settings.chat.sdkTracing")}
+							testId="sdk-tracing-toggle"
+							onChange={(enabled) =>
+								void saveSettings(
+									{ sdkTracingEnabled: enabled },
+									t("settings.chat.sdkTracingFailed"),
+								)
+							}
+						/>
+					}
+				/>
 			</SettingsGroup>
 
 			<SubagentSettings

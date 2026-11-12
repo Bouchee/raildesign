@@ -1,6 +1,6 @@
 import { type Translator, useT } from "@thinkrail/locales/react";
 import { RunningIcon } from "@/components/RunningIcon";
-import type { ChatTurn } from "./types";
+import type { ChatTurn, ToolResultState } from "./types";
 
 export const CHAT_STATUS_SLOT_HEIGHT = 40;
 
@@ -11,7 +11,11 @@ export interface StreamStatus {
 	toolName?: string;
 }
 
-export function streamStatus(turns: ChatTurn[], currentAssistantId: string | null): StreamStatus {
+export function streamStatus(
+	turns: ChatTurn[],
+	currentAssistantId: string | null,
+	toolResults: Record<string, ToolResultState>,
+): StreamStatus {
 	const lastTurn = turns.at(-1);
 	if (lastTurn?.kind === "compaction" && lastTurn.status === "running")
 		return { phase: "compacting" };
@@ -22,7 +26,8 @@ export function streamStatus(turns: ChatTurn[], currentAssistantId: string | nul
 		) ?? (currentAssistantId == null && lastTurn?.kind === "assistant" ? lastTurn : undefined);
 	const last = active?.message.content.at(-1);
 	if (!last) return { phase: "working" };
-	if (last.type === "toolCall") return { phase: "running-tool", toolName: last.name };
+	if (last.type === "toolCall" && toolResults[last.id]?.status === "running")
+		return { phase: "running-tool", toolName: last.name };
 	if (last.type === "text") return last.text.trim() ? { phase: "writing" } : { phase: "working" };
 	if (last.type === "thinking")
 		return last.thinking.trim() ? { phase: "thinking" } : { phase: "working" };

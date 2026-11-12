@@ -511,6 +511,11 @@ present side's hash, so a remount — a Stacked/One-file switch, or a section sc
 highlighted on its first frame instead of plain text followed by a colour pop. The phone code-file implementation is Pierre `File` with the same theme and
 review grammar; desktop files alone load Monaco.
 
+Annotation collections retain their identity while slot IDs and line geometry stay unchanged. Review
+body/action updates still render current card content, but do not rebuild Pierre's shadow annotation
+rows; removing those slots can drop focus from a connected textarea. New or moved slots produce a new
+collection. Hunk annotation geometry depends on the blocks and action availability, not callback identity.
+
 **Without WebAssembly the Pierre surfaces show plain text.** `@pierre/highlights` is WebAssembly only,
 and Pierre paints nothing — not even its own plain-text pass — until a main-thread highlighter loads; it
 has no highlighter-free mode, and Shiki stays out of the build. `PierreProvider` therefore reports

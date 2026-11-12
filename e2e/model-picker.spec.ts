@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { openWorkspaceChat, revealModelGroups } from "./fixtures/app";
 import { E2eWire } from "./fixtures/wire";
 
-test("the composer lists the accepted SDK model and keeps unavailable pricing and context hidden", async ({
+test("the composer lists the accepted SDK model with its verified context and keeps unavailable pricing hidden", async ({
 	page,
 }) => {
 	const workspace = await openWorkspaceChat(page);
@@ -12,7 +12,7 @@ test("the composer lists the accepted SDK model and keeps unavailable pricing an
 		expect(models).toHaveLength(1);
 		expect(models[0]).toMatchObject({
 			id: "deepseek-v4.1-flash",
-			contextWindow: 0,
+			contextWindow: 1_000_000,
 			thinkingLevels: ["off"],
 		});
 		expect(models[0]?.cost).toBeUndefined();

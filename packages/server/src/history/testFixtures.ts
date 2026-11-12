@@ -75,7 +75,7 @@ export function writeFixtureSession(
 		};
 	});
 	const record: SessionRecord = {
-		version: 1,
+		version: 2,
 		sessionId,
 		workspaceId: opts.workspaceId ?? "fixture",
 		cwd: resolve(opts.cwd),
@@ -85,8 +85,15 @@ export function writeFixtureSession(
 		eventSeq: 0,
 		revision: 0,
 		history: [],
+		inputItems: {},
+		historyOperations: {},
+		summaryOperations: {},
+		retiredInputIds: [],
+		queue: [],
+		effects: {},
 		messages,
 		decisions: {},
+		toolResponses: {},
 		updatedAt: opts.updatedAt ?? Math.max(0, ...messages.map((message) => message.timestamp)),
 		state: opts.state ?? {
 			execution: "idle",

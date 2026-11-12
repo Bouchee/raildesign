@@ -68,7 +68,7 @@ list for registry extensions.
   `listExtensionCatalog`,
   `resolveExtensionSkillRoots`, `STAGED_HOST_SKILLS_ROUTE`, `stagedExtensionSkillRoute`,
   `extensionSkillRoots`, `interactiveTools`, `InteractiveTools`, `ExtensionSessionServices`,
-  `InteractiveTool`, `ToolResponse`.
+  `InteractiveTool`, `ToolResponse`, `snapshotSdkExtensions`, `registrySdkTools`, `SdkExtensionSnapshot`.
 - **Session-seam types:** `ExtensionSessionServices`, `InteractiveTool` and `ToolResponse` are re-exported
   from `extension-api/server` so that `agent` can type the services it builds through this barrel.
 - **Interactive tools (`interactive.ts`):** `interactiveTools(isDisabled)` folds the enabled registry
@@ -93,3 +93,9 @@ into the curated hidden-child extensions in dev and bundled mode alike, and leav
 `extensionSkillRoots` out of pi's skill inputs; `buildSupport.ts` hands both packagers each extension's skill roots
 with their `stagedExtensionSkillRoute`; unbundled dev resolves the same roots at runtime, and the bundled
 runtime uses only the launcher-staged root.
+
+SDK composition uses the same registry. `snapshotSdkExtensions(disabled,settings)` records enabled
+SDK-factory names and each declared setting's resolved boolean value. `registrySdkTools(services,snapshot)`
+builds fresh public SDK tools with those frozen settings; an unavailable factory fails recovery explicitly.
+The agent consumes interactive validation/response hooks through `interactiveTools`, never imports portable
+extension packages, and owns only generic interaction identity, persistence and run continuation.

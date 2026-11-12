@@ -22,19 +22,44 @@ Tool failure status comes from invalid call JSON, SDK error callbacks, command e
 
 Each run creates a new AbortController and workspace-bound tools. Stop revokes the grant before aborting the model and subprocess group. Tools revalidate grant and an existing workspace record before effects. Read/search/edit paths use the filesystem resolver, including real paths, symlinks, new-file ancestors and `.git` checks. Commands reuse `runBounded` in the assigned worktree with time/output bounds. The tools capture configured model-key environment references at run creation and exclude those names, plus common secret names, from child environments. Edits check original text, apply the SDK diff and replace atomically. This is host-account execution, not an operating-system sandbox.
 
-Basic approvals use SDK `needsApproval` and application dialog cards. The checkpoint and card are saved before publication. Responses identify session, run, interaction and revision; duplicates cannot repeat effects, conflicting or stale responses fail. Stage 1 does not automatically recover an interrupted side effect after restart.
+Approvals use SDK `needsApproval` and application dialog cards. Questions use the same resumable SDK
+interruption boundary with the retained portable questionnaire schema/result formatter and question
+renderer. Only the question is resumed after its owned answer; a composer steering input can supersede
+that question with the existing deferred/chat acknowledgement. It cannot approve another tool.
+Responses bind session, run, tool call, interaction and revision. Identical decisions return their durable
+receipt; stale, missing-call, conflicting and cross-session replies fail before execution.
 
-Initial Session storage implements public SDK get/add/pop/clear operations with serialized atomic writes. Completed transcripts remain readable. Stage 2 owns full durable queue/recovery/summary transactions; stage 3 owns model-visible MCP/Skills tool integration, Plan and child/background execution. MCP configuration/trust/OAuth and Skills discovery/enable policies remain implemented during stage 1. Unavailable operations must fail explicitly and their controls remain disabled.
+Session get/add/pop/clear and public history transactions persist append/suffix replacement together
+with operation receipts. Canonical input content, current history membership and summary retirements are
+separate. Pop permits re-addition; memory reset clears retirements but keeps transcript and receipts.
+Queue admission commits its model item, transcript user message and queue removal in one record.
+Queues expose pending/staged input; model-history commit establishes admission. Steering uses public
+`RunState.addInput` at an eligible model boundary, stays durable on rejection, and never bypasses an
+interaction. Unused steering runs before follow-ups only after normal settlement. Stop preserves queued
+input, revokes the grant first, then waits for model and process cleanup.
+
+Trusted checkpoints retain logical run identity, the original extension registrations and declared settings and the
+original worktree grant. Close/shutdown saves pending interactions. Attachment builds new tools/controllers
+before `RunState.fromString`, and waits for response readiness before returning its snapshot. Approved
+completed tools do not replay. Record executor start before effects and its result after completion.
+Restart classifies an unrecorded result as unknown, shows it in the transcript, repairs paired model-history
+call/results and requires explicit new input. Model requests without resumable interactions become interrupted.
+The registry supplies fresh SDK factories and generic argument/response policies; schema and result formatting stay in the extension server half. The complete Stage 3 graph integrations remain owned by that stage; its preserved services stay in place.
+
+Summary generation receives a detached older prefix only after full settlement without a checkpoint or
+pending interaction. Retain the whole newest exchange and paired ordinary FunctionTool records. A paired
+result that Stop or a run error closed as `incomplete` (the SDK 0.21.0 abort marker, as in its internal
+`buildFunctionAbortResult`) can be summarized; only an `in_progress` result blocks. The Go
+model's published context budget minus output/system headroom sets the automatic threshold at 75%; UTF-8
+serialized bytes provide a conservative internal token upper bound. User-visible counts use actual SDK
+request usage, never that byte estimate. A nonempty bounded summary must reduce model history. Commit model
+memory, retired IDs, the summary marker and operation receipt against the unchanged revision. Generation,
+cancellation, validation and write failures preserve committed history. Replay never regenerates or restores
+an old window. New input cancels the summary and waits for cleanup before its Runner starts.
 
 ## Model configuration
 
-Only the configured, verified stage-1 Responses target is offered. API keys are host-side and saved with mode 0600 in the RailDesign data directory. SDK tracing starts disabled. Ordinary FunctionTools are used for files and commands; native provider shell/patch/compact endpoints are not required.
-
-Go requests carry an owned User-Agent and a stable `x-opencode-session` for the application conversation.
-`createConfiguredModel(model,sessionId)` requires that identity. Both session and one-shot callers apply
-the fixed public Responses provider settings: SDK 0.21 overrides the client's default User-Agent, so
-the owned agent label is supplied through `providerData.extra_headers`. The regression inspects final
-outbound requests, including separate runs and one-shot identities, rather than constructor options.
+Only the configured, verified stage-1 Responses target is offered. API keys are host-side and saved with mode 0600 in the RailDesign data directory. SDK tracing starts disabled. When enabled, an application-local processor records only trace/span IDs, fixed workflow names, span types and timestamps through the local logger. It replaces the SDK exporter; no trace reaches OpenAI, and sensitive model/tool content is excluded. Ordinary FunctionTools are used for files and commands; native provider shell/patch/compact endpoints are not required.
 
 Go requests identify the client as `RailDesign/0.1`. `createConfiguredModel(model, sessionId)` requires the application conversation ID and sends it as `x-opencode-session` through the public OpenAI client's `defaultHeaders`. Every run and approval continuation in that conversation uses the stored session ID, independent of run IDs and credentials. One-shot assistance allocates one UUID for its logical invocation. The fixed `responsesClientSettings` uses public `ModelSettings.providerData.extra_headers` for the user agent because Agents SDK 0.21.0 replaces the client default with its own per-request header. Model discovery sends the same client identity without inventing a conversation. This follows the [Go client requirements](https://opencode.ai/docs/console/go/#where-can-i-use-it), checked 2026-11-11 with Agents SDK 0.21.0 and OpenAI 7.55.0; generic SDK identification or a missing session header can reject a request before inference.
 
@@ -47,17 +72,17 @@ Stage 1 replaces the execution kernel while preserving the existing workbench an
 ### Signatures
 
 `createSession({cwd,workspaceId,model?,thinkingLevel?})` returns the application session identity.
-`promptSession(sessionId,text,images?)` admits one input synchronously and returns full settlement.
+`promptSession(sessionId,text,images?,messageId?)` admits one input synchronously and returns full settlement.
 `abortSession(sessionId)` waits for cancellation cleanup. `getSessionMessages(sessionId,workspaceId,cwd)`
 returns `{summary,messages,eventSeq}`. `resolveExtUi(response)` applies an owned decision.
 
 ### Contracts
 
 `session.event` is `{sessionId,runId,seq,event}`; `seq` increases within a session. Snapshots carry the
-matching watermark. Approval replies contain `{id,sessionId,runId,revision,value}`. SDK history and
-transcript are separate fields in the atomic version-1 session record. The verified stage-1 target is
+matching watermark. Approval replies contain `{id,sessionId,runId,toolCallId,revision,value}`. SDK history and
+transcript are separate fields in the atomic version-2 session record. The verified stage-1 target is
 OpenCode Go `/inference/go/openai/v1` with `deepseek-v4.1-flash`: text and ordinary tools, reasoning off,
-unknown context limit and unavailable price. `maxTokens` is a request budget, capped at 8192.
+a published context budget of 1,000,000 tokens and unavailable price. The [provider model catalog](https://models.opencode.ai/providers/opencode-go/) identifies that context window for the selected Go model (checked 2026-11-12); near-limit service acceptance is not claimed. `maxTokens` is a request budget, capped at 8192.
 
 ### Validation & Error Matrix
 
@@ -89,6 +114,61 @@ Wrong: infer tool failure from text containing `"isError":true`, or success from
 Correct: project explicit per-call executor status and settle only after checking errors, cancellation
 and pending approval.
 
+
+## Scenario: durable sessions and model summaries
+
+### Scope / Trigger
+
+Stage 2 keeps inputs and decisions consistent across model boundaries, disconnects and host restarts.
+The Boundary rules above apply to both live and restored execution.
+
+### Signatures
+
+`steerSession(sessionId,text,images?,messageId?)` and `followUpSession(...)` persist queued input.
+`updateQueuedMessage(sessionId,messageId,text,images?)` edits pending input; `removeQueuedMessage(sessionId,messageId)`
+withdraws it. `compactSession(sessionId,{operationId?,instructions?,force?})` uses the configured ordinary SDK model.
+`respondToTool(sessionId,toolCallId,response,{runId,interactionId,revision})` applies one owned response.
+
+### Contracts
+
+Fresh records use `version: 2`; earlier formats are rejected and left unchanged. A single atomic record
+contains history, transcript, queue, checkpoints and receipts. Public queue entries are
+`{id,text,state:"pending"|"staged",error?}`; admitted input appears once in the transcript. Regular queue
+snapshots omit image bytes; SDK checkpoints stay on the host. Successful summary receipts retain SDK usage so
+replay and reopening count it once. The `sdkTracingEnabled` app setting defaults to false and selects
+only the local metadata processor.
+
+### Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Input ID reused with different content | Reject before admission; distinct IDs may carry identical text. |
+| Queued handover fails | Keep the input and visible error; allow pending input to be edited and retried. |
+| Missing, wrong or expired interaction anchor | Reject; a valid identical response returns the saved result. |
+| Reply arrives before restart hydration | Restore the owned record before checking the decision receipt. |
+| Executor started without a saved result | Mark unknown, pair the model history and require explicit new input. |
+| Summary generation fails, is cancelled, or has a stale revision | Preserve prior memory and receipts. |
+| Summary operation already succeeded | Return its receipt without a model call or later-history overwrite. |
+
+### Good / Base / Bad Cases
+
+Base: refresh restores the same transcript, pending interaction and queue. Good: approve after restart,
+execute once, then retry the same reply after another restart. Bad: neither a late reply after Stop nor
+an unknown interrupted effect can start another side effect automatically.
+
+### Tests Required
+
+Store/summary tests compare durable bytes on failures and exercise pop, reset, retirements and receipt
+replay. Manager/recovery tests force input, Stop and hydration interleavings and assert real effect
+counts, ordered event sequences, fresh controllers and frozen extension settings. Focused browser
+tests use real Go calls for queues, question answers, SIGKILL recovery and summary fact recall; offline
+browser tests retain renderer coverage. Tracing tests enable a non-noop SDK trace and assert zero HTTP.
+
+### Wrong vs Correct
+
+Wrong: acknowledge staging as admission, or clear memory before saving its summary.
+Correct: commit the history item and queue removal together; commit summary memory, marker, retired
+IDs, usage and receipt together after checking the unchanged revision.
 
 ## Preserved Skills and delegation policies
 

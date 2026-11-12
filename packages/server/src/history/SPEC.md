@@ -23,14 +23,15 @@ search projection; the agent module owns execution and canonical session persist
 
 ## Storage and indexing
 
-Read flat `<dataDir>/sessions/<sessionId>.json` records with `version: 1`, sessionId, cwd, optional title
+Read flat `<dataDir>/sessions/<sessionId>.json` records with `version: 2`, sessionId, cwd, optional title
 and messages. Each transcript message has a stable ID. Extract only user/assistant text, skip control
 prompts and preserve indices from the renderable transcript, including non-text/tool rows. Host-only
 model history, checkpoints and credentials are never returned by this projection.
 
 The default discovery root is the RailDesign persistence directory. Tests can supply an explicit
 session directory. Read direct `.json` files only; nested directories and legacy JSONL are not indexed.
-Malformed records are excluded. Track mtime and size, revalidate every two seconds, drop removed files,
+Malformed and other-version records are excluded without rewriting them. No older schema is imported.
+Track mtime and size, revalidate every two seconds, drop removed files,
 and bound a cold request's wait to 150 ms. Search retains scope filtering, AND matching, recency order,
 normalized prompt de-duplication, snippet and result limits.
 

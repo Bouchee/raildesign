@@ -22,7 +22,7 @@ client of that contract ([[module-extension-api]]) and is deletable without a co
 
 ## Boundary
 
-- `@thinkrail/ext-ask-user-question/server` default-exports a session-only descriptor:
+- `@thinkrail/ext-ask-user-question/server` default-exports its descriptor:
   - `extensions: []`;
   - `settings: { richPreviews: { type: "boolean", default: true } }` — Settings → Extensions shows it as the
     nested "Rich previews in questions" switch ([[module-thinkrail-extensions]]);
@@ -30,7 +30,7 @@ client of that contract ([[module-extension-api]]) and is deletable without a co
     **inside its body** and composes `createAskUserQuestionExtension({ ask, announce, guidance, filePreviews,
     checkFile })`, so every pi (re)load after a Settings change registers the tool with or without the file
     fields;
-  - `interactiveTools: { ask_user_question: { describeResponse } }` — `describeResponse(args, response)`
+  - `interactiveTools: { ask_user_question: { describeResponse, validateArgs, parseResponse } }` — `describeResponse(args, response)`
     renders a late answer (one delivered after a host restart) through the package's
     `buildQuestionnaireResponse` when both have our shape, so the model reads the same wording as for a
     live answer; any other shape returns `undefined` and the host's generic JSON preface applies.
@@ -269,3 +269,10 @@ Registered `"bare"`: the card owns its full-width frame and never folds. Behavio
   color). Shown up front for every recommended option, not gated on selection: more discoverable than
   a tooltip and, being ordinary visible text, it reads on touch and for AT without a popover.
   **Active card only** — the receipt shows selections only, no rationale.
+
+The descriptor also supplies `sdkTools(session)` with one ordinary SDK FunctionTool. It reuses the portable
+TypeBox schema, argument policy and result formatter. Its response validator binds answer indices, original
+question text, option labels, selection multiplicity and unique selections. Settings and workspace preview
+checks come from the fresh run services. SDK `needsApproval` is an internal pause boundary; the host presents
+the existing questionnaire, records an owned response, then resumes the tool. A deferred composer reply uses
+the portable chat acknowledgement. The host contains no questionnaire name, schema or answer validation.

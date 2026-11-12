@@ -26,6 +26,7 @@ import {
 	completionDelivery,
 	customMessageText,
 	DEFAULT_MODEL_PROTOCOL_VERSION,
+	DURABLE_SESSION_PROTOCOL_VERSION,
 	EXTENSION_CATALOG_PROTOCOL_VERSION,
 	EXTENSION_SETTINGS_PROTOCOL_VERSION,
 	FONTS_PROTOCOL_VERSION,
@@ -79,6 +80,14 @@ import {
 	WS_CHANNELS,
 	WS_METHODS,
 } from "./wsProtocol";
+
+test("durable queues use stable input identities and expose their mutations at v116", () => {
+	expect(DURABLE_SESSION_PROTOCOL_VERSION).toBe(116);
+	expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(DURABLE_SESSION_PROTOCOL_VERSION);
+	expect(WS_METHODS.sessionUpdateQueued).toBe("session.updateQueued");
+	expect(WS_METHODS.sessionSendSteeringNow).toBe("session.sendSteeringNow");
+	expect(DEFAULT_CONFIG.sdkTracingEnabled).toBe(false);
+});
 
 test("retired workspace activity keeps only its empty snapshot compatibility method", () => {
 	expect(WS_METHODS.sessionActivityList).toBe("session.activityList");
@@ -237,7 +246,7 @@ test("tool responses replace the ask-only answer method at v93", () => {
 	expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(TOOL_RESPONSE_PROTOCOL_VERSION);
 	expect(TOOL_RESPONSE_PROTOCOL_VERSION).toBe(93);
 	expect(WS_METHODS.sessionRespondToTool).toBe("session.respondToTool");
-	expect(WS_METHODS.sessionAnswerQuestion).toBe("session.answerQuestion");
+	expect(Object.hasOwn(WS_METHODS, "sessionAnswerQuestion")).toBe(false);
 });
 
 test("the cache-warming setting names its two methods at v111", () => {
@@ -321,7 +330,7 @@ test("find in files is pinned to v112", () => {
 });
 
 test("the question panel height setting is pinned to v114", () => {
-	expect(PROTOCOL_VERSION).toBe(115);
+	expect(PROTOCOL_VERSION).toBe(116);
 	expect(QUESTION_PANEL_PROTOCOL_VERSION).toBe(114);
 	expect(DEFAULT_CONFIG.questionPanelHeight).toBe(60);
 });

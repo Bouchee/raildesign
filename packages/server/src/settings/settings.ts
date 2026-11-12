@@ -57,6 +57,7 @@ const ACCEPTED_UPDATE_KEYS = {
 	reviewAutoFix: true,
 	agentReviewEnabled: true,
 	subagentsEnabled: true,
+	sdkTracingEnabled: true,
 	subagentMaxConcurrent: true,
 
 	settleIdleDays: true,
@@ -196,6 +197,7 @@ export function updateConfig(partial: AppConfigUpdate): AppConfig {
 		["notificationsEnabled", runtimeUpdate.notificationsEnabled],
 		["reviewAutoFix", runtimeUpdate.reviewAutoFix],
 		["agentReviewEnabled", runtimeUpdate.agentReviewEnabled],
+		["sdkTracingEnabled", runtimeUpdate.sdkTracingEnabled],
 		["onboardingDismissed", runtimeUpdate.onboardingDismissed],
 		["codeLigatures", runtimeUpdate.codeLigatures],
 		["otherAgentSkills", runtimeUpdate.otherAgentSkills],

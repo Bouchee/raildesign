@@ -77,3 +77,6 @@ JetBrains quota boolean + whole `1–3600` second cadence over their defaults; i
 `customLayoutPresets` catalog as synchronized layout data. Current/default preset ids, group limits, and
 chat message order are not config fields; retired config shapes are stripped rather than upgraded or
 preserved as extensions. Historical `layouts/` files remain untouched and inert.
+
+`sdkTracingEnabled` loads only a boolean value and otherwise uses the disabled default. Trace payloads
+and credentials are not configuration data.

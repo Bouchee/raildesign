@@ -9,9 +9,9 @@ references: [central-integration, module-pi-background-commands]
 tags: [wire]
 ---
 
-## RailDesign stage 1
+## RailDesign sessions
 
-The application owns message, tool, usage and event types in `sessionProtocol.ts`. `session.event` carries `{sessionId,runId,seq,event}` with increasing per-session sequence numbers. Initial transcript hydration buffers events and applies only events above `SessionSummary.eventSeq`. Stable IDs join streamed and final messages. SDK details, routing credentials and checkpoints stay on the host. Basic confirmations carry session, run, interaction and revision ownership, and remain visible on reply failure. Stage 1 exposes read/search/command/edit, approval and Stop; continuous-input, compaction and advanced execution controls wait for their respective implementation stages. RailDesign does not offer upstream analytics consent, surveys, Central or old Pi configuration folders.
+The application owns message, tool, usage and event types in `sessionProtocol.ts`. `session.event` carries `{sessionId,runId,seq,event}` with increasing per-session sequence numbers. Initial transcript hydration buffers events and applies only events above `SessionSummary.eventSeq`. Stable IDs join streamed and final messages. SDK details, routing credentials and checkpoints stay on the host. Confirmations carry session, run, interaction, call and revision ownership, and remain visible on reply failure. Queue entries have stable IDs, pending/staged admission state and an optional retained error; admitted input appears in the transcript under the same ID. Queue mutation addresses IDs, never mutable positions. Compaction uses an operation ID and keeps the full transcript. Advanced tool execution remains assigned to stage 3. RailDesign does not offer upstream analytics consent, surveys, Central or old Pi configuration folders.
 
 ## Responsibility
 
@@ -182,7 +182,7 @@ the palette ranks with — kept here so host-side search can rank with the same 
     summary's optional **`lastSettlement`** retains the host-observed terminal (`null` = the live run is
     active or settled without an assistant) so reconnect can surface a final failure Pi removed from its rebuilt context; absent
     means this host process has not observed a settlement and the persisted transcript is authoritative.
-    The optional **`queue`** (**`SessionQueueState`**: pi's pending `steering`/`followUp` texts plus
+    The optional **`queue`** (**`SessionQueueState`**: stable `steering`/`followUp` entries with `id`, `text`, pending/staged `state`, optional admission `error`, plus
     `hasImages?: true`, the host's conservative aggregate over queued browser sends) rides a live summary
     only when non-empty — the hydration seed for the client's pending strip, since `queue_update` fires only
     on changes and a client attaching mid-run would otherwise never learn of messages queued before it
@@ -193,19 +193,14 @@ the palette ranks with — kept here so host-side search can rank with the same 
     **`SessionQueueContent`** /
     **`QueuedMessageContent`** shapes, which return each drained message's text and optional images exactly
     once so the composer can restore complete content without making ordinary queue broadcasts heavy.
-    `session.getMessages` returns `{ summary, messages }` (the transcript is
-    **`TranscriptMessage[]`** — the pi-canonical `Message` union widened with **`WireCustomMessage`**, a
-    type-only mirror of pi-coding-agent's Node-only `CustomMessage`, so extension-injected messages like
-    the ask replies cross the wire, and with **`WireCompactionSummary`** (mirror of the Node-only
-    `CompactionSummaryMessage`: `summary`/`tokensBefore`/`timestamp`), the resolved-context record of a
-    compaction — pi places it before the kept tail and drops the summarized messages, so forwarding it is
-    what makes the compaction boundary survive reload/reopen instead of rendering a transcript that begins
-    mid-conversation. The summary reflects the now-live session after a disk re-open). The role universe a
+    `session.getMessages` returns `{ summary, messages }`. `TranscriptMessage[]` contains application
+    user, assistant, tool-result, custom interaction receipts and summary markers. Summary markers retain
+    their original position in the complete transcript; compaction changes model memory only. The role universe a
     host may send is pinned by the runtime **`isTranscriptMessageRole(role)`** guard: the single source for
     the server's transcript filter and history index, whose alignment keeps a history hit's `messageIndex`
     valid against the client's `turnIdByMessageIndex` — a role added to one side but not the other would
     silently shift every later jump anchor.
-  - **Chat titles** — `SessionSummary.title` is the read projection of pi's durable name, `""` while
+  - **Chat titles** — `SessionSummary.title` is the read projection of the durable application title, `""` while
     the session has none; clients word that default in their own language (no English placeholder crosses
     the wire). The additive `session.rename` mutation takes
     `{ workspaceId, sessionId, title }`, rejects a title whose trimmed single-line form is blank or exceeds
@@ -779,16 +774,14 @@ the palette ranks with — kept here so host-side search can rank with the same 
   (installed pi packages; v99, § pi packages below) / **`project.skills`** (the same, project-scoped, for
   the pre-session manager) / **`session.reloadResources`** (re-scan skills + rebuild the system prompt for one
   running session; rejected while streaming) /
-  `session.*` — `create`/`prompt`/`steer`/`followUp`/**`clearQueue`** (drain Pi's steering+followUp
-  queues, returning complete `SessionQueueContent`; Pi itself emits the emptying `queue_update`; optional
-  `requireTextOnly` rejects without draining when the host has observed queued images, which is the manual
-  compaction precondition)/**`removeQueued`** (`{ kind, index }` → `RemovedQueuedMessage`: drop or extract ONE
-  queued message with its complete content — the strip rows' edit/remove; position-addressed because Pi's
-  queue entries are bare strings with no id, and the host emulates per-item removal over Pi's all-or-nothing
-  `clearQueue`, see the server agent SPEC)/**`abort`** (ordinary abort preserves queued lanes for Interrupt;
-  `{ restoreQueue: true }` atomically drains complete content before signalling abort and returns it after the
-  session reaches idle, which is Stop's lossless path)/`dispose`/**`delete`**/`setModel`/
-  `setThinkingLevel`/`compact`/`getStats`/`getCommands`/`extUiReply`/**`respondToTool`** (the inline
+  `session.*` — `create`/`prompt`/`steer`/`followUp` (each input retains its `messageId`),
+  **`clearQueue`** (explicitly withdraw the complete durable queue, returning text and images),
+  **`removeQueued`** (`{ messageId }` → `RemovedQueuedMessage`: withdraw exactly one pending input),
+  **`updateQueued`** (replace the content of a pending input by ID), **`sendSteeringNow`**
+  (start retained input from an idle session), **`abort`** (cancel execution after revoking the grant;
+  queued input stays durable), `dispose`/`delete`/`setModel`/`setThinkingLevel`, **`compact`**
+  (idempotent summary operation identified by `operationId`, full transcript preserved),
+  `getStats`/`getCommands`/`extUiReply`/**`respondToTool`** (the inline
   reply to an interactive tool call, correlated by tool call id)/**`list`**/**`getMessages`** (the
   read side) / **`settings.update`** (merge + validate + persist a top-level partial `AppConfig`; rejects a
   non-object payload or unknown key and drops retired keys; when present, `customLayoutPresets` and

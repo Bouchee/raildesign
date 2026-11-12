@@ -25,8 +25,11 @@ Dialog containment retries the complete bounds/text/overflow measurement for at 
 Per-test isolation is `resetState()` in `fixtures/app.ts`: it clears the host's `projects.json`,
 `workspaces.json`, every chat in `chats.json` and the `chats/` folders, turns, reviews, worktrees and application JSON
 sessions, and resets the fixture repository, so a chat without a project created by one test never
-reaches the next. Cleanup first disposes owned session IDs through the real wire without parsing historical fixture
-content. Normal session reads stay strict. The Chats container the host ensured at boot is kept (an empty `chats/` root and the
+reaches the next. Cleanup first disposes owned session IDs and force-closes every terminal in the lane's
+persisted catalog through the real wire. It runs even when there are no agent sessions, before deleting
+workspace records or working directories, and a rejected cleanup aborts the reset. Closing a browser does
+not close its PTYs; omitting this cleanup leaves shells in deleted working directories across test cases.
+Cleanup does not parse historical fixture content. Normal session reads stay strict. The Chats container the host ensured at boot is kept (an empty `chats/` root and the
 record), because a fresh install always has it: a cold start in a test is the cold start a user gets.
 
 `bun run e2e` is the complete no-agent gate. It builds the web bundle once and runs machine-adaptive,
@@ -106,6 +109,16 @@ Stage 1's live acceptance checks the actual selected-worktree edit, bounded test
 approval/reload and Stop behavior. MCP configuration, SDK management connections and OAuth, Skills catalog/trust CRUD, and preserved subagent configuration are Stage 1 surfaces. Compaction/continuation belongs to Stage 2; model-visible Skills/MCP tools, Plan automation, background commands and child execution belong to Stage 3. Their retired execution assertions do not
 become successful empty responses or alternate old-provider paths. Historical cards, template
 composition and valid workspace/editor/Git/PTY rendering remain current browser checks.
+
+Stage 2's focused live gate is `raildesign-stage2.live.spec.ts`,
+`raildesign-session-restart.live.spec.ts` and `compaction.live.spec.ts`. It checks queue and interaction
+hydration, steering before follow-ups, concurrent approval retries with one real effect, question
+answers, saved approval/queue continuation after host SIGKILL, completed-effect receipt replay after a
+second restart, and summary fact recall with the full transcript retained. The restart scenario owns
+the existing separate restart data/port namespace, launches the real source host with the same hermetic
+PATH and isolated home, and waits for stale writer ownership to expire. It never changes the shared
+browser suite host or reads developer credentials. Focused live checks use only the protected test
+configuration supplied to the public agent runner. They do not run the complete live suite.
 
 ## Repository cloning
 
@@ -295,7 +308,10 @@ The cold-start onboarding state is seeded dismissed in the config file and again
 wire, since the host may have loaded config first. The dedicated onboarding scenario restores its
 changes. Telemetry, survey, Central and GitHub-star prompting have been removed; no fixture writes
 consent, invitation or quota state for those deleted services. Before a fixture reset deletes session
-storage, it disposes each owned session ID through the public wire so unfinished execution settles.
+storage, it disposes each owned session ID through the public wire so unfinished execution settles and
+closes catalogued terminals before removing their workspace/cwd. `scripts/e2eResourceCleanup.test.ts`
+uses three real owned PTYs to verify release with no agent sessions or remaining workspace files and
+checks that rejected cleanup preserves the workspace state.
 Cleanup does not parse a transcript just to release it, and cannot turn a malformed renderer fixture
 into a failure cascade for otherwise independent tests.
 

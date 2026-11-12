@@ -37,7 +37,13 @@ test("a pending ask surfaces on the rail as waiting_question glance, not paused"
 		state: {
 			execution: "idle",
 			runId: "ask-rail-run",
-			needsInput: { interactionId: "ask-rail", kind: "tool-response", toolCallId: "ask-rail" },
+			needsInput: {
+				interactionId: "ask-rail",
+				kind: "tool-response",
+				toolCallId: "ask-rail",
+				runId: "ask-rail-run",
+				revision: 0,
+			},
 			completion: null,
 			completionUnread: false,
 			queuedCount: 0,
@@ -165,6 +171,8 @@ test("a pending question's file preview renders on the plan page and opens in a 
 				interactionId: "ask-plan-preview",
 				kind: "tool-response",
 				toolCallId: "ask-plan-preview",
+				runId: "ask-plan-preview-run",
+				revision: 0,
 			},
 			completion: null,
 			completionUnread: false,

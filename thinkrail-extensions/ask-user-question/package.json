@@ -12,6 +12,8 @@
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
+		"@openai/agents": "catalog:",
+		"typebox": "catalog:",
 		"@remixicon/react": "catalog:",
 		"@thinkrail/contracts": "workspace:*",
 		"@thinkrail/extension-api": "workspace:*",

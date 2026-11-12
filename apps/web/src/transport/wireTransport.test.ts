@@ -7,12 +7,11 @@ import {
 	type Project,
 	REVIEW_RICH_ANCHORS_PROTOCOL_VERSION,
 	type SessionStateRecord,
-	TOOL_RESPONSE_PROTOCOL_VERSION,
 	USER_THEMES_PROTOCOL_VERSION,
 	type Workspace,
 } from "@thinkrail/contracts";
 import type { LoginState } from "../auth";
-import { useAppStore } from "../store";
+import { EMPTY_RUNTIME, useAppStore } from "../store";
 import * as wireTransport from "./wireTransport";
 import {
 	applyWorkspaceListRefresh,
@@ -22,14 +21,68 @@ import {
 	supportsPlanReview,
 	supportsPlanSummaryGeneration,
 	supportsRichAnchors,
-	supportsToolResponses,
 	supportsUserThemes,
 } from "./wireTransport";
 
-test("tool responses go to session.respondToTool only from a v93 host; older hosts take the ask answer", () => {
-	expect(supportsToolResponses(TOOL_RESPONSE_PROTOCOL_VERSION)).toBe(true);
-	expect(supportsToolResponses(TOOL_RESPONSE_PROTOCOL_VERSION - 1)).toBe(false);
-	expect(supportsToolResponses(null)).toBe(false);
+test("tool responses bind the exact current run, interaction, revision and call", async () => {
+	const requests: [string, unknown][] = [];
+	const transport = {
+		request: (method: string, params: unknown) => {
+			requests.push([method, params]);
+			return Promise.resolve({ ok: true });
+		},
+	} as unknown as ReturnType<typeof wireTransport.getTransport>;
+	const spy = spyOn(wireTransport, "getTransport").mockReturnValue(transport);
+	const previous = useAppStore.getState().sessions;
+	try {
+		useAppStore.setState({
+			sessions: {
+				question: {
+					...EMPTY_RUNTIME,
+					hostState: {
+						execution: "idle",
+						runId: "run-1",
+						completion: null,
+						completionUnread: false,
+						queuedCount: 0,
+						backgroundWork: false,
+						needsInput: {
+							kind: "tool-response",
+							toolCallId: "call-1",
+							interactionId: "interaction-1",
+							runId: "run-1",
+							revision: 3,
+						},
+					},
+				},
+			},
+		});
+		const response = { answers: ["yes"] };
+		await wireTransport.respondToTool("question", "call-1", response);
+		expect(requests).toEqual([
+			[
+				"session.respondToTool",
+				{
+					sessionId: "question",
+					toolCallId: "call-1",
+					response,
+					runId: "run-1",
+					interactionId: "interaction-1",
+					revision: 3,
+				},
+			],
+		]);
+		await expect(wireTransport.respondToTool("question", "another-call", response)).rejects.toThrow(
+			"no longer accepts",
+		);
+		await expect(
+			wireTransport.respondToTool("another-session", "call-1", response),
+		).rejects.toThrow("no longer accepts");
+		expect(requests).toHaveLength(1);
+	} finally {
+		spy.mockRestore();
+		useAppStore.setState({ sessions: previous });
+	}
 });
 
 test("user theme files are read only from a host at or beyond their capability version", () => {

@@ -13,9 +13,13 @@ tags: [ui]
 
 Active panels offer no continue-to-workspace execution, agent plan review or streaming plan send. Historical continuation and plan rendering stay available. A prompt directed to an existing busy chat is restored to its draft instead of being queued. New Workspace preserves Skills catalog management and project-trust actions alongside templates, models and normal creation. MCP configuration, validation, trust and OAuth remain available through Settings. The complete subagent settings component retains inheritance, limits and real persistence callbacks; its controls are disabled with an explicit notice while SDK child execution is unavailable.
 
-The application owns message, tool, usage and event types in `sessionProtocol.ts`. `session.event` carries `{sessionId,runId,seq,event}` with increasing per-session sequence numbers. Initial transcript hydration buffers events and applies only events above `SessionSummary.eventSeq`. Stable IDs join streamed and final messages. SDK details, routing credentials and checkpoints stay on the host. Basic confirmations carry session, run, interaction and revision ownership, and remain visible on reply failure. Stage 1 exposes read/search/command/edit, approval and Stop; continuous-input, compaction and advanced execution controls wait for their respective implementation stages. RailDesign does not offer upstream analytics consent, surveys, Central or old Pi configuration folders.
+The application owns message, tool, usage and event types in `sessionProtocol.ts`. `session.event` carries `{sessionId,runId,seq,event}` with increasing per-session sequence numbers. Initial transcript hydration buffers events and applies only events above `SessionSummary.eventSeq`. Stable IDs join streamed and final messages. SDK details, routing credentials and checkpoints stay on the host. Basic confirmations carry session, run, interaction and revision ownership, and remain visible on reply failure. Stage 1 exposes read/search/command/edit, approval and Stop; durable continuous input and compaction are available in stage 2; advanced execution controls remain assigned to stage 3. RailDesign does not offer upstream analytics consent, surveys, Central or old Pi configuration folders.
 
 ## Responsibility
+
+Chat settings exposes the local SDK tracing switch. It starts disabled, follows the host settings
+broadcast, and applies to subsequent runs. The control explains that trace data stays local and excludes
+sensitive content.
 
 The layout-agnostic, store-driven feature views. A panel fills its container and never knows its
 arrangement (so the mobile shell is an additive layer, not a rewrite).

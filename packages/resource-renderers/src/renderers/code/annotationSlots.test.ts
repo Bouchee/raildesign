@@ -7,6 +7,37 @@ interface Annotation {
 
 const equal = (left: Annotation, right: Annotation) => left.lineNumber === right.lineNumber;
 
+test("body-only review updates retain the geometry collection; moved or new slots replace it", () => {
+	const previous = reconcileAnnotationSlots(
+		[],
+		[{ id: "comment", annotation: { lineNumber: 3 } }],
+		equal,
+	);
+	const unchanged = reconcileAnnotationSlots(
+		previous,
+		[{ id: "comment", annotation: { lineNumber: 3 } }],
+		equal,
+	);
+	expect(unchanged).toBe(previous);
+	const moved = reconcileAnnotationSlots(
+		previous,
+		[{ id: "comment", annotation: { lineNumber: 4 } }],
+		equal,
+	);
+	expect(moved).not.toBe(previous);
+	expect(moved[0]?.annotation.lineNumber).toBe(4);
+	const added = reconcileAnnotationSlots(
+		previous,
+		[
+			{ id: "comment", annotation: { lineNumber: 3 } },
+			{ id: "new", annotation: { lineNumber: 5 } },
+		],
+		equal,
+	);
+	expect(added).not.toBe(previous);
+	expect(added[0]).toBe(previous[0]);
+});
+
 test("inserting a comment before an existing id appends a slot without changing the existing index", () => {
 	const first = reconcileAnnotationSlots(
 		[],

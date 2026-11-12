@@ -117,17 +117,11 @@ export interface InteractionContextValue {
 	dockedToolCallId?: string | undefined;
 }
 
-const LEGACY_QUESTION_PREFIX = "question:";
-
 export function awaitingToolCallIdOf(hostState: SessionState | null): string | null | undefined {
 	if (!hostState) return undefined;
 	const needsInput = hostState.needsInput;
 	if (!needsInput) return null;
-	if (needsInput.kind === "tool-response") return needsInput.toolCallId;
-	const legacy = needsInput as { kind: string; interactionId: string };
-	return legacy.kind === "question" && legacy.interactionId.startsWith(LEGACY_QUESTION_PREFIX)
-		? legacy.interactionId.slice(LEGACY_QUESTION_PREFIX.length)
-		: null;
+	return needsInput.kind === "tool-response" ? needsInput.toolCallId : null;
 }
 
 export function useInteractionAccepting(toolCallId: string): boolean {

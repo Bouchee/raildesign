@@ -41,6 +41,7 @@ import {
 	parseNativeChatCommand,
 	prepareNameChatCommand,
 } from "./nativeCommands";
+import { QueueStrip } from "./QueueStrip";
 import { deriveRecentPrompts } from "./recentPrompts";
 import { SkillsDialog } from "./SkillsDialog";
 import { TemplateEditorDialog } from "./TemplateEditorDialog";
@@ -68,6 +69,7 @@ export default function ChatView({
 		(s) => awaitingToolCallIdOf(s.sessions[sessionId]?.hostState ?? null) != null,
 	);
 	const draft = useAppStore((s) => s.sessions[sessionId]?.draft ?? "");
+	const queue = useAppStore((s) => s.sessions[sessionId]?.queue ?? EMPTY_RUNTIME.queue);
 	const sessionModel = useAppStore((s) => s.sessions[sessionId]?.model ?? null);
 	const thinkingLevel = useAppStore(
 		(s) => s.sessions[sessionId]?.thinkingLevel ?? EMPTY_RUNTIME.thinkingLevel,
@@ -212,7 +214,7 @@ export default function ChatView({
 					...templates.map(templateToSlashCommand),
 				],
 				canRenameChat,
-			).filter((command) => command.name !== "compact"),
+			),
 		[canRenameChat, commands, t, templates],
 	);
 
@@ -327,25 +329,46 @@ export default function ChatView({
 			.catch((err) => useAppStore.getState().appendErrorTurn(sessionId, errorText(err)));
 	};
 
-	const performSend = (
-		text: string,
-		attachments: ChatAttachment[],
-		behavior: Exclude<SubmitBehavior, "interrupt">,
-	) => {
-		if (useAppStore.getState().sessions[sessionId]?.isStreaming || behavior !== "send") return;
-		if (text || attachments.length > 0) {
+	const performSend = (text: string, attachments: ChatAttachment[], behavior: SubmitBehavior) => {
+		const streaming = useAppStore.getState().sessions[sessionId]?.isStreaming ?? false;
+		const mode = behavior === "send" && streaming ? "steer" : behavior;
+		const messageId = crypto.randomUUID();
+		if (mode === "send" && (text || attachments.length > 0)) {
 			transcriptRef.current?.armImmediateTurn();
-			useAppStore.getState().appendUserMessage(sessionId, text, attachments);
+			useAppStore.getState().appendUserMessage(sessionId, text, attachments, messageId);
 		}
 		const images = attachments.map((a) => a.content);
-		const params = { sessionId, text, ...(images.length > 0 ? { images } : {}) };
-		getTransport()
-			.request("session.prompt", params)
-			.catch((err) => {
-				useAppStore.getState().appendErrorTurn(sessionId, errorText(err));
-				const streaming = useAppStore.getState().sessions[sessionId]?.isStreaming ?? false;
-				transcriptRef.current?.cancelImmediateTurn(streaming);
-			});
+		const params = { sessionId, text, messageId, ...(images.length > 0 ? { images } : {}) };
+		const transport = getTransport();
+		const sent =
+			mode === "interrupt"
+				? transport
+						.request("session.abort", { sessionId })
+						.then(() => transport.request("session.prompt", params))
+				: transport.request(
+						mode === "steer"
+							? "session.steer"
+							: mode === "followUp"
+								? "session.followUp"
+								: "session.prompt",
+						params,
+					);
+		void sent.catch((err) => {
+			useAppStore.getState().appendErrorTurn(sessionId, errorText(err));
+			const runtime = useAppStore.getState().sessions[sessionId];
+			const retained = [
+				...(runtime?.queue.steering ?? []),
+				...(runtime?.queue.followUp ?? []),
+			].some((item) => item.id === messageId);
+			if (!retained && mode !== "send") {
+				const currentDraft = runtime?.draft ?? "";
+				useAppStore
+					.getState()
+					.setChatDraft(sessionId, [text, currentDraft].filter(Boolean).join("\n\n"));
+				composerRef.current?.restoreAttachments(attachments);
+			}
+			transcriptRef.current?.cancelImmediateTurn(runtime?.isStreaming ?? false);
+		});
 	};
 
 	const onSubmit = (
@@ -360,17 +383,49 @@ export default function ChatView({
 			performRename(prepared.title);
 			return { accepted: true };
 		}
-		if (isStreaming || behavior !== "send") {
-			return { accepted: false, reason: t("chat.view.runInProgress") };
+		if (nativeCommand?.kind === "compact") {
+			if (attachments.length > 0)
+				return { accepted: false, reason: t("chat.commands.compactImageError") };
+			if (isStreaming) return { accepted: false, reason: t("chat.view.runInProgress") };
+			void getTransport()
+				.request("session.compact", {
+					sessionId,
+					operationId: crypto.randomUUID(),
+					instructions: nativeCommand.instructions,
+				})
+				.catch((error: unknown) =>
+					toast.error(errorText(error), translate("chat.compaction.failed")),
+				);
+			return { accepted: true };
 		}
-		performSend(text, attachments, "send");
+		performSend(text, attachments, behavior);
 		return { accepted: true };
 	};
 
 	const onAbort = () => {
 		void getTransport()
 			.request("session.abort", { sessionId })
-			.catch(() => {});
+			.catch((error: unknown) => toast.error(errorText(error)));
+	};
+
+	const removeQueued = (messageId: string, edit: boolean) => {
+		void getTransport()
+			.request("session.removeQueued", { sessionId, messageId })
+			.then(({ removed }) => {
+				if (!edit || !removed) return;
+				const currentDraft = useAppStore.getState().sessions[sessionId]?.draft ?? "";
+				useAppStore
+					.getState()
+					.setChatDraft(sessionId, [removed.text, currentDraft].filter(Boolean).join("\n\n"));
+				composerRef.current?.restoreAttachments(
+					(removed.images ?? []).map((content, index) => ({
+						name: t("chat.queue.imageName", { index: index + 1 }),
+						content,
+					})),
+				);
+				composerRef.current?.refocus();
+			})
+			.catch((error: unknown) => toast.error(errorText(error)));
 	};
 
 	const onDismissHistory = () => {
@@ -503,6 +558,11 @@ export default function ChatView({
 					))}
 				</div>
 			) : null}
+			<QueueStrip
+				queue={queue}
+				onEdit={(id) => void removeQueued(id, true)}
+				onRemove={(id) => void removeQueued(id, false)}
+			/>
 			<div className="relative shrink-0">
 				<HistoryOverlay
 					state={historyState}

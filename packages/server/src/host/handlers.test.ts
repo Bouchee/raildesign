@@ -13,12 +13,15 @@ import { delimiter, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
 	assistantMessage,
+	functionCall,
 	modelResponder,
 	modelResponse,
 	ScriptedModel,
 } from "@openai/agents/testing";
 import type {
 	AppConfig,
+	ExtUiRequest,
+	ExtUiResponse,
 	Project,
 	Template,
 	TemplateInfo,
@@ -32,8 +35,18 @@ import {
 	BRANCH_STATUS_PROTOCOL_VERSION,
 	WORKSPACE_SETTLE_PROTOCOL_VERSION,
 } from "@thinkrail/contracts";
-import { type CreateSessionResult, configureAgentModelFactory, disposeAllSessions } from "../agent";
+import {
+	type CreateSessionResult,
+	closeWorkspaceSessions,
+	configureAgentModelFactory,
+	disposeAllSessions,
+	getSessionState,
+	readSessionRecord,
+	sessionRecordPath,
+	setExtUiPublisher,
+} from "../agent";
 import { sessionDirFor, writeFixtureSession } from "../history/testFixtures";
+import { saveWorkspaces } from "../persistence";
 import { addComment, getReviewSnapshot } from "../reviews";
 import { resetConfigCache } from "../settings";
 import { stopAllWatches } from "../watch";
@@ -115,6 +128,12 @@ test("the current workspace and SDK methods are registered, and retired engine m
 		"session.prompt",
 		"session.abort",
 		"session.extUiReply",
+		"session.steer",
+		"session.followUp",
+		"session.removeQueued",
+		"session.updateQueued",
+		"session.compact",
+		"session.respondToTool",
 		"git.diffFile",
 		"terminal.attach",
 	])
@@ -122,13 +141,274 @@ test("the current workspace and SDK methods are registered, and retired engine m
 	for (const method of [
 		"packages.install",
 		"provider.jbcentralConnect",
-		"session.respondToTool",
+		"session.answerQuestion",
 		"session.activityList",
 	]) {
 		expect(requestMethodDiagnostic(method)).toBe("unknown method");
 		await expect(handleRequest(method, {}, CTX)).rejects.toThrow("Unknown method");
 	}
 });
+
+test("question replies bind the saved interaction and apply identical retries once", async () => {
+	seedSdkTestModel(dataDir, "handler");
+	const question = "Continue with the change?";
+	const model = useSdkTestModel([
+		modelResponse([
+			functionCall(
+				"ask_user_question",
+				{
+					questions: [
+						{
+							question,
+							header: "Continue",
+							options: [
+								{ label: "Yes", description: "Continue" },
+								{ label: "No", description: "Wait" },
+							],
+						},
+					],
+				},
+				{ callId: "question-call" },
+			),
+		]),
+		modelResponse([assistantMessage("answer received")]),
+	]);
+	try {
+		const workspace = (await handleRequest(
+			"workspace.create",
+			{ projectId: "p1", name: "Questions" },
+			CTX,
+		)) as Workspace;
+		const created = (await handleRequest(
+			"session.create",
+			{ workspaceId: workspace.id },
+			CTX,
+		)) as CreateSessionResult;
+		const prompt = handleRequest(
+			"session.prompt",
+			{ sessionId: created.sessionId, text: "Ask before continuing", messageId: "question-input" },
+			CTX,
+		);
+		const deadline = Date.now() + 5000;
+		while (
+			getSessionState(created.sessionId).needsInput?.kind !== "tool-response" &&
+			Date.now() < deadline
+		)
+			await Bun.sleep(5);
+		const pending = getSessionState(created.sessionId).needsInput;
+		if (pending?.kind !== "tool-response")
+			throw new Error("Question did not reach its durable wait");
+		const input = {
+			sessionId: created.sessionId,
+			toolCallId: pending.toolCallId,
+			interactionId: pending.interactionId,
+			runId: pending.runId,
+			revision: pending.revision,
+			response: {
+				answers: [{ questionIndex: 0, question, kind: "option", answer: "Yes" }],
+				cancelled: false,
+			},
+		};
+		await expect(
+			handleRequest("session.respondToTool", { ...input, runId: "different-run" }, CTX),
+		).rejects.toThrow();
+		await expect(
+			handleRequest("session.respondToTool", { ...input, sessionId: "another-session" }, CTX),
+		).rejects.toThrow();
+		await expect(
+			handleRequest("session.respondToTool", { ...input, toolCallId: "different-call" }, CTX),
+		).rejects.toThrow();
+		await expect(
+			handleRequest("session.respondToTool", { ...input, revision: pending.revision + 1 }, CTX),
+		).rejects.toThrow();
+		expect(model.calls).toHaveLength(1);
+		expect(await handleRequest("session.respondToTool", input, CTX)).toEqual({ ok: true });
+		expect(await handleRequest("session.respondToTool", input, CTX)).toEqual({ ok: true });
+		await expect(
+			handleRequest(
+				"session.respondToTool",
+				{
+					...input,
+					response: {
+						...input.response,
+						answers: [{ ...input.response.answers[0], answer: "No" }],
+					},
+				},
+				CTX,
+			),
+		).rejects.toThrow("Conflicting");
+		while (
+			getSessionState(created.sessionId).completion?.outcome !== "succeeded" &&
+			Date.now() < deadline
+		)
+			await Bun.sleep(5);
+		expect(getSessionState(created.sessionId).completion?.outcome).toBe("succeeded");
+		await prompt;
+		expect(model.calls).toHaveLength(2);
+		disposeAllSessions();
+		expect(await handleRequest("session.respondToTool", input, CTX)).toEqual({ ok: true });
+		expect(model.calls).toHaveLength(2);
+		model.assertComplete();
+	} finally {
+		disposeAllSessions();
+		configureAgentModelFactory();
+	}
+});
+test("approval receipts replay before client hydration after restart without repeating effects", async () => {
+	seedSdkTestModel(dataDir, "handler");
+	const model = useSdkTestModel([
+		modelResponse([
+			functionCall(
+				"bash",
+				{ command: "printf once >> receipt.txt", timeoutMs: 10000 },
+				{ callId: "durable-effect" },
+			),
+		]),
+		modelResponse([assistantMessage("done")]),
+	]);
+	let capture: (request: ExtUiRequest) => void = () => {};
+	const approval = new Promise<ExtUiRequest>((resolveApproval) => {
+		capture = resolveApproval;
+	});
+	setExtUiPublisher((request) => {
+		if (request.kind === "confirm") capture(request);
+	});
+	try {
+		const workspace = (await handleRequest(
+			"workspace.create",
+			{ projectId: "p1", name: "Receipt replay" },
+			CTX,
+		)) as Workspace;
+		const created = (await handleRequest(
+			"session.create",
+			{ workspaceId: workspace.id },
+			CTX,
+		)) as CreateSessionResult;
+		const prompt = handleRequest(
+			"session.prompt",
+			{ sessionId: created.sessionId, text: "Run the command once", messageId: "receipt-input" },
+			CTX,
+		);
+		const request = await approval;
+		if (
+			request.kind !== "confirm" ||
+			!request.runId ||
+			!request.toolCallId ||
+			request.revision === undefined
+		)
+			throw new Error("Missing approval identity");
+		const response: ExtUiResponse = {
+			id: request.id,
+			sessionId: created.sessionId,
+			runId: request.runId,
+			toolCallId: request.toolCallId,
+			revision: request.revision,
+			value: true,
+		};
+		expect(await handleRequest("session.extUiReply", { response }, CTX)).toEqual({ ok: true });
+		const deadline = Date.now() + 5000;
+		while (getSessionState(created.sessionId).execution !== "idle") {
+			if (Date.now() > deadline) throw new Error("Approved run did not settle");
+			await Bun.sleep(5);
+		}
+		expect(getSessionState(created.sessionId).completion?.outcome).toBe("succeeded");
+		await prompt;
+		disposeAllSessions();
+		expect(await handleRequest("session.extUiReply", { response }, CTX)).toEqual({ ok: true });
+		expect(readFileSync(join(workspace.worktreePath, "receipt.txt"), "utf8")).toBe("once");
+		expect(model.calls).toHaveLength(2);
+		await expect(
+			handleRequest("session.extUiReply", { response: { ...response, value: false } }, CTX),
+		).rejects.toThrow("Conflicting");
+		await closeWorkspaceSessions(workspace.id, async () => {
+			await expect(handleRequest("session.extUiReply", { response }, CTX)).rejects.toThrow(
+				"unavailable",
+			);
+		});
+		const record = readSessionRecord(created.sessionId);
+		if (!record) throw new Error("Missing durable receipt");
+		writeFileSync(sessionRecordPath(created.sessionId), JSON.stringify({ ...record, cwd: repo }));
+		await expect(handleRequest("session.extUiReply", { response }, CTX)).rejects.toThrow(
+			"unavailable",
+		);
+		writeFileSync(sessionRecordPath(created.sessionId), JSON.stringify(record));
+		saveWorkspaces([]);
+		await expect(handleRequest("session.extUiReply", { response }, CTX)).rejects.toThrow(
+			"Unknown workspace",
+		);
+		expect(readFileSync(join(workspace.worktreePath, "receipt.txt"), "utf8")).toBe("once");
+		model.assertComplete();
+	} finally {
+		setExtUiPublisher(() => {});
+		disposeAllSessions();
+		configureAgentModelFactory();
+	}
+});
+
+test("receipt attachment classifies an unknown effect before considering a resumable checkpoint", async () => {
+	seedSdkTestModel(dataDir, "handler");
+	const model = useSdkTestModel([modelResponse([assistantMessage("must not run")])]);
+	try {
+		const workspace = (await handleRequest(
+			"workspace.create",
+			{ projectId: "p1", name: "Unknown effect" },
+			CTX,
+		)) as Workspace;
+		const created = (await handleRequest(
+			"session.create",
+			{ workspaceId: workspace.id },
+			CTX,
+		)) as CreateSessionResult;
+		const record = readSessionRecord(created.sessionId);
+		if (!record) throw new Error("Missing session record");
+		record.state.execution = "running";
+		record.state.runId = "interrupted-run";
+		record.decisions.receipt = {
+			runId: "interrupted-run",
+			revision: 10,
+			toolCallId: "approved-call",
+			value: true,
+		};
+		record.effects.unknown = {
+			runId: "interrupted-run",
+			name: "bash",
+			arguments: { command: "printf forbidden > replay.marker", timeoutMs: 10000 },
+			status: "started",
+		};
+		record.runCheckpoint = {
+			runId: "interrupted-run",
+			checkpoint: "must not be deserialized while an effect is unknown",
+			granted: true,
+			enabledExtensions: [],
+		};
+		writeFileSync(sessionRecordPath(created.sessionId), JSON.stringify(record));
+		disposeAllSessions();
+		expect(
+			await handleRequest(
+				"session.extUiReply",
+				{
+					response: {
+						id: "receipt",
+						sessionId: created.sessionId,
+						runId: "interrupted-run",
+						revision: 10,
+						toolCallId: "approved-call",
+						value: true,
+					},
+				},
+				CTX,
+			),
+		).toEqual({ ok: true });
+		expect(getSessionState(created.sessionId).completion?.outcome).toBe("interrupted");
+		expect(readSessionRecord(created.sessionId)?.effects.unknown?.status).toBe("unknown");
+		expect(model.calls).toHaveLength(0);
+		expect(existsSync(join(workspace.worktreePath, "replay.marker"))).toBe(false);
+	} finally {
+		disposeAllSessions();
+		configureAgentModelFactory();
+	}
+});
+
 test("clone handlers resolve the destination and return an opened local project", async () => {
 	const input = {
 		operationId: "clone-handler",

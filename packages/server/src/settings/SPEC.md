@@ -46,6 +46,10 @@ clamps `terminalReplayKb`, so a hand-edited config cannot exhaust memory. Settin
 
 ## Get right
 
+- `sdkTracingEnabled` defaults to `false`; only a boolean update is accepted. The agent reads it for new
+  Runner instances, writes only local trace records and excludes sensitive trace data. No trace is
+  exported to OpenAI. Settings owns persistence and broadcast.
+
 - **Converge on broadcast, no client optimism.** `updateConfig` persists before replacing the live cache or publishing; a failed write changes neither runtime reads nor frontends. The publisher receives the full merged config for broadcast and the applied partial update so host consumers can distinguish an explicit field write from an unrelated merge. Every frontend, including the initiator, adopts `settings.changed`. `server.welcome` seeds the same cached value.
 - `terminalWindowsShell` defaults to `"auto"`; persisted values fall back through persistence's shared
   `isTerminalWindowsShell` guard, while a wire mutation outside the closed shell union rejects the complete

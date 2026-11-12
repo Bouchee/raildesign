@@ -13,6 +13,10 @@ The application owns its message, tool, usage and event types in `sessionProtoco
 
 Host state is the authority for owned approval dialogs. Shared state projection restores the current request on live attach, refresh and reconnect; an already installed state push takes precedence over a transcript summary. A cleared or superseded request cannot return through a late dialog frame or stale summary. Transport does not separately replay dialog requests from state snapshots.
 
+Queue snapshots and live events carry the same stable entry IDs, pending/staged state and admission errors.
+The store does not move a queued entry into the transcript optimistically. The host's user message is the
+admission receipt, joined by ID. Distinct equal-text inputs remain distinct.
+
 ## Responsibility
 
 The single Zustand store: connection status, projects/workspaces, one frontend-local workbench frame plus
@@ -439,15 +443,10 @@ re-read while a server starts. The state vocabulary and the attention/active pre
   single-event **`handleSessionEvent`** delegates to that same path so tests and non-wire callers cannot drift.
   Transport flushes a pending batch before delivering any later response or non-Pi push, preserving the
   revision fence's received-message ordering. **Only idle sends enter the transcript
-  optimistically** (`ChatView.onSubmit` → `appendUserMessage`); the last-turn echo dedup below is
-  sufficient precisely because nothing intervenes before the echo. A **streaming send (`steer`/`followUp`)
-  never appends a turn**: its text lives in `queue` (folded verbatim from the host-projected
-  `queue_update`, seeded from the summary at hydration), alongside the optional conservative `hasImages`
-  aggregate that guards destructive text-only queue restoration; the turn lands only via pi's canonical
-  user `message_start` —
-  at its true position, converging live with hydrated. (Mirrors pi's own interactive mode; replaces the
-  optimistic-append-for-everything model whose last-turn dedup missed whenever assistant content landed
-  between the append and the echo — reproduced live as a duplicated, mispositioned queued bubble.)
+  optimistically** (`ChatView.onSubmit` → `appendUserMessage`), using the submitted stable ID. Queued
+  sends remain in `queue`, carrying pending/staged state and errors until the host admits them. The
+  canonical user message joins its optimistic copy by ID; equal-text inputs with different IDs remain
+  distinct. Snapshot hydration and live events use the same queue and transcript shapes.
   For the idle echo: an equal Pi `message_start` echo is ignored, while Pi's canonical expanded `<skill>`
   echo **replaces** the immediately preceding matching raw `/skill:<name> …` turn in place (same turn id),
   so live and hydrated transcripts both contain one canonical skill invocation; a malformed or mismatched

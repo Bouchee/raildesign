@@ -44,8 +44,8 @@ function useThreadAnnotations(
 	review: ResourceViewProps["review"],
 	placedThreadIds: ReadonlySet<string>,
 ) {
-	const slotsRef = useRef<AnnotationSlot<LineAnnotation<FileAnnotationMetadata>>[]>([]);
-	return useMemo(() => {
+	const slotsRef = useRef<readonly AnnotationSlot<LineAnnotation<FileAnnotationMetadata>>[]>([]);
+	const slots = useMemo(() => {
 		const current = (review?.threads ?? []).flatMap((thread) => {
 			const range = threadLineRange(thread);
 			return range && placedThreadIds.has(thread.id)
@@ -62,8 +62,9 @@ function useThreadAnnotations(
 		});
 		const slots = reconcileAnnotationSlots(slotsRef.current, current, sameFileAnnotation);
 		slotsRef.current = slots;
-		return slots.map((slot) => slot.annotation);
+		return slots;
 	}, [placedThreadIds, review?.threads]);
+	return useMemo(() => slots.map((slot) => slot.annotation), [slots]);
 }
 
 function PierreFileSurface({

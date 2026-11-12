@@ -156,6 +156,10 @@ test(
 			await expect
 				.poll(() => existsSync(join(workspace.worktreePath, "sdk-stop-started.marker")))
 				.toBe(true);
+			await expect(page.getByTestId("stream-indicator")).toHaveAttribute(
+				"data-phase",
+				"running-tool",
+			);
 			await page.getByTestId("chat-abort").click();
 			await expect
 				.poll(

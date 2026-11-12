@@ -84,7 +84,6 @@ import { isDelegationRunDetails } from "./domain";
 import type {
 	ExtUiResponse,
 	ImageContent,
-	QueueLane,
 	RefreshedModels,
 	RemovedQueuedMessage,
 	SessionQueueContent,
@@ -134,7 +133,8 @@ export type TemplateReadLocation =
 	| { projectId: string; workspaceId?: never }
 	| { workspaceId?: never; projectId?: never };
 
-export const PROTOCOL_VERSION = 115;
+export const PROTOCOL_VERSION = 116;
+export const DURABLE_SESSION_PROTOCOL_VERSION = 116;
 export const SDK_SESSION_PROTOCOL_VERSION = 115;
 export const QUESTION_PANEL_PROTOCOL_VERSION = 114;
 export const SPEC_SECTIONS_PROTOCOL_VERSION = 113;
@@ -481,6 +481,8 @@ export const WS_METHODS = {
 	sessionFollowUp: "session.followUp",
 	sessionClearQueue: "session.clearQueue",
 	sessionRemoveQueued: "session.removeQueued",
+	sessionUpdateQueued: "session.updateQueued",
+	sessionSendSteeringNow: "session.sendSteeringNow",
 	sessionAbort: "session.abort",
 	sessionDispose: "session.dispose",
 	sessionDelete: "session.delete",
@@ -493,7 +495,6 @@ export const WS_METHODS = {
 	sessionReloadResources: "session.reloadResources",
 	sessionExtUiReply: "session.extUiReply",
 	sessionRespondToTool: "session.respondToTool",
-	sessionAnswerQuestion: "session.answerQuestion",
 	sessionList: "session.list",
 	sessionStateList: "session.stateList",
 	sessionAcknowledgeCompletion: "session.acknowledgeCompletion",
@@ -1168,15 +1169,15 @@ export interface WsMethodMap {
 		result: { sessionId: string; model: WireModel | null; thinkingLevel: ThinkingLevel };
 	};
 	"session.prompt": {
-		params: { sessionId: string; text: string; images?: ImageContent[] };
+		params: { sessionId: string; text: string; images?: ImageContent[]; messageId?: string };
 		result: Ack;
 	};
 	"session.steer": {
-		params: { sessionId: string; text: string; images?: ImageContent[] };
+		params: { sessionId: string; text: string; images?: ImageContent[]; messageId?: string };
 		result: Ack;
 	};
 	"session.followUp": {
-		params: { sessionId: string; text: string; images?: ImageContent[] };
+		params: { sessionId: string; text: string; images?: ImageContent[]; messageId?: string };
 		result: Ack;
 	};
 	"session.clearQueue": {
@@ -1184,12 +1185,17 @@ export interface WsMethodMap {
 		result: SessionQueueContent;
 	};
 	"session.removeQueued": {
-		params: { sessionId: string; kind: QueueLane; index: number };
+		params: { sessionId: string; messageId: string };
 		result: RemovedQueuedMessage;
 	};
+	"session.updateQueued": {
+		params: { sessionId: string; messageId: string; text: string; images?: ImageContent[] };
+		result: Ack;
+	};
+	"session.sendSteeringNow": { params: { sessionId: string }; result: Ack };
 	"session.abort": {
-		params: { sessionId: string; restoreQueue?: boolean };
-		result: Ack & { restoredQueue?: SessionQueueContent };
+		params: { sessionId: string };
+		result: Ack;
 	};
 	"session.dispose": { params: { sessionId: string }; result: Ack };
 	"session.delete": { params: { workspaceId: string; sessionId: string }; result: Ack };
@@ -1199,17 +1205,23 @@ export interface WsMethodMap {
 	};
 	"session.setModel": { params: { sessionId: string; model: WireModel }; result: Ack };
 	"session.setThinkingLevel": { params: { sessionId: string; level: ThinkingLevel }; result: Ack };
-	"session.compact": { params: { sessionId: string; instructions?: string }; result: Ack };
+	"session.compact": {
+		params: { sessionId: string; operationId?: string; instructions?: string };
+		result: Ack;
+	};
 	"session.getStats": { params: { sessionId: string }; result: SessionStats };
 	"session.getCommands": { params: { sessionId: string }; result: SlashCommandInfo[] };
 	"session.reloadResources": { params: { sessionId: string }; result: Ack };
 	"session.extUiReply": { params: { response: ExtUiResponse }; result: Ack };
 	"session.respondToTool": {
-		params: { sessionId: string; toolCallId: string; response: unknown };
-		result: Ack;
-	};
-	"session.answerQuestion": {
-		params: { sessionId: string; toolCallId: string; result: unknown };
+		params: {
+			sessionId: string;
+			toolCallId: string;
+			response: unknown;
+			runId: string;
+			interactionId: string;
+			revision: number;
+		};
 		result: Ack;
 	};
 	"session.list": { params: { workspaceId: string }; result: SessionSummary[] };

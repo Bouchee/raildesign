@@ -126,7 +126,13 @@ test("chatStateLabel maps session state to the agent-facing vocabulary", () => {
 		chatStateLabel(
 			state({
 				execution: "running",
-				needsInput: { interactionId: "i1", kind: "tool-response", toolCallId: "t1" },
+				needsInput: {
+					interactionId: "i1",
+					kind: "tool-response",
+					runId: "run",
+					revision: 1,
+					toolCallId: "t1",
+				},
 			}),
 		),
 	).toBe("needs_you");

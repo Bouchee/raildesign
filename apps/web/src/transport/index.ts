@@ -30,7 +30,6 @@ export {
 	supportsRichAnchors,
 	supportsSpeech,
 	supportsTextSearch,
-	supportsToolResponses,
 	supportsTurnChanges,
 	supportsUserThemes,
 } from "./wireTransport";

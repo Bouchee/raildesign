@@ -3,7 +3,7 @@ import { TODO_NUDGE_PREFIX } from "@thinkrail/contracts";
 import { extractSession } from "./extract";
 
 const record = (messages: unknown[], extra: Record<string, unknown> = {}) =>
-	JSON.stringify({ version: 1, sessionId: "session-a", cwd: "/repo/a", messages, ...extra });
+	JSON.stringify({ version: 2, sessionId: "session-a", cwd: "/repo/a", messages, ...extra });
 
 const user = (id: string, content: unknown, timestamp = 1) => ({
 	id,
@@ -77,7 +77,7 @@ describe("extractSession", () => {
 		for (const value of [
 			"not json",
 			JSON.stringify({ type: "session", version: 3, id: "legacy", cwd: "/repo" }),
-			record([user("a", "one")], { version: 2 }),
+			record([user("a", "one")], { version: 1 }),
 			record([{ role: "user", content: "no ID", timestamp: 1 }]),
 			record([user("duplicate", "one"), user("duplicate", "two")]),
 			record([], { sessionId: "../outside" }),

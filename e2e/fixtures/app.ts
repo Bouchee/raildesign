@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Locator, Page } from "@playwright/test";
 import { expect } from "@playwright/test";
@@ -14,6 +14,7 @@ import {
 	E2E_PLAIN_DIR,
 } from "./paths";
 import { fixtureRepoHealthy, seedFixtureRepo } from "./repo";
+import { disposeFixtureResources } from "./resourceCleanup";
 import { seedAgentConfiguration } from "./sdkAgent";
 import { E2eWire } from "./wire";
 
@@ -109,7 +110,7 @@ function resetChats(): void {
 }
 
 export async function stagePlainFolder(page: Page): Promise<string> {
-	await disposeLiveSessions(page);
+	await disposeHostResources(page);
 	resetState();
 	rmSync(E2E_PLAIN_DIR, { recursive: true, force: true });
 	mkdirSync(E2E_PLAIN_DIR, { recursive: true });
@@ -126,25 +127,14 @@ export function loadPersistedWorkspaces(): Workspace[] {
 	}
 }
 
-async function disposeLiveSessions(page: Page): Promise<void> {
-	let sessionIds: string[];
-	try {
-		sessionIds = readdirSync(join(E2E_DATA_DIR, "sessions"))
-			.filter((name) => /^[A-Za-z0-9_-]{1,200}\.json$/.test(name))
-			.map((name) => name.slice(0, -5));
-	} catch (error) {
-		if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
-		throw error;
-	}
-	if (sessionIds.length === 0) return;
+async function disposeHostResources(page: Page): Promise<void> {
 	const health = await page.request.get("/health");
 	const hostUrl = new URL(health.url());
 	await health.dispose();
 	const port = Number(hostUrl.port) || (hostUrl.protocol === "https:" ? 443 : 80);
 	const wire = await E2eWire.connect(port);
 	try {
-		for (const sessionId of sessionIds)
-			await wire.request("session.dispose", { sessionId }, 30_000);
+		await disposeFixtureResources(E2E_DATA_DIR, wire);
 	} finally {
 		wire.close();
 	}
@@ -166,7 +156,7 @@ export async function createWorkspaceViaDialog(page: Page): Promise<Workspace> {
 }
 
 export async function resetApp(page: Page): Promise<void> {
-	await disposeLiveSessions(page);
+	await disposeHostResources(page);
 	resetState();
 }
 

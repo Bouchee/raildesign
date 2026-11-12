@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LoginPush } from "@thinkrail/contracts";
@@ -81,6 +81,55 @@ test("failed cleanup is reported and cannot release writer ownership", async () 
 	await expect(createServer({ port: 0 })).rejects.toMatchObject({ code: "ELOCKED" });
 	// The fixture owns this failed host; release its retained test lock before removing the directory.
 	unlockSync(join(root, "data"), { lockfilePath: join(root, "data", "host.lock") });
+});
+
+test("a killed host leaves ownership locked until stale detection allows a new writer", async () => {
+	const child = Bun.spawn(
+		[
+			process.execPath,
+			"--eval",
+			`import { createServer } from ${JSON.stringify(join(import.meta.dir, "server.ts"))};
+await createServer({port:0,host:"127.0.0.1"});
+console.log("LOCK_OWNER_READY");`,
+		],
+		{
+			cwd: root,
+			env: {
+				PATH: process.env.PATH ?? "",
+				HOME: root,
+				USERPROFILE: root,
+				THINKRAIL_DATA_DIR: join(root, "data"),
+			},
+			stdout: "pipe",
+			stderr: "pipe",
+		},
+	);
+	try {
+		const reader = child.stdout.getReader();
+		let output = "";
+		while (!output.includes("LOCK_OWNER_READY")) {
+			const { done, value } = await reader.read();
+			if (done)
+				throw new Error(
+					`Lock owner exited before startup: ${await new Response(child.stderr).text()}`,
+				);
+			output += new TextDecoder().decode(value);
+		}
+		reader.releaseLock();
+		await expect(createServer({ port: 0 })).rejects.toMatchObject({ code: "ELOCKED" });
+		child.kill("SIGKILL");
+		await child.exited;
+		const lock = join(root, "data", "host.lock");
+		expect(existsSync(lock)).toBe(true);
+		await expect(createServer({ port: 0 })).rejects.toMatchObject({ code: "ELOCKED" });
+		const stale = new Date(Date.now() - 60_000);
+		utimesSync(lock, stale, stale);
+		server = await createServer({ port: 0, host: "127.0.0.1" });
+		expect((await fetch(`http://127.0.0.1:${server.port}/health`)).status).toBe(200);
+	} finally {
+		child.kill("SIGKILL");
+		await child.exited;
+	}
 });
 
 test.each(["shutdown", "project.close", "workspace.remove"] as const)(

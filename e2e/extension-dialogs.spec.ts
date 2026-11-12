@@ -191,7 +191,14 @@ test("an extension dialog about a tool call asks on that tool's card, out of a c
 	await expect
 		.poll(() => wire.replies)
 		.toEqual([
-			{ id: "extui-mcp", sessionId, runId: `ui-${sessionId}`, revision: 1, value: "Always allow" },
+			{
+				id: "extui-mcp",
+				sessionId,
+				runId: `ui-${sessionId}`,
+				revision: 1,
+				toolCallId: MCP_CALL,
+				value: "Always allow",
+			},
 		]);
 	await expect(page.getByTestId("ext-ui-prompt")).toBeVisible();
 	wire.dismiss({ id: "extui-mcp", sessionId });

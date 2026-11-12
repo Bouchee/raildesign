@@ -130,7 +130,13 @@ test("the host's needs-input names the one tool call it accepts a response for",
 	expect(awaitingToolCallIdOf(state(null))).toBeNull();
 	expect(
 		awaitingToolCallIdOf(
-			state({ interactionId: "tool:call-1", kind: "tool-response", toolCallId: "call-1" }),
+			state({
+				interactionId: "tool:call-1",
+				kind: "tool-response",
+				runId: "run",
+				revision: 1,
+				toolCallId: "call-1",
+			}),
 		),
 	).toBe("call-1");
 	expect(
@@ -175,13 +181,4 @@ test("only a complete call of a docked tool the host awaits is docked", () => {
 	expect(dockedInteraction({ ...pending, streaming: true }, "tc1")).toBeUndefined();
 	expect(dockedInteraction({ ...pending, toolName: "ask_user_question" }, "tc1")).toBeUndefined();
 	expect(dockedInteraction(undefined, "tc1")).toBeUndefined();
-});
-
-test("a pre-v93 host's question state still names the awaiting call", () => {
-	const legacy = (needsInput: unknown) => ({ needsInput }) as unknown as SessionState;
-	expect(awaitingToolCallIdOf(legacy({ interactionId: "question:call-9", kind: "question" }))).toBe(
-		"call-9",
-	);
-	expect(awaitingToolCallIdOf(legacy({ interactionId: "call-9", kind: "question" }))).toBeNull();
-	expect(awaitingToolCallIdOf(legacy({ interactionId: "question:x", kind: "other" }))).toBeNull();
 });

@@ -24,7 +24,13 @@ export function pendingToolFixtureState(toolCallId: string): SessionState {
 	return {
 		execution: "idle",
 		runId: `fixture-run-${toolCallId}`,
-		needsInput: { kind: "tool-response", interactionId: toolCallId, toolCallId },
+		needsInput: {
+			kind: "tool-response",
+			interactionId: toolCallId,
+			toolCallId,
+			runId: `fixture-run-${toolCallId}`,
+			revision: 0,
+		},
 		completion: null,
 		completionUnread: false,
 		queuedCount: 0,

@@ -36,12 +36,12 @@ import {
 	SESSION_STATE_PROTOCOL_VERSION,
 	SPEECH_PROTOCOL_VERSION,
 	TEXT_SEARCH_PROTOCOL_VERSION,
-	TOOL_RESPONSE_PROTOCOL_VERSION,
 	TURN_CHANGES_PROTOCOL_VERSION,
 	USER_THEMES_PROTOCOL_VERSION,
 	WORKSPACE_CREATION_PROTOCOL_VERSION,
 	WS_CHANNELS,
 } from "@thinkrail/contracts";
+import { t as translate } from "@thinkrail/locales/react";
 import { isChatsContainer, isConnectedGeneration, useAppStore } from "../store";
 import { createSessionEventBatcher, shouldFlushSessionEventsBefore } from "./sessionEventBatcher";
 import { WsTransport } from "./transport";
@@ -72,20 +72,26 @@ export function supportsSpeech(protocolVersion: number | null): boolean {
 	return protocolVersion !== null && protocolVersion >= SPEECH_PROTOCOL_VERSION;
 }
 
-export function supportsToolResponses(protocolVersion: number | null): boolean {
-	return protocolVersion !== null && protocolVersion >= TOOL_RESPONSE_PROTOCOL_VERSION;
-}
-
 export function respondToTool(
 	sessionId: string,
 	toolCallId: string,
 	response: unknown,
 ): Promise<void> {
-	const transport = getTransport();
-	const sent = supportsToolResponses(useAppStore.getState().protocolVersion)
-		? transport.request("session.respondToTool", { sessionId, toolCallId, response })
-		: transport.request("session.answerQuestion", { sessionId, toolCallId, result: response });
-	return sent.then(() => undefined);
+	const pending = useAppStore.getState().sessions[sessionId]?.hostState?.needsInput;
+	if (pending?.kind !== "tool-response" || pending.toolCallId !== toolCallId) {
+		return Promise.reject(new Error(translate("chat.question.expired")));
+	}
+	const { runId, interactionId, revision } = pending;
+	return getTransport()
+		.request("session.respondToTool", {
+			sessionId,
+			toolCallId,
+			response,
+			runId,
+			interactionId,
+			revision,
+		})
+		.then(() => undefined);
 }
 
 export function supportsChangeMutations(protocolVersion: number | null): boolean {

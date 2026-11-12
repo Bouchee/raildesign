@@ -52,6 +52,10 @@ export function pierreHighlightedTokens(surface: Locator): Locator {
 	return surface.locator(HIGHLIGHTED_TOKEN);
 }
 
+export function pierreAnnotationSlot(annotation: Locator) {
+	return annotation.evaluateHandle((node) => node.closest<HTMLElement>("[slot]")?.assignedSlot);
+}
+
 export async function pierreLineCenter(
 	surface: Locator,
 	text: string,

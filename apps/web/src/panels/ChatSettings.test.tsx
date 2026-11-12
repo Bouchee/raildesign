@@ -16,6 +16,10 @@ test("Chat settings renders one chat line-width control with its Fit to pane swi
 	expect(input).toContain("data-settings-draft-input");
 	expect(markup).not.toContain('data-testid="chat-line-width-error"');
 	expect(markup).not.toContain("file-line-width");
+	expect(markup).toContain("Local SDK tracing");
+	expect(markup.match(/<button[^>]*data-testid="sdk-tracing-toggle"[^>]*>/)?.[0]).toContain(
+		'aria-checked="false"',
+	);
 });
 
 test("Chat settings preserves subagent configuration while execution is unavailable", () => {

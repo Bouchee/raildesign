@@ -11,6 +11,7 @@ import {
 } from "./fixtures/app";
 import { E2E_DATA_DIR } from "./fixtures/paths";
 import {
+	pierreAnnotationSlot,
 	pierreDeletionsSide,
 	pierreGutterUtilityCell,
 	pierreHighlightedTokens,
@@ -316,10 +317,14 @@ test("a Pierre annotation keeps its draft card identity across a sibling review 
 	await expect(page.getByTestId("review-thread-card")).toHaveCount(2);
 
 	const firstEdit = page.getByTestId("review-thread-edit").nth(0);
+	const original = await firstEdit.elementHandle();
+	if (!original) throw new Error("First draft card did not mount");
 	await expect(firstEdit).toHaveValue("First remark.");
 	await firstEdit.click();
 	await firstEdit.fill("First remark — work in progress, unsaved");
 	await expect(firstEdit).toBeFocused();
+	const annotationSlot = await pierreAnnotationSlot(firstEdit);
+	expect(await annotationSlot.evaluate((slot) => slot?.isConnected)).toBe(true);
 
 	const second = (await persistedComments(page)).find((c) => c.body === "Second remark.");
 	await overWire(page, [
@@ -332,6 +337,10 @@ test("a Pierre annotation keeps its draft card identity across a sibling review 
 		"Second remark — edited elsewhere.",
 	);
 	await expect(firstEdit).toHaveValue("First remark — work in progress, unsaved");
+	expect(await firstEdit.evaluate((current, previous) => current === previous, original)).toBe(
+		true,
+	);
+	expect(await annotationSlot.evaluate((slot) => slot?.isConnected)).toBe(true);
 	await expect(firstEdit).toBeFocused();
 });
 

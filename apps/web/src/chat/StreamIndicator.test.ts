@@ -26,46 +26,68 @@ const user: ChatTurn = {
 };
 
 test("no in-flight assistant turn → working (the post-send gap)", () => {
-	expect(streamStatus([user], null)).toEqual({ phase: "working" });
-	expect(streamStatus([user], "a1")).toEqual({ phase: "working" });
+	expect(streamStatus([user], null, {})).toEqual({ phase: "working" });
+	expect(streamStatus([user], "a1", {})).toEqual({ phase: "working" });
 });
 
 test("an empty (content-less) in-flight turn is still just working", () => {
-	expect(streamStatus([assistant("a1", [])], "a1")).toEqual({ phase: "working" });
+	expect(streamStatus([assistant("a1", [])], "a1", {})).toEqual({ phase: "working" });
 });
 
 test("thinking / writing come from the active turn's last block", () => {
-	expect(streamStatus([assistant("a1", [{ type: "thinking", thinking: "hmm" }])], "a1")).toEqual({
+	expect(
+		streamStatus([assistant("a1", [{ type: "thinking", thinking: "hmm" }])], "a1", {}),
+	).toEqual({
 		phase: "thinking",
 	});
-	expect(streamStatus([assistant("a1", [{ type: "text", text: "Here is" }])], "a1")).toEqual({
+	expect(streamStatus([assistant("a1", [{ type: "text", text: "Here is" }])], "a1", {})).toEqual({
 		phase: "writing",
 	});
 });
 
 test("blank thinking/text hasn't really started → working (avoids a phantom label)", () => {
-	expect(streamStatus([assistant("a1", [{ type: "thinking", thinking: "  " }])], "a1")).toEqual({
-		phase: "working",
-	});
-	expect(streamStatus([assistant("a1", [{ type: "text", text: "" }])], "a1")).toEqual({
+	expect(streamStatus([assistant("a1", [{ type: "thinking", thinking: "  " }])], "a1", {})).toEqual(
+		{
+			phase: "working",
+		},
+	);
+	expect(streamStatus([assistant("a1", [{ type: "text", text: "" }])], "a1", {})).toEqual({
 		phase: "working",
 	});
 });
 
-test("a trailing tool call surfaces the tool name for the loader", () => {
+test("tool intent stays working until its executor actually starts", () => {
 	const turn = assistant("a1", [
 		{ type: "thinking", thinking: "let me look" },
 		{ type: "toolCall", id: "t1", name: "bash", arguments: { command: "ls" } },
 	]);
-	expect(streamStatus([turn], "a1")).toEqual({ phase: "running-tool", toolName: "bash" });
+	expect(streamStatus([turn], "a1", {})).toEqual({ phase: "working" });
+	expect(streamStatus([turn], "a1", { t1: { status: "running", raw: undefined } })).toEqual({
+		phase: "running-tool",
+		toolName: "bash",
+	});
+	expect(streamStatus([turn], "a1", { t1: { status: "done", raw: "finished" } })).toEqual({
+		phase: "working",
+	});
 });
 
 test("after message_end (no current id) the phase falls back to the round's trailing assistant turn", () => {
 	const turn = assistant("a1", [
 		{ type: "toolCall", id: "t1", name: "bash", arguments: { command: "ls" } },
 	]);
-	expect(streamStatus([turn], null)).toEqual({ phase: "running-tool", toolName: "bash" });
-	expect(streamStatus([turn, user], null)).toEqual({ phase: "working" });
+	expect(streamStatus([turn], null, { t1: { status: "running", raw: undefined } })).toEqual({
+		phase: "running-tool",
+		toolName: "bash",
+	});
+	expect(streamStatus([turn, user], null, {})).toEqual({ phase: "working" });
+});
+
+test("a restored tool-call snapshot awaiting approval cannot claim execution", () => {
+	const turn = assistant("a1", [
+		{ type: "toolCall", id: "t1", name: "bash", arguments: { command: "ls" } },
+	]);
+	if (turn.kind !== "assistant") throw new Error("Expected assistant turn");
+	expect(streamStatus([{ ...turn, streaming: false }], null, {})).toEqual({ phase: "working" });
 });
 
 test("status tracks the turn named by currentAssistantId, not merely the last turn", () => {
@@ -73,7 +95,7 @@ test("status tracks the turn named by currentAssistantId, not merely the last tu
 		assistant("a1", [{ type: "toolCall", id: "t1", name: "read", arguments: {} }]),
 		assistant("a2", [{ type: "text", text: "answering" }]),
 	];
-	expect(streamStatus(turns, "a2")).toEqual({ phase: "writing" });
+	expect(streamStatus(turns, "a2", {})).toEqual({ phase: "writing" });
 });
 
 test("a trailing running compaction outranks assistant fallbacks — the footer names the beat", () => {
@@ -81,12 +103,12 @@ test("a trailing running compaction outranks assistant fallbacks — the footer 
 		assistant("a1", [{ type: "toolCall", id: "t1", name: "bash", arguments: {} }]),
 		{ kind: "compaction", id: "c1", status: "running" },
 	];
-	expect(streamStatus(turns, null)).toEqual({ phase: "compacting" });
+	expect(streamStatus(turns, null, {})).toEqual({ phase: "compacting" });
 	const settled: ChatTurn[] = [
 		assistant("a1", [{ type: "toolCall", id: "t1", name: "bash", arguments: {} }]),
 		{ kind: "compaction", id: "c1", status: "done" },
 	];
-	expect(streamStatus(settled, null)).toEqual({ phase: "working" });
+	expect(streamStatus(settled, null, {})).toEqual({ phase: "working" });
 });
 
 test("the status slot keeps one fixed shell while idle content stays inaccessible", () => {
