@@ -21,6 +21,7 @@ import {
 	SPEC_TYPES,
 } from "../core/index.ts";
 import { createSpecTools } from "./index.ts";
+import { errorResult } from "./shared.ts";
 
 test("spec_grep pages by bytes without losing or repeating matches", async () => {
 	await withRoot(async (root) => {
@@ -187,10 +188,7 @@ const caseFolding = test.skipIf(!foldsCase());
 const windowsOnly = test.skipIf(process.platform !== "win32");
 
 const tools = new Map(
-	createSpecTools({ cwd: "", assertActive: () => {}, markToolFailed: () => {} }).map((tool) => [
-		tool.name,
-		tool,
-	]),
+	createSpecTools({ cwd: "", assertActive: () => {} }).map((tool) => [tool.name, tool]),
 );
 
 async function run(
@@ -198,19 +196,19 @@ async function run(
 	params: Record<string, unknown>,
 	cwd: string,
 ): Promise<ToolResult<unknown>> {
-	let failed = false;
 	const tool = createSpecTools({
 		cwd,
 		assertActive: () => {},
-		markToolFailed: () => {
-			failed = true;
-		},
 	}).find((candidate) => candidate.name === name);
 	if (!tool) throw new Error(`missing tool: ${name}`);
-	const output = await tool.invoke(new RunContext({}), JSON.stringify(params));
-	return typeof output === "string"
-		? { content: [{ type: "text", text: output }], details: {}, isError: failed }
-		: output;
+	try {
+		const output = await tool.invoke(new RunContext({}), JSON.stringify(params));
+		return typeof output === "string"
+			? { content: [{ type: "text", text: output }], details: {} }
+			: output;
+	} catch (error) {
+		return errorResult(error instanceof Error ? error.message : String(error));
+	}
 }
 
 function isError(result: ToolResult<unknown>): boolean {
@@ -1106,20 +1104,16 @@ test("spec_update rejects set on a list field and preserves comments + non-diale
 });
 
 test("SDK spec-graph tools reject a revoked run before reading or writing", async () => {
-	const failures: (string | undefined)[] = [];
 	const tool = createSpecTools({
 		cwd: "/missing-worktree",
 		assertActive() {
 			throw new Error("Run revoked");
 		},
-		markToolFailed(callId) {
-			failures.push(callId);
-		},
 	})[0];
 	if (!tool) throw new Error("Missing tool");
-	const output = await tool.invoke(new RunContext({}), JSON.stringify({ pattern: "test" }), {
-		toolCall: { type: "function_call", callId: "spec-failed", name: tool.name, arguments: "{}" },
-	});
-	expect(output).toBe("Error: Run revoked");
-	expect(failures).toEqual(["spec-failed"]);
+	await expect(
+		tool.invoke(new RunContext({}), JSON.stringify({ pattern: "test" }), {
+			toolCall: { type: "function_call", callId: "spec-failed", name: tool.name, arguments: "{}" },
+		}),
+	).rejects.toThrow("Run revoked");
 });

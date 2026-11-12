@@ -12,14 +12,15 @@ unknown and require a new user decision. `/compact` summarizes model memory whil
 conversation for display and search. Automatic summaries use the selected verified model's context
 budget; summary failures preserve the previous memory.
 
-The SDK tool graph includes structured questions, visualization, approved Skills, workspace instructions, conversation Plan tools, repository Spec Graph tools, configured MCP tools, child tasks and background commands.
-Resources retains owned command output and child transcripts through refresh, with Stop controls.
-Skill search, content reads, manual `/skill:name` commands and idle catalog reload share the current trust and enable policy. Web search and page reading use
-DeepSeek Search and Fetch with a separate host key configured in Extensions settings.
+The SDK tool graph includes admitted Skills and workspace instructions, questions, visualization,
+Plan and Spec Graph, configured MCP tools, and foreground or background child tasks. Resources retains
+child transcripts and background-command output, with ownership checks and Stop controls. Plan review
+uses an independent SDK child. Web search and page reading use DeepSeek Search and Fetch with a separate
+host key configured in Extensions settings. Skill search, content reads, manual `/skill:name` commands
+and idle catalog reload share current trust and enable policy.
 
-The remaining advanced tools, desktop releases and private-server deployment have separate
-implementation and acceptance stages. Controls for unavailable tools remain disabled. This source
-checkout does not establish a released installer or cross-platform acceptance.
+Desktop releases and private-server deployment have separate acceptance stages. This source checkout
+does not establish a released installer or cross-platform acceptance.
 
 ![RailDesign showing the real notes.txt Diff in the selected worktree](.github/readme-assets/workbench-dark.png)
 

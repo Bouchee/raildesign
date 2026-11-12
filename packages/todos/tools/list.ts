@@ -12,7 +12,6 @@ import {
 	storeFor,
 	stringEnum,
 	textResult,
-	toolError,
 	withNudges,
 } from "./shared.ts";
 
@@ -41,8 +40,7 @@ export function createTodoList(services: TodoToolServices) {
 			"Read this chat's TODO plan — loose items plus named groups (optionally filtered by status). The plan is the source of truth and the user may edit it at any time, so re-read before choosing each next item, after user input, and before completion. A plan beyond the 2,000-line / 50 KiB output limit continues at the offset given in the result; oversized text is saved to a temporary file.",
 		strict: false,
 		parameters: { ...parameters, required: parameters.required ?? [], additionalProperties: true },
-		errorFunction: (_context, error, details) =>
-			toolError(services, error, details?.toolCall?.callId),
+		errorFunction: null,
 		async execute(params) {
 			services.assertActive();
 			if (!Value.Check(parameters, params)) throw new Error("Invalid tool arguments");

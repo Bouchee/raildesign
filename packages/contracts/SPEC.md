@@ -13,14 +13,12 @@ tags: [wire]
 
 The application owns message, tool, usage and event types in `sessionProtocol.ts`. `session.event` carries `{sessionId,runId,seq,event}` with increasing per-session sequence numbers. Initial transcript hydration buffers events and applies only events above `SessionSummary.eventSeq`. Stable IDs join streamed and final messages. SDK details, routing credentials and checkpoints stay on the host. Confirmations carry session, run, interaction, call and revision ownership, and remain visible on reply failure. Queue entries have stable IDs, pending/staged admission state and an optional retained error; admitted input appears in the transcript under the same ID. Queue mutation addresses IDs, never mutable positions. Compaction uses an operation ID and keeps the full transcript. Advanced tool execution remains assigned to stage 3. RailDesign does not offer upstream analytics consent, surveys, Central or old Pi configuration folders.
 
-## Web access settings
-
-Protocol 117 adds `webAccess.status` and `webAccess.configure`.
-Both return only `{ configured }` for the separate DeepSeek platform key.
-The host never returns the stored key through these methods or settings broadcasts.
-The model endpoint key remains separate.
-
 ## Responsibility
+
+`webAccess.status` returns `{ configured }` for the separate DeepSeek web-tool key.
+`webAccess.configure` accepts a new key and returns the same status shape.
+The host never returns a stored key through these methods or application settings broadcasts.
+The model endpoint key remains separate from the web-tool key.
 
 The browser↔host wire spine: the single source of truth for the protocol. Types plus a small
 dependency-free runtime: the WS method/channel constants, protocol/feature versions, the small config
@@ -496,7 +494,7 @@ the palette ranks with — kept here so host-side search can rank with the same 
   chat that committed without planning still shows — and can review — that work. They are never stored;
   the **`"adopted"`** member of `TodoOrigin` exists only on the wire (derivation: [[submodule-server-todos]]).
   **`DelegationRunDetails`** + the **`DelegationRunStatus`** union — the subagent Agent-card DTO,
-  owned by the application: rides `tool_execution_update.partialResult`
+  produced by the SDK child host [[submodule-server-agent]]: rides `tool_execution_update.partialResult`
   (REPLACE), the final `Agent` tool result, and the `subagent-completion` custom message; the
   child transcript itself is read via `subagent.getTranscript`, keyed
   `(workspaceId, parentSessionId, childSessionId)` — its result also carries the run's current
@@ -932,7 +930,7 @@ without importing that package. Subagents use application-owned child session ID
   child/parent ids, role, task, status, creation time, the child's actual `model` (`provider/id`) and
   effective `thinkingLevel` (both optional — absent from an older host), optional abort reason,
   `detached: true` for a background run (from the child's `info`; absent for a foreground run and from
-  an older host) and — once terminal — the reported run duration
+  an older host) and — once terminal — the run duration the child host measured
   (`durationMs`) and, from a v96 host, the finish time (`finishedAt`); not usage or reports.
   Subagent role/task summaries are capped at 200/2,000 characters. Finished records outlive the host
   ([[submodule-server-resource-history]]) but never carry authority: neither archived records,
@@ -966,7 +964,7 @@ without importing that package. Subagents use application-owned child session ID
   lifecycle changes. Clients reread the snapshot; output bytes do not ride a broadcast or transcript
   tool update after the start acknowledgement. Existing `subagent.getTranscript` remains unchanged.
 
-`DelegationRunDetails.abortReason` is an optional application-owned string.
+`DelegationRunDetails.abortReason` is the optional string the child host records.
 Historical details without this field stay valid; non-string values are rejected by its guard. User
 Stop uses `"user"` so the SDK session completion owner can suppress idle-parent wake-up without a
 wire-owned cancellation registry.

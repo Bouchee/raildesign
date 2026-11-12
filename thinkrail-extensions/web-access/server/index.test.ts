@@ -5,7 +5,6 @@ import extension from "./index";
 
 function fixture() {
 	const calls: unknown[][] = [];
-	const failures: string[] = [];
 	let active = true;
 	const services: SdkToolServices = {
 		cwd: "/workspace",
@@ -13,9 +12,6 @@ function fixture() {
 			if (!active) throw new Error("Run revoked");
 		},
 		toolResponse: () => ({ kind: "deferred" }),
-		markToolFailed: (callId) => {
-			failures.push(callId);
-		},
 		setting: () => false,
 		workspaceFiles: { check: async () => {}, scratchDir: "" },
 		webAccess: {
@@ -35,7 +31,6 @@ function fixture() {
 	return {
 		services,
 		calls,
-		failures,
 		revoke: () => {
 			active = false;
 		},
@@ -78,10 +73,10 @@ test("a revoked web tool cannot start the host request", async () => {
 	const tool = extension.sdkTools(host.services)[0];
 	if (!tool) throw new Error("Missing search tool");
 	host.revoke();
-	const output = await tool.invoke(new RunContext({}), JSON.stringify({ query: "SDK", count: 1 }), {
-		toolCall: { type: "function_call", callId: "web-call", name: "web_search", arguments: "{}" },
-	});
-	expect(JSON.parse(String(output))).toMatchObject({ isError: true, error: "Run revoked" });
+	await expect(
+		tool.invoke(new RunContext({}), JSON.stringify({ query: "SDK", count: 1 }), {
+			toolCall: { type: "function_call", callId: "web-call", name: "web_search", arguments: "{}" },
+		}),
+	).rejects.toThrow("Run revoked");
 	expect(host.calls).toEqual([]);
-	expect(host.failures).toEqual(["web-call"]);
 });

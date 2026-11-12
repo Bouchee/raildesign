@@ -93,6 +93,8 @@ reject React, pi, host and server imports; `./server` separately verifies that S
 The app's registry and common-image-layer tests retain coverage of the host-owned rendering behavior.
 
 The SDK factory receives fresh `SdkToolServices`: run-grant validation, the saved owned response,
-explicit tool-failure reporting, workspace path checks and frozen per-extension settings. The host uses
+workspace path checks and frozen per-extension settings. The host uses
 public SDK interruptions for interactive calls and recreates the factories before checkpoint restoration.
 The SDK import is server-only and type-only in this contract package; browser entries stay SDK-free.
+
+SDK tool factories use `errorFunction: null`; the host public invocation boundary owns failure projection with the original tool-call identity. `SdkToolServices` does not expose a parallel failure-marker callback. Stop and revoked grants propagate instead of becoming successful fallback text.

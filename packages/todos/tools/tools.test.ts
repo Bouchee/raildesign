@@ -6,12 +6,12 @@ import { RunContext } from "@openai/agents";
 import type { ToolResult } from "@thinkrail/shared/toolOutput";
 import { TODO_STATUSES, TodoStore } from "../core/index.ts";
 import { createTodoTools } from "./index.ts";
+import { errorResult } from "./shared.ts";
 
 const tools = new Map(
 	createTodoTools({
 		cwd: "",
 		assertActive: () => {},
-		markToolFailed: () => {},
 		sessionId: "sess-test",
 	}).map((tool) => [tool.name, tool]),
 );
@@ -21,20 +21,20 @@ async function run(
 	params: Record<string, unknown>,
 	cwd: string,
 ): Promise<ToolResult<unknown>> {
-	let failed = false;
 	const tool = createTodoTools({
 		cwd,
 		assertActive: () => {},
-		markToolFailed: () => {
-			failed = true;
-		},
 		sessionId: "sess-test",
 	}).find((candidate) => candidate.name === name);
 	if (!tool) throw new Error(`missing tool: ${name}`);
-	const output = await tool.invoke(new RunContext({}), JSON.stringify(params));
-	return typeof output === "string"
-		? { content: [{ type: "text", text: output }], details: {}, isError: failed }
-		: output;
+	try {
+		const output = await tool.invoke(new RunContext({}), JSON.stringify(params));
+		return typeof output === "string"
+			? { content: [{ type: "text", text: output }], details: {} }
+			: output;
+	} catch (error) {
+		return errorResult(error instanceof Error ? error.message : String(error));
+	}
 }
 
 function isError(result: ToolResult<unknown>): boolean {
@@ -676,21 +676,17 @@ test("re-completing a plan that gained new work echoes the surviving summary and
 });
 
 test("SDK todos tools reject a revoked run before reading or writing", async () => {
-	const failures: (string | undefined)[] = [];
 	const tool = createTodoTools({
 		cwd: "/missing-worktree",
 		assertActive() {
 			throw new Error("Run revoked");
 		},
-		markToolFailed(callId) {
-			failures.push(callId);
-		},
 		sessionId: "sess-test",
 	})[0];
 	if (!tool) throw new Error("Missing tool");
-	const output = await tool.invoke(new RunContext({}), JSON.stringify({ pattern: "test" }), {
-		toolCall: { type: "function_call", callId: "todo-failed", name: tool.name, arguments: "{}" },
-	});
-	expect(output).toBe("Error: Run revoked");
-	expect(failures).toEqual(["todo-failed"]);
+	await expect(
+		tool.invoke(new RunContext({}), JSON.stringify({ pattern: "test" }), {
+			toolCall: { type: "function_call", callId: "todo-failed", name: tool.name, arguments: "{}" },
+		}),
+	).rejects.toThrow("Run revoked");
 });

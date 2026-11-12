@@ -21,8 +21,9 @@ The root exports `createTodoTools`, `TodoToolServices` and `TODO_RULE`.
 The `./core` entry exports Plan types, status tuples, `TodoStore`, `groupStatus` and related pure helpers.
 The package manifest declares its Skill roots through `skills`.
 
-`createTodoTools({ cwd, sessionId, assertActive, markToolFailed })` returns seven SDK FunctionTools.
+`createTodoTools({ cwd, sessionId, assertActive })` returns seven SDK FunctionTools.
 The host supplies the active conversation identity and grant check.
+Tool factories let SDK validation and execution failures propagate to the host invocation boundary, which records structured error results.
 `TODO_RULE` gives the threshold for Plan creation and points to the todos Skill.
 A request with at least three substantive execution steps normally needs a Plan.
 Explicit user requests for a Plan also apply.

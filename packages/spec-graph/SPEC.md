@@ -22,9 +22,11 @@ The `./core` entry exports the independent read model and ranked section search.
 The package manifest declares its Skill roots through `skills`.
 `tools/` remains internal to the package.
 
-The host supplies the active worktree, run-grant check and failure marker callback.
-Repository sessions receive the Spec tools and rule.
-Standalone chats do not receive them.
+The host supplies the active worktree and run-grant check.
+Tool factories let SDK validation and execution failures propagate to the host invocation boundary, which records structured error results.
+Repository sessions and their children receive the Spec tools and rule.
+A child with an explicit tool list receives only the Spec tools in that list.
+Standalone chats and their children do not receive them.
 
 ## Model and changes
 

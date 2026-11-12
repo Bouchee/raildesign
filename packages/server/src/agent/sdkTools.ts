@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute } from "node:path";
-import { applyDiff, type ToolOptions, tool } from "@openai/agents";
+import { applyDiff, tool } from "@openai/agents";
 import { z } from "zod";
 import { readFile, resolveWorktreeFile } from "../fs";
 import { runBounded } from "../subprocess";
@@ -72,22 +72,11 @@ export function applyWorkspacePatch(
 	return `Updated ${input.path}`;
 }
 
-export function workspaceTools(grant: ToolGrant, markFailed: (callId: string) => void) {
+export function workspaceTools(grant: ToolGrant) {
 	const modelKeys = new Set(modelKeyEnvironmentNames().map((name) => name.toUpperCase()));
-	const toolError: NonNullable<ToolOptions<undefined>["errorFunction"]> = (
-		_context,
-		error,
-		details,
-	) => {
-		if (details?.toolCall) markFailed(details.toolCall.callId);
-		return JSON.stringify({
-			isError: true,
-			error: error instanceof Error ? error.message : String(error),
-		});
-	};
 	return [
 		tool({
-			errorFunction: toolError,
+			errorFunction: null,
 			name: "read",
 			description:
 				"Read a UTF-8 file in the assigned worktree. Read the original content before editing.",
@@ -100,7 +89,7 @@ export function workspaceTools(grant: ToolGrant, markFailed: (callId: string) =>
 			},
 		}),
 		tool({
-			errorFunction: toolError,
+			errorFunction: null,
 			name: "search",
 			description:
 				"Search tracked and untracked worktree files with a literal text query. Git metadata and ignored files are excluded.",
@@ -142,7 +131,7 @@ export function workspaceTools(grant: ToolGrant, markFailed: (callId: string) =>
 			},
 		}),
 		tool({
-			errorFunction: toolError,
+			errorFunction: null,
 			name: "bash",
 			description:
 				"Run a shell command in the assigned worktree, including project tests. Host permissions apply. Requires user approval.",
@@ -169,7 +158,6 @@ export function workspaceTools(grant: ToolGrant, markFailed: (callId: string) =>
 					},
 				);
 				grant.assertActive();
-				if (!result.ok && details?.toolCall) markFailed(details.toolCall.callId);
 				return {
 					...result,
 					isError: !result.ok,
@@ -179,7 +167,7 @@ export function workspaceTools(grant: ToolGrant, markFailed: (callId: string) =>
 			},
 		}),
 		tool({
-			errorFunction: toolError,
+			errorFunction: null,
 			name: "apply_patch",
 			description:
 				"Create or update one file with a V4A diff. Supply exact original file text, or null for a new file. Requires user approval.",

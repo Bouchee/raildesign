@@ -4,7 +4,7 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { FIELDS, type FrontmatterEdit, updateFrontmatterText } from "../core/index.ts";
 import type { SpecToolServices } from "./shared.ts";
-import { errorResult, getIndex, textResult, toolError } from "./shared.ts";
+import { errorResult, getIndex, textResult } from "./shared.ts";
 
 const listGroup = Type.Object({
 	[FIELDS.dependsOn]: Type.Optional(Type.Array(Type.String())),
@@ -37,8 +37,7 @@ export function createSpecUpdate(services: SpecToolServices) {
 		needsApproval: true,
 		strict: false,
 		parameters: { ...parameters, required: parameters.required ?? [], additionalProperties: true },
-		errorFunction: (_context, error, details) =>
-			toolError(services, error, details?.toolCall?.callId),
+		errorFunction: null,
 		async execute(params) {
 			services.assertActive();
 			if (!Value.Check(parameters, params)) throw new Error("Invalid tool arguments");

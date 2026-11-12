@@ -17,7 +17,6 @@ const session: SdkToolServices = {
 	cwd: "/workspace",
 	assertActive: () => {},
 	toolResponse: () => ({ kind: "deferred" }),
-	markToolFailed: () => {},
 	setting: () => false,
 	workspaceFiles: {
 		check: async (path, cwd) => {

@@ -30,6 +30,7 @@ import {
 	promptSession,
 	removeSession,
 	resolveExtUi,
+	runSessionChild,
 	sessionResourceHistory,
 	sessionResources,
 	setExtUiPublisher,
@@ -276,6 +277,48 @@ test("Stop during child creation prevents a late detached model run", async () =
 		const stopping = abortSession(created.sessionId);
 		release();
 		await Promise.all([running, stopping]);
+		expect(child.calls).toHaveLength(0);
+		expect((await sessionResources("workspace", created.sessionId)).subagents[0]?.status).toBe(
+			"aborted",
+		);
+	} finally {
+		release();
+		listing.mockRestore();
+	}
+});
+
+test("Stop during host review creation cancels admission even without a caller signal", async () => {
+	const child = new ScriptedModel([done("must not run")]);
+	const created = await createSession({ cwd, workspaceId: "workspace" });
+	if (!created.model) throw new Error("Missing model");
+	configureAgentModelFactory(() => child);
+	const original = modelConfiguration.listAvailableModels;
+	let release: () => void = () => {};
+	const gate = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	let entered = false;
+	const listing = spyOn(modelConfiguration, "listAvailableModels").mockImplementation(async () => {
+		entered = true;
+		await gate;
+		return original();
+	});
+	try {
+		const running = runSessionChild(created.sessionId, {
+			name: "reviewer",
+			instructions: "Inspect only",
+			prompt: "Inspect",
+			model: created.model,
+			thinkingLevel: created.thinkingLevel,
+		}).then(
+			() => false,
+			() => true,
+		);
+		await until(() => entered);
+		const stopping = abortSession(created.sessionId);
+		release();
+		expect(await running).toBe(true);
+		await stopping;
 		expect(child.calls).toHaveLength(0);
 		expect((await sessionResources("workspace", created.sessionId)).subagents[0]?.status).toBe(
 			"aborted",

@@ -3,7 +3,7 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { DEFAULT_SPEC_SEARCH_LIMIT, type SpecSectionHit, searchSpecs } from "../core/index.ts";
 import type { SpecToolServices } from "./shared.ts";
-import { getSectionIndex, textResult, toolError } from "./shared.ts";
+import { getSectionIndex, textResult } from "./shared.ts";
 
 export const MAX_SPEC_SEARCH_LIMIT = 25;
 
@@ -46,8 +46,7 @@ export function createSpecSearch(services: SpecToolServices) {
 			"Find the spec sections that answer a question, ranked by words: each section's heading and text plus its spec's title, words in any order, word forms matched (renaming ↔ rename), identifiers split (renameSession ↔ rename session), an exact phrase first. Returns `path:line  Spec › Section — snippet`, best first; read a section at its line with the normal read tool. It matches words, not meaning: when nothing fits, retry with the words a spec would use or with several phrasings at once. Use spec_grep for an exact pattern or a regex.",
 		strict: false,
 		parameters: { ...parameters, required: parameters.required ?? [], additionalProperties: true },
-		errorFunction: (_context, error, details) =>
-			toolError(services, error, details?.toolCall?.callId),
+		errorFunction: null,
 		async execute(params) {
 			services.assertActive();
 			if (!Value.Check(parameters, params)) throw new Error("Invalid tool arguments");

@@ -12,7 +12,7 @@ tags: [spec-graph, agents-sdk]
 
 The barrel exports `createSpecTools` and `SpecToolServices`.
 Each tool checks the supplied run grant and validates raw arguments with TypeBox.
-Services provide `cwd`, `assertActive` and `markToolFailed`.
+Services provide `cwd` and `assertActive`.
 The tools use the core barrel and return text with structured details.
 The create, update and delete tools require approval.
 The other five tools are read-only.

@@ -19,6 +19,7 @@ import type {
 	ExtUiRequest,
 	ExtUiResponse,
 	ImageContent,
+	PlanReviewResult,
 	QueueLane,
 	RemovedQueuedMessage,
 	ResourceHistoryCursor,
@@ -48,6 +49,7 @@ import {
 } from "@thinkrail/contracts";
 import { parseToolResultContent } from "@thinkrail/extension-api/server";
 import { CodedError } from "@thinkrail/shared/codedError";
+import { truncateHead } from "@thinkrail/shared/toolOutput";
 import { createSpecTools, SPEC_RULE } from "@thinkrail/spec-graph";
 import { createTodoTools, TODO_RULE } from "@thinkrail/todos";
 import { WORKFLOW_RULE } from "@thinkrail/workflow";
@@ -166,7 +168,9 @@ interface Entry {
 	commands?: BackgroundCommands;
 	commandArchive?: { finish: () => void };
 	closingResources?: boolean;
+	reviewScopes?: Set<{ controller: AbortController; done: Promise<void> }>;
 	foregroundChildren?: Set<string>;
+	fixCompletions?: Map<string, { resolve: () => void; reject: (error: Error) => void }>;
 }
 const sessions = new Map<string, Entry>();
 const closingSessions = new Set<string>();
@@ -351,7 +355,7 @@ function assertActive(entry: Entry, run: ActiveRun): void {
 			parent.store.record.workspaceId !== entry.store.record.workspaceId ||
 			closingSessions.has(child.parentSessionId) ||
 			deletingSessions.has(child.parentSessionId) ||
-			!subagentsAllowed(parent)
+			(child.purpose !== "review" && !subagentsAllowed(parent))
 		)
 			throw new Error("The child owner is unavailable");
 		if (
@@ -997,7 +1001,8 @@ function resourceIsLive(record: ResourceRecord): boolean {
 function resourceChanged(entry: Entry): void {
 	if (sessions.get(entry.store.record.sessionId) !== entry) return;
 	const snapshots = ownedResourceSnapshots(entry);
-	entry.store.record.state.backgroundWork = snapshots.some(resourceIsLive);
+	entry.store.record.state.backgroundWork =
+		!!entry.reviewScopes?.size || snapshots.some(resourceIsLive);
 	flush(entry);
 	publishResources(summarizeResources(resourceScope(entry), snapshots));
 	notifyState(entry);
@@ -1030,7 +1035,8 @@ async function acquireChildSlot(child: Entry, signal: AbortSignal): Promise<void
 	try {
 		while (true) {
 			signal.throwIfAborted();
-			if (!subagentsAllowed(parent)) throw new Error("Child agents are disabled");
+			if (metadata.purpose !== "review" && !subagentsAllowed(parent))
+				throw new Error("Child agents are disabled");
 			const workspace = loadWorkspaces().find(
 				(item) => item.id === parent.store.record.workspaceId,
 			);
@@ -1239,6 +1245,7 @@ async function childTools(entry: Entry, run: ActiveRun): Promise<Tool[]> {
 		.join("\n");
 	return [
 		tool({
+			errorFunction: null,
 			name: "Agent",
 			description: `Delegate one task to a child agent. Children cannot call MCP or delegate more children. Background results arrive automatically; do not poll.\n${description}`,
 			isEnabled: () => subagentsAllowed(entry),
@@ -1248,11 +1255,6 @@ async function childTools(entry: Entry, run: ActiveRun): Promise<Tool[]> {
 				model: z.string().nullable().optional(),
 				run_in_background: z.boolean().optional(),
 			}),
-			errorFunction: (_context, error, details) => {
-				const call = details?.toolCall ? run.toolCalls.get(details.toolCall.callId) : undefined;
-				if (call) call.failed = true;
-				return error instanceof Error ? error.message : String(error);
-			},
 			execute: async (args, context, details) => {
 				assertActive(entry, run);
 				if (!subagentsAllowed(entry)) throw new Error("Child agents are disabled");
@@ -1475,6 +1477,7 @@ async function childTools(entry: Entry, run: ActiveRun): Promise<Tool[]> {
 			},
 		}),
 		tool({
+			errorFunction: null,
 			name: "get_subagent_result",
 			description:
 				"Read a child result owned by this parent. Background reports also arrive automatically.",
@@ -1567,11 +1570,7 @@ function backgroundTools(entry: Entry, run: ActiveRun): Tool[] {
 				id: z.string().min(1).nullish(),
 			}),
 			needsApproval: async (_context, args) => args.action === "start",
-			errorFunction: (_context, error, details) => {
-				const call = details?.toolCall ? run.toolCalls.get(details.toolCall.callId) : undefined;
-				if (call) call.failed = true;
-				return error instanceof Error ? error.message : String(error);
-			},
+			errorFunction: null,
 			execute: (args) => {
 				assertActive(entry, run);
 				const allowed =
@@ -1655,7 +1654,10 @@ async function settleResourceCleanup(pending: Promise<unknown>[]): Promise<void>
 }
 async function stopOwnedResources(entry: Entry, reason = "user"): Promise<void> {
 	const pending: Promise<unknown>[] = [pauseSessionMcpConnections(entry.store.record.sessionId)];
-
+	for (const scope of entry.reviewScopes ?? []) {
+		scope.controller.abort();
+		pending.push(scope.done);
+	}
 	for (const record of childRecords(entry)) {
 		const live = record.childRun?.status === "queued" || record.childRun?.status === "running";
 		queuedChildControllers.get(record.sessionId)?.abort();
@@ -1755,6 +1757,7 @@ export async function reloadSessionResources(
 		entry.active ||
 		entry.stopping ||
 		entry.summaryController ||
+		entry.reviewScopes?.size ||
 		ownedResourceSnapshots(entry).some(resourceIsLive)
 	)
 		throw new Error("Resources can only reload in an idle session");
@@ -1877,6 +1880,292 @@ export async function subagentTranscript(
 	};
 }
 
+export function acquireSessionReviewScope(sessionId: string): {
+	signal: AbortSignal;
+	release: () => void;
+} {
+	const entry = mustGet(sessionId);
+	if (
+		entry.stopping ||
+		closingSessions.has(sessionId) ||
+		deletingSessions.has(sessionId) ||
+		closingWorkspaces.has(entry.store.record.workspaceId)
+	)
+		throw new Error("Session is closing");
+	const controller = new AbortController();
+	let releaseScope = () => {};
+	const scope = {
+		controller,
+		done: new Promise<void>((resolveScope) => {
+			releaseScope = resolveScope;
+		}),
+	};
+	entry.reviewScopes ??= new Set();
+	entry.reviewScopes.add(scope);
+	resourceChanged(entry);
+	return {
+		signal: controller.signal,
+		release: () => {
+			if (!entry.reviewScopes?.delete(scope)) return;
+			releaseScope();
+			resourceChanged(entry);
+		},
+	};
+}
+
+export interface AgentTitleHost {
+	apply(
+		sessionId: string,
+		params: { chat_title?: string; workspace_name?: string; branch?: string },
+		assertActive: () => void,
+	): Promise<string>;
+	workspaceNeedsName(sessionId: string): boolean;
+}
+let titleHost: AgentTitleHost | undefined;
+export function setAgentTitleHost(host: AgentTitleHost | undefined): void {
+	titleHost = host;
+}
+function titleTools(entry: Entry, run: ActiveRun): Tool[] {
+	if (!titleHost || entry.store.record.childRun) return [];
+	return [
+		tool({
+			errorFunction: null,
+			name: "set_title",
+			description: `Set a concise chat title. ${titleHost.workspaceNeedsName(entry.store.record.sessionId) ? "Also supply workspace_name and branch for the unnamed workspace." : "Existing user names are preserved."}`,
+			parameters: z.object({
+				chat_title: z.string().nullable().optional(),
+				workspace_name: z.string().nullable().optional(),
+				branch: z.string().nullable().optional(),
+			}),
+			execute: async (args) => {
+				assertActive(entry, run);
+				if (!titleHost) throw new Error("Title service is unavailable");
+				return titleHost.apply(
+					entry.store.record.sessionId,
+					{
+						...(args.chat_title ? { chat_title: args.chat_title } : {}),
+						...(args.workspace_name ? { workspace_name: args.workspace_name } : {}),
+						...(args.branch ? { branch: args.branch } : {}),
+					},
+					() => assertActive(entry, run),
+				);
+			},
+		}),
+	];
+}
+export interface SessionChildRequest {
+	name: string;
+	instructions: string;
+	prompt: string;
+	model: WireModel;
+	thinkingLevel: ThinkingLevel;
+	tools?: string[];
+	maxTurns?: number;
+	signal?: AbortSignal;
+}
+export async function runSessionChild(parentSessionId: string, request: SessionChildRequest) {
+	const parentRecord =
+		sessions.get(parentSessionId)?.store.record ?? readSessionRecord(parentSessionId);
+	if (!parentRecord) throw new Error("Parent session is unavailable");
+	await ownedSessionEntry(parentRecord.workspaceId, parentSessionId);
+	const scope = acquireSessionReviewScope(parentSessionId);
+	request = {
+		...request,
+		signal: request.signal ? AbortSignal.any([request.signal, scope.signal]) : scope.signal,
+	};
+	try {
+		request.signal?.throwIfAborted();
+		if (!request.model.thinkingLevels.includes(request.thinkingLevel))
+			throw new Error("Review effort is unavailable for the selected model");
+		const allowedTools = request.tools ?? [
+			"read",
+			"search",
+			"spec_get",
+			"spec_graph",
+			"spec_search",
+			"spec_grep",
+		];
+		if (
+			allowedTools.some(
+				(name) =>
+					![
+						"read",
+						"search",
+						"spec_get",
+						"spec_graph",
+						"spec_search",
+						"spec_grep",
+						"spec_validate",
+					].includes(name),
+			)
+		)
+			throw new Error("Review children require read-only tools");
+		const created = await createSession({
+			cwd: parentRecord.cwd,
+			workspaceId: parentRecord.workspaceId,
+			model: request.model,
+			thinkingLevel: request.thinkingLevel,
+			childRun: {
+				parentSessionId,
+				purpose: "review",
+				toolCallId: randomUUID(),
+				task: request.prompt,
+				enabledExtensions: snapshotSdkExtensions(
+					loadConfig().disabledExtensions,
+					loadConfig().extensionSettings,
+					"child",
+				),
+				definition: {
+					name: request.name,
+					description: "Independent review",
+					source: "builtin",
+					systemPrompt: request.instructions,
+					tools: allowedTools,
+					extensions: true,
+					inheritProjectContext: true,
+					...(request.maxTurns ? { maxTurns: request.maxTurns } : {}),
+				},
+				detached: false,
+				createdAt: new Date().toISOString(),
+				status: "queued",
+				completionDelivered: false,
+				collected: false,
+			},
+		});
+		const child = mustGet(created.sessionId),
+			controller = new AbortController();
+		const abort = () => {
+			controller.abort();
+			if (child.active)
+				void abortSession(created.sessionId).catch((error) =>
+					log.warn("Review cancellation failed", error),
+				);
+		};
+		request.signal?.addEventListener("abort", abort, { once: true });
+		queuedChildControllers.set(created.sessionId, controller);
+		try {
+			if (request.signal?.aborted) abort();
+			request.signal?.throwIfAborted();
+			await acquireChildSlot(child, controller.signal);
+			request.signal?.throwIfAborted();
+			await promptSession(created.sessionId, request.prompt);
+			const completion = child.store.record.state.completion;
+			finishChild(
+				child,
+				completion?.outcome === "succeeded"
+					? "completed"
+					: completion?.outcome === "cancelled"
+						? "aborted"
+						: "error",
+			);
+			return {
+				sessionId: created.sessionId,
+				text: childOutput(child).content[0]?.text ?? "",
+				status: child.store.record.childRun?.status ?? "error",
+				usage: getSessionStats(created.sessionId).tokens,
+			};
+		} catch (error) {
+			finishChild(child, controller.signal.aborted ? "aborted" : "error");
+			throw error;
+		} finally {
+			request.signal?.removeEventListener("abort", abort);
+			queuedChildControllers.delete(created.sessionId);
+		}
+	} finally {
+		scope.release();
+	}
+}
+
+let requestReviewHandler:
+	| ((
+			sessionId: string,
+			itemId: string,
+			signal: AbortSignal,
+	  ) => Promise<{ result: PlanReviewResult; text: string }>)
+	| undefined;
+let resolveCommentHandler:
+	| ((
+			sessionId: string,
+			commentId: string,
+			reason: string,
+			signal: AbortSignal,
+	  ) => Promise<unknown>)
+	| undefined;
+export function setRequestReviewHandler(handler: typeof requestReviewHandler): void {
+	requestReviewHandler = handler;
+}
+export function setResolveCommentHandler(handler: typeof resolveCommentHandler): void {
+	resolveCommentHandler = handler;
+}
+function reviewTools(entry: Entry, run: ActiveRun): Tool[] {
+	if (entry.store.record.childRun) return [];
+	const tools: Tool[] = [];
+	if (requestReviewHandler && loadConfig().agentReviewEnabled)
+		tools.push(
+			tool({
+				errorFunction: null,
+				name: "request_review",
+				description: "Request independent review of one completed Plan step.",
+				parameters: z.object({ itemId: z.string().min(1) }),
+				execute: async ({ itemId }) => {
+					assertActive(entry, run);
+					if (!requestReviewHandler || !loadConfig().agentReviewEnabled)
+						throw new Error("Agent review is disabled");
+					const result = await requestReviewHandler(
+						entry.store.record.sessionId,
+						itemId,
+						run.controller.signal,
+					);
+					assertActive(entry, run);
+					return { content: [{ type: "text", text: result.text }], details: result.result };
+				},
+			}),
+		);
+	if (resolveCommentHandler)
+		tools.push(
+			tool({
+				errorFunction: null,
+				name: "resolve_comment",
+				description: "Resolve one review finding after its requested fix.",
+				parameters: z.object({ commentId: z.string().min(1), note: z.string().nullish() }),
+				execute: async ({ commentId, note }) => {
+					assertActive(entry, run);
+					if (!resolveCommentHandler) throw new Error("Review comment service is unavailable");
+					return resolveCommentHandler(
+						entry.store.record.sessionId,
+						commentId,
+						note ?? "",
+						run.controller.signal,
+					);
+				},
+			}),
+		);
+	return tools;
+}
+export async function sendReviewFixToSession(
+	sessionId: string,
+	text: string,
+	details: unknown,
+): Promise<void> {
+	const entry = mustGet(sessionId);
+	if (entry.stopping || closingSessions.has(sessionId) || deletingSessions.has(sessionId))
+		throw new Error("The session cannot accept a review fix");
+	const messageId = `review-fix-${randomUUID()}`;
+	const inputId = `resource-input-${messageId}`;
+	entry.fixCompletions ??= new Map();
+	return new Promise<void>((resolveFix, rejectFix) => {
+		entry.fixCompletions?.set(inputId, { resolve: resolveFix, reject: rejectFix });
+		try {
+			queueResourceCompletion(entry, messageId, text, "review-fix-request", details);
+			if (!entry.store.record.messages.some((message) => message.id === messageId))
+				throw new Error("The review fix was not accepted");
+		} catch (error) {
+			entry.fixCompletions?.delete(inputId);
+			rejectFix(error instanceof Error ? error : new Error(String(error)));
+		}
+	});
+}
+
 function reconcileStoredChildren(parent: Entry): void {
 	if (parent.store.record.childRun) return;
 	for (const record of childRecords(parent)) {
@@ -1933,8 +2222,36 @@ function captureStructuredToolResults(tools: Tool[], run: ActiveRun): void {
 		if (candidate.type !== "function") continue;
 		const invoke = candidate.invoke;
 		candidate.invoke = async (context, input, details) => {
-			const result = await invoke(context, input, details);
 			const callId = details?.toolCall?.callId;
+			let result: unknown;
+			try {
+				result = await invoke(context, input, details);
+			} catch (error) {
+				if (!run.granted || run.controller.signal.aborted || details?.signal?.aborted) throw error;
+				const text = error instanceof Error ? error.message : String(error);
+				const bounded = truncateHead(`Error: ${text}`);
+				result = {
+					content: [
+						{
+							type: "text",
+							text: bounded.truncated
+								? `${bounded.content || "Tool failed."}\n[Error text truncated]`
+								: bounded.content,
+						},
+					],
+					isError: true,
+				};
+			}
+			if (
+				callId &&
+				result &&
+				typeof result === "object" &&
+				"isError" in result &&
+				result.isError === true
+			) {
+				const call = run.toolCalls.get(callId);
+				if (call) call.failed = true;
+			}
 			if (
 				callId &&
 				result &&
@@ -1968,10 +2285,6 @@ async function buildSessionAgent(
 	const childDefinition = entry.store.record.childRun?.definition;
 	const skillOptions = {
 		...(childDefinition ? { allowedSkills: childDefinition.skills ?? [] } : {}),
-		markToolFailed: (callId: string | undefined) => {
-			const call = callId ? run.toolCalls.get(callId) : undefined;
-			if (call) call.failed = true;
-		},
 		manualSkills: childDefinition
 			? []
 			: entry.store.record.messages.flatMap((message) =>
@@ -2008,21 +2321,15 @@ async function buildSessionAgent(
 	const applicationTools = [
 		...(await childTools(entry, run)),
 		...backgroundTools(entry, run),
+		...titleTools(entry, run),
+		...reviewTools(entry, run),
 		...createTodoTools({
-			markToolFailed: (callId) => {
-				const call = callId ? run.toolCalls.get(callId) : undefined;
-				if (call) call.failed = true;
-			},
 			cwd: entry.store.record.cwd,
 			sessionId: entry.store.record.sessionId,
 			assertActive: () => assertActive(entry, run),
 		}),
 		...(repository
 			? createSpecTools({
-					markToolFailed: (callId) => {
-						const call = callId ? run.toolCalls.get(callId) : undefined;
-						if (call) call.failed = true;
-					},
 					cwd: entry.store.record.cwd,
 					assertActive: () => assertActive(entry, run),
 				})
@@ -2051,18 +2358,12 @@ async function buildSessionAgent(
 		model: sdkModel,
 		tools: [
 			...applicationTools,
-			...workspaceTools(
-				{
-					workspaceId: entry.store.record.workspaceId,
-					cwd: entry.store.record.cwd,
-					signal: run.controller.signal,
-					assertActive: () => assertActive(entry, run),
-				},
-				(callId) => {
-					const call = run.toolCalls.get(callId);
-					if (call) call.failed = true;
-				},
-			),
+			...workspaceTools({
+				workspaceId: entry.store.record.workspaceId,
+				cwd: entry.store.record.cwd,
+				signal: run.controller.signal,
+				assertActive: () => assertActive(entry, run),
+			}),
 			...registrySdkTools(
 				{
 					cwd: entry.store.record.cwd,
@@ -2082,10 +2383,6 @@ async function buildSessionAgent(
 					},
 					workspaceFiles,
 					assertActive: () => assertActive(entry, run),
-					markToolFailed: (callId) => {
-						const call = run.toolCalls.get(callId);
-						if (call) call.failed = true;
-					},
 					toolResponse: (callId) => {
 						const answer = Object.values(entry.store.record.toolResponses).find(
 							(receipt) => receipt.runId === run.id && receipt.toolCallId === callId,
@@ -3005,7 +3302,8 @@ export function promptSession(
 		timestamp: Date.now(),
 	};
 	const queuedInput = entry.store.record.queue.some((input) => input.id === id);
-	const backgroundWork = ownedResourceSnapshots(entry).some(resourceIsLive);
+	const backgroundWork =
+		ownedResourceSnapshots(entry).some(resourceIsLive) || !!entry.reviewScopes?.size;
 	const firstSeq = entry.store.record.eventSeq + 1;
 	entry.store.update((record) => {
 		const existing = record.messages.findIndex((item) => item.id === message.id);
@@ -3036,7 +3334,29 @@ export function promptSession(
 	run.done = entry.summaryDone
 		? entry.summaryDone.then(() => executeRun(entry, run, content))
 		: executeRun(entry, run, content);
+	const fix = entry.fixCompletions?.get(id);
+	if (fix)
+		void run.done.then(
+			() => {
+				entry.fixCompletions?.delete(id);
+				if (entry.store.record.state.completion?.outcome === "succeeded") fix.resolve();
+				else fix.reject(new Error("Review fix run did not succeed"));
+			},
+			(error) => {
+				entry.fixCompletions?.delete(id);
+				fix.reject(error instanceof Error ? error : new Error(String(error)));
+			},
+		);
 	return run.done;
+}
+function rejectPendingFixes(entry: Entry): void {
+	const pending = entry.fixCompletions;
+	if (!pending?.size) return;
+	entry.store.update((record) => {
+		record.queue = record.queue.filter((input) => !pending.has(input.id));
+	});
+	for (const fix of pending.values()) fix.reject(new Error("Review fix cancelled"));
+	pending.clear();
 }
 export async function abortSession(
 	sessionId: string,
@@ -3047,6 +3367,7 @@ export async function abortSession(
 	const run = entry.active;
 	if (!run) {
 		entry.stopping = true;
+		rejectPendingFixes(entry);
 		try {
 			await stopOwnedResources(entry, reason);
 			await entry.summaryDone;
@@ -3057,6 +3378,7 @@ export async function abortSession(
 	}
 	entry.stopping = true;
 	run.granted = false;
+	rejectPendingFixes(entry);
 	run.controller.abort();
 	run.approval?.reject(new Error("Run cancelled"));
 	run.toolResponse?.reject(new Error("Run cancelled"));
@@ -3375,7 +3697,7 @@ export function getSessionStats(sessionId: string): SessionStats {
 		stats = statsFromRecord(entry.store.record);
 	if (!entry.store.record.childRun)
 		for (const child of childRecords(entry)) {
-			if (!child.childRun?.detached) continue;
+			if (!child.childRun?.detached && child.childRun?.purpose !== "review") continue;
 			const usage = statsFromRecord(child).tokens;
 			stats.tokens.input += usage.input;
 			stats.tokens.output += usage.output;
@@ -3407,6 +3729,7 @@ export async function removeSession(sessionId: string): Promise<void> {
 	const entry = sessions.get(sessionId);
 	if (!entry) return;
 	closingSessions.add(sessionId);
+	rejectPendingFixes(entry);
 	try {
 		if (
 			entry.active &&
@@ -3472,6 +3795,7 @@ export function disposeAllSessions(): void {
 	for (const controller of queuedChildControllers.values()) controller.abort();
 	for (const entry of sessions.values()) {
 		entry.summaryController?.abort();
+		for (const scope of entry.reviewScopes ?? []) scope.controller.abort();
 		void entry.commands?.dispose().catch((error) => log.warn("Command cleanup failed", error));
 		if (entry.active) {
 			entry.active.suspended = true;

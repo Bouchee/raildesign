@@ -49,8 +49,9 @@ function fakeChat(workspaceId: string | undefined, named = false) {
 	const writes: Array<{ title: string; onlyIfUnnamed: boolean | undefined }> = [];
 	let current: string | undefined = named ? "Manual title" : undefined;
 	const deps: AgentTitleDeps = {
+		assertActive() {},
 		workspaceOf: () => workspaceId,
-		writeChatTitle: async (_sessionId, _workspaceId, _cwd, title, options = {}) => {
+		writeChatTitle: async (_sessionId, _workspaceId, _cwd, title, options) => {
 			writes.push({ title, onlyIfUnnamed: options.onlyIfUnnamed });
 			if (options.onlyIfUnnamed && current !== undefined) return false;
 			current = title;
@@ -284,4 +285,41 @@ test("rejects calls from sessions the host does not manage, and empty names", as
 	await expect(
 		applyAgentTitle("s1", { chat_title: "  ", workspace_name: "!!" }, fakeChat(ws.id).deps),
 	).rejects.toThrow("Pass chat_title and/or workspace_name.");
+});
+
+test("Stop revokes delayed agent title effects before chat or workspace writes", async () => {
+	const ws = await createWorkspace("p1");
+	let active = true;
+	let release: () => void = () => {};
+	const held = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	let chatWrites = 0;
+	const assertActive = () => {
+		if (!active) throw new Error("Run revoked");
+	};
+	const pending = applyAgentTitle(
+		"s1",
+		{
+			chat_title: "Late chat",
+			workspace_name: "Late workspace",
+			branch: "late-workspace",
+		},
+		{
+			assertActive,
+			workspaceOf: () => ws.id,
+			writeChatTitle: async (_sessionId, _workspaceId, _cwd, _title, options) => {
+				await held;
+				options.assertActive();
+				chatWrites++;
+				return true;
+			},
+		},
+	);
+	active = false;
+	release();
+	await expect(pending).rejects.toThrow("Run revoked");
+	expect(chatWrites).toBe(0);
+	expect(getWorkspace(ws.id).name).toBe(ws.name);
+	expect(getWorkspace(ws.id).branch).toBe(ws.branch);
 });

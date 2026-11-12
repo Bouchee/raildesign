@@ -3,7 +3,7 @@ import { tool } from "@openai/agents";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import type { SpecToolServices } from "./shared.ts";
-import { errorResult, getIndex, textResult, toolError } from "./shared.ts";
+import { errorResult, getIndex, textResult } from "./shared.ts";
 
 const parameters = Type.Object({
 	id: Type.String({ description: "Id of the spec to delete." }),
@@ -17,8 +17,7 @@ export function createSpecDelete(services: SpecToolServices) {
 		needsApproval: true,
 		strict: false,
 		parameters: { ...parameters, required: parameters.required ?? [], additionalProperties: true },
-		errorFunction: (_context, error, details) =>
-			toolError(services, error, details?.toolCall?.callId),
+		errorFunction: null,
 		async execute(params) {
 			services.assertActive();
 			if (!Value.Check(parameters, params)) throw new Error("Invalid tool arguments");

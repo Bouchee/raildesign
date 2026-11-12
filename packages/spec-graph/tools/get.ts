@@ -3,7 +3,7 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { type Frontmatter, LINK_KINDS, type LinkKind, linkTargets } from "../core/index.ts";
 import type { SpecToolServices } from "./shared.ts";
-import { errorResult, getIndex, textResult, toolError } from "./shared.ts";
+import { errorResult, getIndex, textResult } from "./shared.ts";
 
 const parameters = Type.Object({
 	id: Type.String({ description: "The spec id to look up." }),
@@ -32,8 +32,7 @@ export function createSpecGet(services: SpecToolServices) {
 			"Get one spec node by id: its frontmatter, path, and resolved links (forward + reverse edges across parent/depends-on/references/implements). Returns no prose body — read the file at the returned path with the read tool.",
 		strict: false,
 		parameters: { ...parameters, required: parameters.required ?? [], additionalProperties: true },
-		errorFunction: (_context, error, details) =>
-			toolError(services, error, details?.toolCall?.callId),
+		errorFunction: null,
 		async execute(params) {
 			services.assertActive();
 			if (!Value.Check(parameters, params)) throw new Error("Invalid tool arguments");

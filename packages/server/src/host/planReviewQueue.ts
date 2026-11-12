@@ -1,6 +1,3 @@
-import { logger } from "../log";
-
-const log = logger("review");
 const chains = new Map<string, Promise<void>>();
 const active = new Set<string>();
 
@@ -28,8 +25,7 @@ export function releaseItemReview(sessionId: string, itemId: string): void {
 }
 
 /** Serialize `run` onto the plan's chain and resolve with its result — the one-review-per-plan ordering
- * both entry points share. The caller owns the item claim; errors propagate to the caller (unlike
- * `enqueuePlanReview`, which swallows them for the detached button path). See planReview.SPEC.md. */
+ * both entry points share. The caller owns the item claim and handles propagated errors. See planReview.SPEC.md. */
 export function onPlanChain<T>(
 	workspaceId: string,
 	sessionId: string,
@@ -47,22 +43,4 @@ export function onPlanChain<T>(
 		});
 	chains.set(plan, next);
 	return result;
-}
-
-export function enqueuePlanReview(
-	workspaceId: string,
-	sessionId: string,
-	itemId: string,
-	run: () => Promise<void>,
-): boolean {
-	const item = itemKey(sessionId, itemId);
-	if (!claimItemReview(sessionId, itemId)) return false;
-	onPlanChain(workspaceId, sessionId, run)
-		.catch((err) => {
-			log.warn(`plan review failed (${itemId})`, err);
-		})
-		.finally(() => {
-			active.delete(item);
-		});
-	return true;
 }

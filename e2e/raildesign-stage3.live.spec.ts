@@ -1,8 +1,10 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 import type { Workspace, WsResult } from "@thinkrail/contracts";
-import { openWorkspaceChat, revealWorkbenchTool } from "./fixtures/app";
+import { expandActivityStep, openWorkspaceChat, revealWorkbenchTool } from "./fixtures/app";
+import { commitFile } from "./fixtures/git";
+import { E2E_DATA_DIR } from "./fixtures/paths";
 import { E2eWire } from "./fixtures/wire";
 
 async function parentSession(wire: E2eWire, workspace: Workspace): Promise<string> {
@@ -188,6 +190,162 @@ test(
 			await testInfo.attach("stage3-background-stop", {
 				contentType: "application/json",
 				body: Buffer.from(JSON.stringify({ resources, output })),
+			});
+		} finally {
+			await wire.request("session.abort", { sessionId });
+			wire.close();
+		}
+	},
+);
+
+test(
+	"SDK web tools call DeepSeek Search and Fetch and display their real results",
+	{ tag: "@agent" },
+	async ({ page }, testInfo) => {
+		test.setTimeout(240_000);
+		const workspace = await openWorkspaceChat(page);
+		const wire = await E2eWire.connect();
+		const sessionId = await parentSession(wire, workspace);
+		const configuration = process.env.RAILDESIGN_DEEPSEEK_E2E_CONFIG;
+		if (!configuration)
+			throw new Error("Set RAILDESIGN_DEEPSEEK_E2E_CONFIG for the Stage 3 web acceptance test");
+		if ((statSync(configuration).mode & 0o077) !== 0)
+			throw new Error("The web acceptance configuration must be owner-only");
+		const config: unknown = JSON.parse(readFileSync(configuration, "utf8"));
+		if (
+			!config ||
+			typeof config !== "object" ||
+			!("apiKey" in config) ||
+			typeof config.apiKey !== "string" ||
+			!("baseURL" in config) ||
+			config.baseURL !== "https://api.deepseek.com"
+		)
+			throw new Error(
+				"The web acceptance configuration must select the authorized DeepSeek endpoint",
+			);
+		const path = join(E2E_DATA_DIR, "web-access.json");
+		writeFileSync(path, JSON.stringify({ apiKey: config.apiKey }), { mode: 0o600 });
+		try {
+			expect(await wire.request("webAccess.status", {})).toEqual({ configured: true });
+			await send(
+				page,
+				'This is a web tool probe. Call web_search once with query "DeepSeek" and count 1. Call web_fetch once with url "https://api-docs.deepseek.com/guides/search/". Call no other tools. Then reply WEB_TOOLS_DONE.',
+			);
+			const snapshot = await settle(wire, workspace.id, sessionId);
+			await testInfo.attach("stage3-web-results", {
+				contentType: "application/json",
+				body: Buffer.from(JSON.stringify(snapshot)),
+			});
+			for (const name of ["web_search", "web_fetch"]) {
+				const result = snapshot.messages.find(
+					(message) => message.role === "toolResult" && message.toolName === name,
+				);
+				if (result?.role !== "toolResult") throw new Error(`The model did not call ${name}`);
+				expect(result.isError, JSON.stringify(result.content)).not.toBe(true);
+				expect(result.details).toMatchObject({ provider: "DeepSeek" });
+				if (name === "web_search")
+					expect(result.details).toMatchObject({
+						results: expect.arrayContaining([expect.objectContaining({ url: expect.any(String) })]),
+					});
+				else {
+					expect(result.details).toMatchObject({
+						url: "https://api-docs.deepseek.com/guides/search/",
+					});
+					expect(JSON.stringify(result.content).length).toBeGreaterThan(200);
+				}
+			}
+			const search = await expandActivityStep(page, "web_search");
+			await expect(search.getByTestId("tool-web_search")).toBeVisible();
+			const fetched = await expandActivityStep(page, "web_fetch");
+			await expect(fetched.getByTestId("tool-web_fetch")).toBeVisible();
+			await page.screenshot({ path: testInfo.outputPath("stage3-deepseek-web.png") });
+		} finally {
+			rmSync(path, { force: true });
+			await wire.request("session.abort", { sessionId });
+			wire.close();
+		}
+	},
+);
+
+test(
+	"the Plan review button runs an independent SDK child and restores its verdict",
+	{ tag: "@agent" },
+	async ({ page }, testInfo) => {
+		test.setTimeout(240_000);
+		const workspace = await openWorkspaceChat(page);
+		const wire = await E2eWire.connect();
+		const sessionId = await parentSession(wire, workspace);
+		try {
+			await wire.request("settings.update", { config: { reviewAutoFix: false } });
+			const sha = commitFile(
+				workspace.worktreePath,
+				"stage3-review.ts",
+				"export const stage3Value = 3;\n",
+				"feat: export stage3Value",
+			);
+			const directory = join(workspace.worktreePath, ".raildesign/context/todos");
+			mkdirSync(directory, { recursive: true });
+			const now = new Date().toISOString();
+			writeFileSync(
+				join(directory, `${sessionId}.json`),
+				JSON.stringify({
+					version: 6,
+					groups: [],
+					todos: [
+						{
+							id: "t_stage3_review",
+							title: "Export stage3Value with value 3",
+							note: "Add a module that exports the numeric constant stage3Value = 3. No callers are required.",
+							status: "done",
+							origin: "agent",
+							artifacts: [{ kind: "commit", sha, label: "Export stage3Value" }],
+							createdAt: now,
+							updatedAt: now,
+						},
+					],
+				}),
+			);
+			await revealWorkbenchTool(page, "plan");
+			await page.getByTestId("plan-rail-pane").getByTestId("todo-open-plan").click();
+			const item = page.locator("#plan-item-t_stage3_review");
+			await expect(item.getByTestId("plan-start-review")).toBeEnabled();
+			await item.hover();
+			await item.getByTestId("plan-start-review").click();
+			await expect
+				.poll(
+					async () => {
+						const plan = await wire.request("todo.list", { workspaceId: workspace.id, sessionId });
+						return plan.todos.find((todo) => todo.id === "t_stage3_review")?.review?.state;
+					},
+					{ timeout: 180_000, intervals: [250, 500] },
+				)
+				.toMatch(/^(reviewed|changes_requested)$/);
+			const resources = await wire.request("session.resources", {
+				workspaceId: workspace.id,
+				sessionId,
+			});
+			const reviewer = resources.subagents.find((child) => child.roleName === "Plan reviewer");
+			if (!reviewer) throw new Error("The review button did not create its owned SDK child");
+			expect(reviewer.status).toBe("completed");
+			const transcript = await wire.request("subagent.getTranscript", {
+				workspaceId: workspace.id,
+				parentSessionId: sessionId,
+				childSessionId: reviewer.childSessionId,
+			});
+			expect(transcript.messages.some((message) => message.role === "assistant")).toBe(true);
+			expect(JSON.stringify(transcript.messages)).toContain("verdict");
+			const plan = await wire.request("todo.list", { workspaceId: workspace.id, sessionId });
+			await page.reload();
+			await expect(page.locator("#plan-item-t_stage3_review")).toHaveAttribute(
+				"data-reviewing",
+				"false",
+			);
+			expect(await wire.request("todo.list", { workspaceId: workspace.id, sessionId })).toEqual(
+				plan,
+			);
+			await testInfo.attach("stage3-plan-review", {
+				contentType: "application/json",
+				body: Buffer.from(JSON.stringify({ plan, resources, transcript })),
 			});
 		} finally {
 			await wire.request("session.abort", { sessionId });

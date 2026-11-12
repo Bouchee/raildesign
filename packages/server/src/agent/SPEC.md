@@ -8,13 +8,6 @@ depends-on: [module-contracts]
 tags: [agents-sdk]
 ---
 
-## DeepSeek web tools
-
-`webAccess` owns the separate protected platform key and bounded DeepSeek Search/Fetch requests.
-The SDK extension receives grant-bound service callbacks. Stop aborts requests and prevents late results.
-The host captures structured content and details by tool-call ID for transcript cards while the model
-receives readable text through the public FunctionTool interface. No key enters browser state.
-
 ## Responsibility
 
 Own RailDesign sessions, application transcript projection and one active OpenAI Agents SDK Runner per session. The SDK owns the model loop and tool dispatch. The host owns identity, workspace grants, durable records, interaction ownership and completion. There is one execution path for every launcher.
@@ -33,6 +26,9 @@ Approvals use SDK `needsApproval` and application dialog cards. Questions use th
 interruption boundary with the retained portable questionnaire schema/result formatter and question
 renderer. Only the question is resumed after its owned answer; a composer steering input can supersede
 that question with the existing deferred/chat acknowledgement. It cannot approve another tool.
+A deferred or abandoned question result carries `terminate`. The Agent's SDK `toolUseBehavior`
+makes that result the run's final output, so the model is not called again; the superseding input
+starts the next run.
 Responses bind session, run, tool call, interaction and revision. Identical decisions return their durable
 receipt; stale, missing-call, conflicting and cross-session replies fail before execution.
 
@@ -51,7 +47,7 @@ before `RunState.fromString`, and waits for response readiness before returning 
 completed tools do not replay. Record executor start before effects and its result after completion.
 Restart classifies an unrecorded result as unknown, shows it in the transcript, repairs paired model-history
 call/results and requires explicit new input. Model requests without resumable interactions become interrupted.
-The registry supplies fresh SDK factories and generic argument/response policies; schema and result formatting stay in the extension server half. The complete Stage 3 graph integrations remain owned by that stage; its preserved services stay in place.
+The registry supplies fresh SDK factories and generic argument/response policies; schema and result formatting stay in the extension server half.
 
 Summary generation receives a detached older prefix only after full settlement without a checkpoint or
 pending interaction. Retain the whole newest exchange and paired ordinary FunctionTool records. A paired
@@ -260,8 +256,88 @@ The fresh E2E evidence fixture reads only owned transcript objects; it contains 
 The retained title service uses `renameSession(...,{onlyIfUnnamed:true}):Promise<boolean>` for an
 atomic conditional title write. The check and write share the attached session entry; an automatic
 proposal cannot replace a manual title or a previously accepted automatic title. The normal manual
-rename operation remains unconditional. Tool registration for automatic title/workspace actions
-belongs to the later advanced-tool gate.
+rename operation remains unconditional. SDK title tools use the host-injected service and recheck
+the run grant before applying a title or workspace proposal.
+
+## Stage 3 child and resource execution
+
+The SDK manager composes all enabled tools through the existing run grant and receipt path.
+Foreground child tools use public `Agent.asTool()`.
+Background children use the same SDK manager as their parent, with a separate session record.
+Child records store parent identity, definition, task, tool-call identity and completion delivery state.
+Child definitions control their tools, selected Skills, extensions and workspace instructions.
+The manager applies these limits when it builds the actual tool graph.
+Model-generated child tasks cannot activate manual Skill commands.
+A parent owns each child and background process.
+Stop revokes owned grants before cancellation and waits for cleanup.
+Child creation rechecks the parent grant after each asynchronous admission step.
+Normal parent completion does not cancel background work.
+Resource history and child transcripts remain application-owned.
+The parent displays one pending approval at a time.
+Its own interaction takes priority; pending child requests keep their original identity in child records.
+Child usage adds each model response once, including responses before an approval.
+Restored interrupted effects never execute automatically.
+The child definition and model-selection helpers contain no Pi executor or dependency.
+
+### Scope / Trigger
+
+Use this graph for parent prompts, foreground delegation, background work and independent Plan review.
+Reuse the existing session record, grants, interaction receipts and resource archive.
+
+### Signatures
+
+`reloadSessionResources(sessionId, workspaceId, cwd): Promise<void>` validates and rebuilds an idle graph.
+`runSessionChild(parentSessionId, options)` returns the owned child ID, status, text and usage.
+Resource and transcript readers require the workspace and owning parent session.
+
+### Contracts
+
+`Agent` and `get_subagent_result` retain their application tool names and child-session IDs.
+`background_command` uses `action: start | list | output | stop` and an owned command ID.
+Full structured tool details go to transcript/UI storage; bounded content text goes to the model.
+MCP decisions retain their configuration fingerprint and original call identity across recovery.
+
+### Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Wrong parent or workspace | Reject before effects or transcript access. |
+| Reload while running, awaiting input, recovering or owning live work | Reject without changing the current execution. |
+| Stop while a child session is being created | Recheck the grant after creation; terminalize the child without a model call. |
+| Child approval pauses and resumes | Preserve the same call, execute once and add only new usage. |
+| Disabled Skill, extension or stale MCP configuration | Exclude or refuse the tool before execution. |
+
+### Good / Base / Bad Cases
+
+Base: a foreground child returns its separate transcript and final text. Good: a background command
+survives normal parent completion, then parent Stop terminates it and retains its output. Bad: a late
+creation or approval callback after Stop cannot admit new execution.
+
+### Tests Required
+
+`sdkExecution.test.ts` checks actual SDK dispatch, owned effects, approval restart, concurrency, usage
+and Stop during admission. `host/planReview.test.ts` boots the real host to check registration, routes,
+failure publication and fix delivery. Browser/live tests check user controls, refresh and actual models.
+
+### Wrong vs Correct
+
+Wrong: count a package rename or a directly invoked factory as proof of product integration.
+Correct: trace host startup and UI admission through SDK dispatch to a persisted effect and cleanup.
+
+## DeepSeek web access
+
+`webAccess.ts` owns the separate DeepSeek key and the Search/Fetch clients.
+The key lives in owner-only `web-access.json`, outside AppConfig and model configuration.
+Status contains only `configured`.
+Each request uses the current key and a fixed DeepSeek endpoint.
+Redirects are rejected.
+The request deadline is 30 seconds.
+Response reads stop at 1 MiB and model text stops at 32 KiB.
+Search returns at most ten results with bounded title and summary text.
+Fetch accepts HTTP(S) URLs without userinfo.
+Provider errors do not expose response bodies or credentials.
+Cancellation stops response reads before a result can return.
+SDK extension factories use injected service callbacks, not host imports.
 
 ## SDK Plan tools
 
@@ -298,3 +374,9 @@ once for resource queries, output/history reads and Stop routing; unrelated chil
 Child command completion is delivered once to the parent's safe boundary and never restarts a completed
 child. Historical output lookup uses the complete owned history, independent of the visible 20-row window.
 Cleanup waits for all outcomes before reopening completion gates, including failed cleanup attempts.
+
+## SDK tool failure projection
+
+Function factories use `errorFunction: null` so SDK validation and executor failures reach the existing public `invoke` boundary with the original call identity. That boundary stores bounded structured error content and marks executed effects failed; malformed arguments rejected before executor admission have an error transcript result and no effect receipt. It rethrows after Stop or grant revocation. Successful text that resembles an error stays successful; structured `isError` results remain errors. MCP keeps its own redacted, bounded error projection.
+
+Factory service contracts carry current grants and owned application services, without a second failure callback. `sdkSessionManager.test.ts` covers invalid Skill and workspace arguments, malformed Todo/Spec JSON, nonzero commands, successful error-shaped text, and Stop during executing tools.

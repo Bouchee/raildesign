@@ -2,186 +2,63 @@
 id: submodule-server-host-plan-review
 type: submodule-design
 status: active
-title: plan review — a hidden delegation subagent, not a reviewer chat
+title: plan review — independent SDK child and durable findings
 parent: submodule-server-host
-depends-on: [submodule-server-host, submodule-server-todos, module-pi-delegation]
-references: [submodule-server-todos, submodule-server-reviews, submodule-server-agent]
+depends-on: [submodule-server-host, submodule-server-todos, submodule-server-agent]
+references: [submodule-server-reviews]
 tags: [host, review]
 ---
 
 ## Responsibility
 
-Review one completed plan step, independently of the agent that wrote it, and turn the outcome into
-state: the item's review record, findings in the Review tab, and — when the fix budget allows — a fix
-request delivered to the worker chat.
+Review one completed Plan step. Save the verdict, canonical Review findings and reading guide. Deliver a fix request when the configured budget permits it.
 
-Files: `requestReview.ts` (the flow), `reviewerRole.ts` (the reviewer's prompt + output contract),
-`planReviewQueue.ts` (per-plan serialization + per-item claim).
+`requestReview.ts` owns this flow. `reviewerRole.ts` defines the review role and JSON contract. `planReviewQueue.ts` serializes reviews for each plan and prevents duplicate reviews of one step.
 
-## Why a subagent and not a chat
+## Execution contract
 
-The first implementation ran the reviewer as a **second visible pi session** pinned per plan, holding
-its own tools (`add_review_comment`, `review_verdict`, `reflect_finding`). That shape cost more than it
-bought:
+- Run the reviewer with `agent.runSessionChild`. Use the same SDK execution, tool dispatch and cancellation path as other children. The parent session owns the child. Do not create another visible chat or a separate provider client.
+- Resolve the model from `reviewModel`, then the host's new-chat model default. Resolve effort from `reviewEffort`, then the host's new-chat effort default. Clamp effort for the selected model and pass it explicitly. A missing model fails the review.
+- Permit only `read`, `search`, `spec_search`, `spec_grep`, `spec_get`, `spec_graph` and `spec_validate`. The manager enforces this list. The reviewer cannot edit files, execute commands, delegate work or request another review.
+- Supply the step's title, note, artifacts and verification claims. Also supply the actual original and modified file versions from `gitStatus` and `gitDiffFile`. Resolve commit artifacts in commit scope and change artifacts in uncommitted scope. Reject a change set above 512 KiB. Do not silently truncate it.
+- Limit the child to 20 model turns and five minutes. A failed, interrupted, cancelled or timed-out child cannot approve a step.
+- Treat model output as untrusted. `parseVerdict` uses `isPlanReviewResult`, stamps the host-owned item ID and title, normalizes path separators, and copies only accepted fields. Require a known verdict, nonempty finding IDs and bodies, valid line ranges and bounded reading order. A request for changes requires at least one finding. Invalid output fails the review.
 
-- **A session is a lifetime to police.** A reviewer that crashed, aborted, or simply finished its turn
-  without calling `review_verdict` left the item's `pending` mark set forever, spinning `Reviewing…` and
-  deadlocking Review All. Recovering from that needed a settle tee, a reviewer→worker registry, a
-  termination classifier, and a queue that advanced on settles rather than on results
-  (`reviewerSessionMonitor`, `reviewQueue`) — roughly 400 lines whose only job was to notice that a
-  session had stopped.
-- **Tools made the verdict a mid-turn side effect.** `review_verdict` cleared the durable mark while the
-  reviewer was still streaming, so every guard downstream had to distinguish "verdict recorded" from
-  "turn over", and provenance had to be pinned in a `currentReview` map that could be clobbered by the
-  next package.
-- **The user never wanted the chat.** Its only affordance was watching the reviewer think.
+## Entry points and ownership
 
-A delegation child inverts all of it: `runReviewSubagent` returns a **promise**. Completion is the
-resolution, failure is a rejection, and the whole recovery surface collapses into one `catch` that calls
-`cancelTodoReview`. The reviewer needs no tools of ours — it reads the code with `read`/`grep`/`find`/
-`ls`/`bash` and returns a fenced-JSON verdict the host parses and applies.
+- `installRequestReviewSeam()` installs `request_review` and `resolve_comment` handlers in the agent module. The tool path waits for `settleChangeArtifacts` before it snapshots a completed step.
+- `startPlanReview(workspaceId, sessionId, itemId)` starts a detached button review. Validate the session's workspace before creating the synchronous pending mark. Record workspace activity when the review is accepted.
+- `reviewAllPlan` uses the same entry point for each eligible step. `maybeAutoReReview` uses it after a fresh fix delta at auto-cycle 1.
+- The `agentReviewEnabled` setting gates only the agent's `request_review` tool. Button review remains available.
+- Both tool and button paths share one promise chain per workspace and parent session. A separate item claim rejects duplicate requests for the same step. The chain covers reviewer execution and verdict/file writes; release the item claim in `finally` before waiting for a worker fix run, including failures before child creation. A failed review clears its pending mark. It leaves no successful verdict record.
+- A button review captures a manager-owned review scope before enqueue. Stop, close and delete cancel that scope and await its release. Check its signal before queued child admission, after awaited reads and before filing effects. Keep the scope through any worker fix run; release it after pending state and item claims are cleared and delivery settles.
+- A detached failure publishes `ReviewFailedPayload` through `review.failed`, including the owning session, step and reason. An awaited tool failure returns through the tool result. Publish the current Review snapshot when either path settles.
 
-## Invariants
+## Findings and verdict records
 
-- **The reviewer uses the host's new-chat defaults with the repository's reviewer profile.** `runReview`
-  resolves the child's model as the pinned `reviewModel`, else `resolveNewChatModel({})`: AppConfig's
-  `defaultModel`, falling back to pi's `settings.json` default, then the preferred available model (or no model when none are available) — never
-  the worker's silently inherited model. The reviewer's **effort** resolves the same way: the pinned
-  `reviewEffort`, else AppConfig's `defaultEffort`, falling back to `medium`; the resolver clamps it for
-  the selected model when one is available. `runReview` passes `thinkingLevel` **unconditionally** — an
-  omitted level makes pi-delegation inherit the parent worker's effort, so an unset setting would silently
-  run the reviewer at the worker's effort instead of the default. `runReviewSubagent` spawns the child
-  with `contextFiles: true` and `extensions: true`, and `REVIEWER_TOOLS` carries `spec_search`/`spec_grep`/
-  `spec_get`/`spec_graph` alongside `read`/`grep`/`find`/`ls`/`bash`, reproducing the built-in `reviewer` agent's
-  context/tool policy so plan review follows repository guidance and can audit invariants. Only the
-  system prompt + JSON output contract differ (the host parses the verdict).
-- **The host owns the reviewer's role, the package owns only facts.** `reviewerRole.ts` holds the
-  system prompt (review order, what counts as a finding, the JSON contract); `todos.renderReviewPackage`
-  renders a change-set *reference* and the worker's claims, and names no tool. A package that instructs
-  tools the reviewer does not have is a prompt that contradicts itself — the bug this split prevents.
-- **Model output is untrusted.** `parseVerdict` is strict on the verdict word and validates every finding
-  through contracts' `isPlanReviewResult`: each needs a non-empty `id` + `body`, a `kind` (if present) from
-  the known enum, and a coherent positive line range (a line requires a path, an `endLine` requires a
-  `startLine`, `endLine >= startLine`) — a malformed location would otherwise throw in `fileFinding`'s
-  anchor resolution and drop the finding silently. Cardinality is enforced too: a `request_changes` with no
-  finding is rejected (it would strand the worker with nothing to fix), while an `approve` may carry none.
-  Any invalid output is a failed review, not a silent approve: the mark is cleared and the item returns to
-  unreviewed. `parseVerdict` also **constructs the result explicitly** (verdict/summary/readingOrder/findings only — `readingOrder`
-  is the reviewer's optional ordered `{ path, why }` list, capped at `REVIEW_READING_ORDER_LIMIT` by the
-  contract validator; a backslash in any finding or reading-order path is read as a separator and turned
-  into `/` here, since the model may write Windows paths on any host (architecture Decision 22); **every accepted verdict** replaces the workspace review's `guide` through
-  `reviews.setReviewGuide` — summary and order empty when the reviewer gave none — in the SAME
-  `withReviewLock` hold as its findings and successful verdict record. A queued Clear therefore removes
-  guide and findings together, never only the guide before filing resumes. Rejected, filing/record-failed,
-  and open-findings-blocked approvals leave the previous guide unchanged, never a new successful badge.
-  Guide persistence remains best-effort after acceptance; a fix preparation/send failure retains the
-  accepted request-changes guide and existing cycle/mark compensation. Worker delivery stays outside
-  the lock) rather
-  than spreading the model object, so a host-only field the model hallucinates — e.g. `blockedByOpenFindings`
-  — can never survive to mislead the card; the host sets it solely from its own open-finding check.
-- **The `reviewing` mark is set synchronously** at start/enqueue, so the panel pulses the instant the
-  client re-reads the plan — before any await. An accepted button or auto-review also records workspace
-  activity in the same synchronous step — a review is work on the workspace, like a chat turn, so it keeps
-  the row off the Settled shelf.
-- **A detached failure is published, not just logged.** `todo.startReview`/`todo.reviewAll` ack the moment
-  the review is enqueued; the run then fails on a detached path (provider error, invalid output, abort) with
-  no chat of its own to show it. `startPlanReview` clears the `reviewing` mark and calls
-  `reviewFailedPublisher` (`ReviewFailedPayload`, broadcast on `review.failed`) so the plan page can raise a
-  toast — the panel spec's requirement that the toast carry failure. The payload carries the owning
-  `sessionId` so only that plan's view toasts (not every plan in the workspace); split views of one session
-  dedupe on the toast body. The awaited tool path needs no publish: it rejects to the worker. Pinned by the
-  post-ack failure test in `planReview.test.ts`.
-- **`autoCycles` must match what actually happened.** `1` stands only when the worker really accepted the
-  fix request; a rejected fix — the send OR any of its preparation steps (snapshot/package/mark) failing —
-  or a refused fix latch re-records `2` (terminal), always after rolling the marked findings back to
-  `draft`. `deliverFixToWorker` wraps prepare+send in one catch precisely so a preparation failure cannot
-  slip out as a throw and leave the optimistic `1` standing. Writing `1` without a delivered request
-  strands the item: the auto-re-review trigger waits for a delta that nothing will produce, and a later
-  review reads the cycle as already spent. Pinned by the rejected-send and rejected-preparation tests in
-  `planReview.test.ts`.
-- **An approve is a verdict, not a settlement.** `recordVerdict` settles `reviewed` only when
-  `itemOpenFindings` is empty; otherwise it clears the mark, leaves the record, and reports
-  `approve-blocked` so the worker is told to resolve what it fixed. Round 2 of a fix cycle is a separate
-  run from round 1, so nothing structural stops an approve from landing over an unresolved `sent`
-  finding — only this check does.
-- **The tool path awaits artifact reconciliation before it snapshots the change set.** `request_review`
-  fires immediately after `todo_update`, while `maybeAttachChangeArtifacts` may still be committing the
-  step's work. `handleRequestReview` awaits `settleChangeArtifacts` (the same barrier `listTodos` uses)
-  before `startTodoReview`, so the reviewer never sees a step with no change set, nor snapshots a
-  superseded artifact. The button path needs no such await — the user starts it on an already-reconciled
-  plan. Pinned by the held-reconcile ordering test in `planReview.test.ts`.
-- **A claim must not outlive the call that took it.** `handleRequestReview` claims the item, so every
-  post-claim exit — including `startTodoReview` throwing on a step with no change set — has to run the
-  release. Leaking it wedges that step as "already being reviewed" until the host restarts. Both are
-  pinned in `planReview.test.ts`.
-- **Both entry points share the cap.** The worker's `request_review` tool and the Start review button
-  compute the same `canAutoFix`; the tool path reports it in the tool result text, the button path acts
-  on it by sending the fix. Without a shared cap the tool path loops fix → review → fix forever.
-- **The static tool guidance is policy-neutral; the tool result carries the next action.** `composeText`
-  can say either “fix and request_review again” or “do NOT fix now — report to the user” depending on
-  `canAutoFix`. So `requestReviewTool`'s description/promptGuidelines must NOT hardcode “always fix and
-  re-review” — they tell the worker to follow the tool result's stated next action, so a stronger
-  system-level prompt can't override the configured stop.
-- **The worker-facing finding identity is the persisted comment, not the model's id.** `fileFinding`
-  persists each finding as a new `rc_*` comment; the model's own ids (`f1`…) are transient. On the tool
-  path the tool result *is* the delivery, so when the worker is asked to fix (`canAutoFix`), `recordVerdict`
-  files and marks those `rc_*` comments `sent` to the invoking session as one `withReviewLock`
-  transaction (before spending the cycle) and the result text/card names their canonical ids. Filing and
-  marking must be atomic: a concurrent Review clear or a non-draft collision mid-flight would otherwise
-  leave open findings whose canonical ids the worker never received, wedging a later approve behind
-  drafts it cannot name — so a mark failure deletes the just-filed drafts and rejects the request. Otherwise `resolve_comment` — which only closes a `sent` comment
-  assigned to this worker, by its persisted id — can never satisfy the open-finding gate, wedging
-  request_changes → fix → approve. The terminal path ("do not fix") leaves them `draft` for the user.
-  Filing itself is all-or-nothing on every path: `fileFindings` deletes the drafts it already persisted if
-  a later write throws, and it always runs inside `withReviewLock` (the button and auto-fix-off paths take
-  the lock around filing; the tool path already holds it) so a concurrent Review send can't mark one
-  finding `sent` between two writes and defeat that compensation — an already-sent finding can't be
-  deleted, and would strand undelivered. On the **button path** filing goes further: `deliverFixToWorker`
-  files, records the cycle, selects the drafts, and marks them `sent` in ONE `withReviewLock` hold before
-  the (necessarily unlocked) chat send, so no interleaved Review send can mark the just-filed drafts
-  between filing and reservation — which would leave `itemFixFindings` (draft-only) empty and hand the
-  worker a generic request with no canonical ids while still spending a cycle. Failure splits on whether
-  filing completed: a *filing* failure throws (nothing recorded → the review cancels), any *post-filing*
-  failure records cycle 2 to give the auto cycle back and rolls marked findings to draft. The cycle-record
-  write is itself part of the filing transaction on every path: if it throws after the findings are
-  persisted, they are undone under the same lock — any `sent` assignment rolled back, then the drafts
-  deleted (`unfileFindings`) — before the cancel propagates, so a sidecar failure never leaves an open
-  finding whose id the worker never received. The record write is atomic in turn: `recordAgentChangesRequested`
-  (and `approveTodoReview`) persist the item's record, its auto-cycle count, and its pending-mark clear
-  as ONE snapshot write (`commitReviewTransition`), never three, so a partial failure can't strand the
-  item `changes_requested` at a spent cycle with pending still set. Pinned by the tool-path
-  finding-identity test, the interleaved-send / partial-persist / race-before-delivery / record-failure
-  regression tests in `planReview.test.ts`, and the one-snapshot atomicity test in `reviewFlow.test.ts`.
-- **The agent's in-session entry point is gated; the button is not.** The worker's `request_review` tool
-  is always registered, but kept in a session's active tool set only while the `agentReviewEnabled` config
-  flag is on. The host injects `setAgentReviewEnabledResolver(() => getConfig().agentReviewEnabled !== false)`
-  so the agent module never takes a settings edge (see `agent/SPEC.md`), and toggling the setting calls
-  `refreshAgentReviewTool()` to apply the change **live** to open sessions (idle sessions synchronously, a
-  streaming session at its next `agent_settled`). Because `setActiveToolsByName` rebuilds the system prompt
-  from only the active tools' guidelines, dropping the tool also drops its guidance — no stale "always
-  request_review" instruction survives a disable. It gates only the tool: the Review button
-  (`startPlanReview`) and its downstream auto-fix / auto-re-review are independent and always available.
-- **One review per plan at a time, one per step ever.** Both entry points serialize on the plan's chain
-  (`planReviewQueue.onPlanChain`): the button path via `enqueuePlanReview` (fire-and-forget), the worker's
-  `request_review` tool by awaiting `onPlanChain` for its result. The chain keeps Review All — and a tool
-  request racing a button review of a different step — from opening two provider streams at once; the
-  per-item claim keeps two verdicts from racing onto one record.
+- File findings through the existing Review service. Stamp each finding with the parent session, Plan step and reviewed SHA. Use an inline anchor only when it is valid; otherwise retain the finding as a review-level comment.
+- Expose the persisted `rc_*` IDs to the worker. The model's temporary IDs do not identify stored comments.
+- Hold `withReviewLock` while filing, marking findings sent, updating the step's review record and recording its guide. A concurrent Clear cannot split these operations. Child execution and worker execution run outside the lock.
+- Filing is all-or-nothing. If a later write fails, delete drafts already filed. If a record write fails after marking findings sent, roll them back before deleting them.
+- Save summary and reading order only after accepting the verdict. An accepted verdict replaces the old guide, including empty fields. Guide persistence is best-effort. Invalid output, failed filing and an approval blocked by open findings preserve the old guide.
+- An approval settles the step only when no open finding remains for that step. Otherwise clear pending, retain the prior review record and tell the worker to resolve the findings it fixed. Only the host can add `blockedByOpenFindings` to a result.
+- `resolve_comment` resolves a sent comment assigned to the invoking worker by canonical ID. Use the existing Review service and clear changes-requested state only when its findings are resolved.
 
-## Boundary
+## Fix budget and delivery
 
-- **Owns / public surface:** `startPlanReview(workspaceId, sessionId, itemId, runSubagent?)`,
-  `maybeAutoReReview(workspaceId, sessionId)`, `installRequestReviewSeam()`,
-  `setReviewFailedPublisher(fn)`, and the pure `parseVerdict` / `composeText`; `planReviewQueue`'s `enqueuePlanReview` / `onPlanChain` / `claimItemReview` /
-  `releaseItemReview` / `itemReviewActive` / `planReviewRunning`.
-- **Allowed deps:** `agent` (`runReviewSubagent`, `sendReviewFixToSession`, `getSessionWorkspaceId`,
-  `notifyExtUi`), `todos`, `reviews`, `settings`, and host siblings `ackSend` / `reviewLock` /
-  `todoReview` (the fix latch + finding scoping).
-- **Forbidden:** importing `requestReview` from `todoReview` (the dependency runs one way, so
-  `planReviewQueue` — which has no imports at all — is where both sides read the in-flight state);
-  reaching into `todos/reviews.ts` or `reviews/*` internals past their barrels.
-- **Testing:** `planReview.test.ts` injects a stub runner through `startPlanReview`'s last parameter and
-  drives the real record → file-findings → deliver path against a faux-model worker session, so the
-  verdict semantics are covered with no provider. One integration test omits the stub so the real
-  `runReviewSubagent` creates a delegated child (faux model, scripted verdict) and exercises child
-  creation → request_changes → canonical finding resolution → re-review → approve end to end.
-  `requestReview.test.ts` pins the pure parsing/compose rules.
+- Both entry points use `reviewAutoFix` and the persisted auto-cycle count. Permit one automatic fix cycle. The tool result states whether the worker must fix now or report the findings and wait for the user. Tool guidance must follow that result.
+- At cycle 1, the tool path files and marks canonical findings sent before returning them to the worker. The button path files findings, records the cycle and reserves its outgoing findings under one Review lock, then releases its review chain and item review claim before calling `sendReviewFixToSession` outside the lock. The worker may request re-review before its own run ends.
+- Keep the per-item fix claim until the queued SDK fix run settles. A stopped, closing or deleted session must reject delivery. The sender must not report a successful enqueue when no run was admitted.
+- On preparation or delivery failure after recording a request for changes, roll assigned findings back to draft and record terminal cycle 2 only while the stored review still equals that request. A later review result must survive an earlier fix run failing or stopping. Findings remain available in Review. Release the fix claim in `finally`.
+- `requestPlanFix` uses the same stored findings, canonical package and delivery primitive for the explicit Fix button. On failure, restore the previous Todo record only if it still belongs to that request.
+- Automatic re-review requires a completed step, cycle 1 and a new unreviewed commit delta. It must not spin on the same change set.
+
+## Module boundary
+
+Use the public barrels for `agent`, `todos`, `reviews`, `git`, `settings` and `workspaces`. Do not access SDK private fields or duplicate their stores. `todoReview` can read claim state from `planReviewQueue`; it must not import `requestReview`.
+
+Public flow functions are `startPlanReview`, `reviewAllPlan`, `requestPlanFix`, `maybeAutoReReview`, `installRequestReviewSeam` and `setReviewFailedPublisher`. `parseVerdict`, `composeText` and `itemTitleOf` are pure or injected lookup helpers.
+
+## Verification
+
+`planReview.test.ts` uses actual SDK child dispatch with `ScriptedModel` and a temporary local Git repository. It checks actual file reads and before/after snapshots, canonical findings and guide persistence, invalid-output retry cleanup, request-review → resolve-comment → approval, Stop cancellation, and automatic fix → resolve → completion → re-review within the worker run. A later worker failure cannot replace the approved result. The real host fixture also invokes `set_title` through the SDK and checks persisted titles and manual-name protection. `requestReview.test.ts` checks strict parsing and policy-dependent result text. `titleTool.test.ts` checks that a revoked grant blocks delayed title effects. No test requires a real API key or external provider.

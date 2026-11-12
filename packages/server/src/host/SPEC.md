@@ -106,7 +106,7 @@ model round. Stop delegates to agent cancellation and completes after owned exec
 Stage-2 queue, steering, compaction and recovery operations call the durable session owner. Stable input
 IDs survive wire replay; queue mutation addresses the input ID. Stop preserves queued input and completes
 after cleanup. Compaction carries an operation ID, and approval replies bind the tool call as well as the
-interaction. Plan review remains assigned to the subsequent group. Child and background execution use the SDK session owner. MCP configuration, validation,
+interaction. Stage-3 controls use the SDK session owner. MCP configuration, validation,
 per-entry approvals, OAuth, status and cleanup remain real
 services through `mcp.*`. `provider.loginReply`/`provider.loginCancel` serve only owned MCP OAuth flows;
 obsolete model-provider login routes remain absent. Skills catalog/trust/enable and child configuration
@@ -165,7 +165,8 @@ Git, PR, template and send behavior; retired service assertions are removed with
 `titleTool` keeps naming as an application service with explicit dependencies. Automatic naming uses
 `renameSession(...,{onlyIfUnnamed:true})` atomically, so an existing/manual chat title is retained.
 Workspace names are set once, are bounded at word boundaries, and retain the pending branch-move
-ownership rules for detached or externally switched HEAD. These services do not register a model tool.
+ownership rules for detached or externally switched HEAD. The host injects these services into the SDK
+title tools and resets the injection during teardown.
 
 `workspaceTools` keeps open-project/model selection, image/file attachment preparation, self-contained
 kickoff prompts, creation cancellation/error reporting and bounded status/final-message rendering.
@@ -174,12 +175,11 @@ capabilities. A projectless chat must select an open repository; the Chats conta
 
 `requestReview` retains host-stamped verdict parsing, normalized finding/reading-order paths, stripping
 of model-supplied host-only flags, item-title lookup across all plan collections, and result text that
-respects blocked approvals and the automatic-fix budget. Reviewer execution, tool registration and
-automatic review/fix orchestration remain separately gated; pure parsing is not a review execution.
-
-The session publisher observes `todo_*` completion through `isTodoToolEnd` and schedules
-`maybeAttachChangeArtifacts` for the owning workspace/session. The existing Todo service serializes
-Git artifact reconciliation; failures are logged without failing event publication.
+respects blocked approvals and the automatic-fix budget. Host startup installs the review/resolve tool
+handlers and failure publisher. `todo.startReview`, `todo.reviewAll` and `todo.requestFix` validate the
+parent session's workspace and invoke the same review owner. Artifact settlement triggers eligible
+automatic re-review. Shutdown clears these injected handlers and publishers. The independent reviewer,
+findings and compensation contracts live in [planReview.SPEC.md](planReview.SPEC.md).
 
 The host publishes owned resource lifecycle changes and routes parent-addressed child approvals through
 `attachApprovalOwner` before applying the original interaction receipt.

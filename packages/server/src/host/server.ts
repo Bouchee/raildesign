@@ -42,12 +42,15 @@ import {
 	isProjectSkillPath,
 	mayHoldProjectSkills,
 	resolveProviderAuthorization,
+	setAgentTitleHost,
 	setExtUiPublisher,
 	setMcpAuthorizationResolver,
 	setMcpLoginPublisher,
 	setMcpProjectResolver,
 	setMcpStatusPublisher,
 	setMcpToolGrantWriter,
+	setRequestReviewHandler,
+	setResolveCommentHandler,
 	setSessionCreatedPublisher,
 	setSessionDeletedPublisher,
 	setSessionProjectResolver,
@@ -58,9 +61,7 @@ import {
 	settleSessionsForShutdown,
 	watchUserMcpConfig,
 } from "../agent";
-
 import { forgetOpenBranchReview } from "../branch-review";
-
 import { watchUserFonts } from "../fonts";
 import { ignoredPaths } from "../git";
 import { watchLocalLocales } from "../locales";
@@ -126,7 +127,6 @@ import {
 	type WorkspaceLifecycleEvent,
 } from "../workspaces";
 import { seesChats } from "./chats";
-
 import { BLOB_PREFIX, FILES_PREFIX, serveBlob, serveWorktreeFile } from "./fileRoutes";
 import { serveUserFonts } from "./fontRoutes";
 import { setFsNudgePublisher } from "./fsNudge";
@@ -134,25 +134,28 @@ import { applyGitCeiling } from "./gitCeiling";
 import { handleRequest, requestMethodDiagnostic, workspaceCreationHandoff } from "./handlers";
 import { provisionInitialTerminal } from "./initialTerminal";
 import { reloadLiveSessions } from "./mcp";
-
 import {
 	type ReplayLoad,
 	RequestReplayCache,
 	RequestReplayOverflowError,
 } from "./requestReplayCache";
-
+import {
+	installRequestReviewSeam,
+	maybeAutoReReview,
+	setReviewFailedPublisher,
+} from "./requestReview";
 import { hostSearch, setSearchTextPublisher } from "./search";
 import {
 	REVIEW_REFRESH_INTERVAL_MS,
 	refreshOpenProjectReviews,
 	stampSessionActivity,
 } from "./settledLifecycle";
-
 import {
 	BACKPRESSURE_RECONCILE_MS,
 	drainedClientKeys,
 	terminalDeliveryForSendStatus,
 } from "./terminalSend";
+import { titleToolHost } from "./titleTool";
 
 export interface CreateServerOptions {
 	port?: number;
@@ -281,6 +284,8 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 		}
 	});
 	setSessionResourceCleanup(closeSessionMcpConnections);
+	setAgentTitleHost(titleToolHost);
+	installRequestReviewSeam();
 	setMcpProjectResolver((workspaceId) => {
 		try {
 			const workspace = getWorkspace(workspaceId);
@@ -869,14 +874,17 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 	);
 	setSessionPublisher((payload, workspaceId) => {
 		if (isTodoToolEnd(payload.event))
-			void maybeAttachChangeArtifacts(workspaceId, payload.sessionId).catch((error) =>
-				log.warn("Plan artifact update failed", error),
-			);
+			void maybeAttachChangeArtifacts(workspaceId, payload.sessionId)
+				.then(() => maybeAutoReReview(workspaceId, payload.sessionId))
+				.catch((error) => log.warn("Plan artifact update failed", error));
 		void turnTracker
 			.observe(payload.sessionId, payload.event)
 			.catch((error) => log.warn("turn snapshot failed", error));
 		publishScoped(WS_CHANNELS.sessionEvent, payload, { workspaceId });
 	});
+	setReviewFailedPublisher((failure) =>
+		publishScoped(WS_CHANNELS.reviewFailed, failure, { workspaceId: failure.workspaceId }),
+	);
 
 	setExtUiPublisher((request) => {
 		const workspaceId = getSessionWorkspaceId(request.sessionId);
@@ -976,6 +984,10 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 function restoreSeamDefaults(): void {
 	setSkillPathClassifier(null);
 	setSessionResourceCleanup(undefined);
+	setAgentTitleHost(undefined);
+	setRequestReviewHandler(undefined);
+	setResolveCommentHandler(undefined);
+	setReviewFailedPublisher(() => {});
 	setSessionResourcesPublisher(() => {});
 	setMcpToolGrantWriter(undefined);
 	setMcpProjectResolver(undefined);

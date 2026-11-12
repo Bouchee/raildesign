@@ -246,6 +246,7 @@ import {
 	reloadLiveSessions,
 } from "./mcp";
 import { resolveNewChatModel } from "./newChatModel";
+import { requestPlanFix, reviewAllPlan, startPlanReview } from "./requestReview";
 import { withChangeLock, withReviewLock } from "./reviewLock";
 import { hostSearch, publishSearchText } from "./search";
 import { findWorkspaceReviewOutcome, scheduleLifecyclePass } from "./settledLifecycle";
@@ -343,6 +344,15 @@ async function attachInteractionSession(sessionId: string): Promise<void> {
 	)
 		throw new Error("Session is unavailable in its workspace");
 }
+async function attachPlanSession(params: {
+	workspaceId: string;
+	sessionId: string;
+}): Promise<void> {
+	if (readSessionRecord(params.sessionId)?.workspaceId !== params.workspaceId)
+		throw new Error("This Plan belongs to another workspace");
+	await attachInteractionSession(params.sessionId);
+}
+
 function revealDataFolder(dir: string) {
 	mkdirSync(dir, { recursive: true });
 	revealInFileManager(dir);
@@ -749,6 +759,21 @@ const handlers: WsHandlers = {
 	},
 
 	"todo.generateSummary": (params) => generateTodoSummary(params),
+	"todo.startReview": async (params) => {
+		await attachPlanSession(params);
+		startPlanReview(params.workspaceId, params.sessionId, params.id);
+		return { ok: true };
+	},
+	"todo.reviewAll": async (params) => {
+		await attachPlanSession(params);
+		return reviewAllPlan(params.workspaceId, params.sessionId);
+	},
+	"todo.requestFix": async (params) => {
+		await attachPlanSession(params);
+		await ackSend(requestPlanFix(params));
+		return { ok: true };
+	},
+
 	"git.status": (p) => {
 		void ensureWatch(p.workspaceId);
 		return gitStatus(p.workspaceId, p.scope);

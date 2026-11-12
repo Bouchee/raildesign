@@ -816,7 +816,7 @@ export interface WebAccessStatus {
 	configured: boolean;
 }
 
-/** An OpenAI-compatible `custom-*` provider in pi's `models.json`. The key itself never crosses the wire. */
+/** A configured Responses endpoint. Stored credentials stay on the host. */
 export interface CustomEndpoint {
 	id: string;
 	name: string;

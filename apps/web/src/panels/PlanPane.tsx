@@ -68,16 +68,18 @@ import { StatusIcon } from "../chat/TodoList";
 import { useToolInteraction } from "../chat/toolInteraction";
 import { getToolRenderer } from "../chat/toolRegistry";
 import { hydrateSessionRuntime, useChatTodos } from "../chat/useChatTodos";
+import { useModelCatalog } from "../chat/useModelCatalog";
 import { copyText } from "../lib";
 import {
 	isChatWorkspace,
 	selectAgentReviewCommentCount,
+	selectCatalogModel,
 	selectChatName,
 	selectChatTitle,
 	selectWorkspaceById,
 	useAppStore,
 } from "../store";
-import { errorText, getTransport, respondToTool } from "../transport";
+import { errorText, getTransport, respondToTool, supportsPlanReview } from "../transport";
 import { DiffStatBadge } from "./DiffStatBadge";
 import { openChatInTab } from "./openChat";
 import { openDiffInTab, openFileInTab } from "./openTabs";
@@ -916,7 +918,16 @@ export default function PlanPane({
 		hydrateSessionRuntime(workspaceId, sessionId).catch(() => {});
 	}, [connection, hasRuntime, workspaceId, sessionId]);
 	const workspaceSettlingSupported = useAppStore((s) => s.workspaceSettlingSupported);
-	const canReview = false;
+	useModelCatalog(connection === "connected");
+	const reviewReady = useAppStore(
+		(s) =>
+			supportsPlanReview(s.protocolVersion) &&
+			!!s.sessionStateByWorkspace[workspaceId]?.[sessionId] &&
+			!s.deletedSessionsByWorkspace[workspaceId]?.[sessionId] &&
+			(s.reviewModel ? selectCatalogModel(s.models, s.reviewModel) !== null : s.models.length > 0),
+	);
+	const canReview =
+		connection === "connected" && hasRuntime && workspace !== null && !chat && reviewReady;
 	const {
 		review: branchReview,
 		url: branchReviewUrl,

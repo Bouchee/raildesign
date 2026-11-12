@@ -30,7 +30,6 @@ export interface SkillToolOptions {
 	loadOptions?: SkillLoadOptions;
 	manualSkills?: readonly string[];
 	allowedSkills?: readonly string[];
-	markToolFailed?: (callId: string | undefined) => void;
 	assertActive: () => void;
 	signal: AbortSignal;
 }
@@ -105,16 +104,13 @@ export function expandSkillCommand(options: SkillToolOptions, input: string): st
 
 export function createSkillTools(options: SkillToolOptions): Tool[] {
 	return [
-		createSkillSearchTool(() => admittedSkills(options), options.markToolFailed),
+		createSkillSearchTool(() => admittedSkills(options)),
 		tool({
 			name: "skill_read",
 			description:
 				"Read an approved Skill body or a text resource inside that Skill. Use null for the Skill body.",
 			parameters: z.object({ name: z.string().min(1), path: z.string().min(1).nullable() }),
-			errorFunction: (_context, error, details) => {
-				options.markToolFailed?.(details?.toolCall?.callId);
-				return (error instanceof Error ? error.message : String(error)).slice(0, 4096);
-			},
+			errorFunction: null,
 			execute: ({ name, path }) => readAdmittedSkill(options, name, path),
 		}),
 	];

@@ -10,7 +10,6 @@ import {
 	storeFor,
 	stringEnum,
 	textResult,
-	toolError,
 	withNudges,
 } from "./shared.ts";
 
@@ -72,8 +71,7 @@ export function createTodoUpdate(services: TodoToolServices) {
 			"Update one item by id (status, title, or note) — the tool for progressing your plan: flip an item to in_progress when you start it and done when you finish. Marking done is how items complete — they STAY in the list as history (don't remove them). This is the safe way to edit the list: it touches only the one item.",
 		strict: false,
 		parameters: { ...parameters, required: parameters.required ?? [], additionalProperties: true },
-		errorFunction: (_context, error, details) =>
-			toolError(services, error, details?.toolCall?.callId),
+		errorFunction: null,
 		async execute(params) {
 			services.assertActive();
 			if (!Value.Check(parameters, params)) throw new Error("Invalid tool arguments");

@@ -8,7 +8,7 @@ export interface SetTitleParams {
 	branch?: string;
 }
 export interface TitleToolHost {
-	apply: (sessionId: string, params: SetTitleParams) => Promise<string>;
+	apply: (sessionId: string, params: SetTitleParams, assertActive: () => void) => Promise<string>;
 	workspaceNeedsName: (sessionId: string) => boolean;
 }
 
@@ -28,23 +28,25 @@ const KEPT_BRANCH_REASON = {
 } satisfies Record<NonNullable<ReturnType<typeof renameWorkspace>["branchKept"]>, string>;
 
 export interface AgentTitleDeps {
+	assertActive: () => void;
 	workspaceOf: (sessionId: string) => string | undefined;
 	writeChatTitle: (
 		sessionId: string,
 		workspaceId: string,
 		cwd: string,
 		title: string,
-		options?: { onlyIfUnnamed?: boolean },
+		options: { onlyIfUnnamed: true; assertActive: () => void },
 	) => Promise<boolean>;
 }
 
-const liveDeps: AgentTitleDeps = {
+const liveDeps: Omit<AgentTitleDeps, "assertActive"> = {
 	workspaceOf: getSessionWorkspaceId,
 	writeChatTitle: renameSession,
 };
 
 export const titleToolHost: TitleToolHost = {
-	apply: (sessionId, params) => applyAgentTitle(sessionId, params),
+	apply: (sessionId, params, assertActive) =>
+		applyAgentTitle(sessionId, params, { ...liveDeps, assertActive }),
 	workspaceNeedsName,
 };
 
@@ -60,8 +62,9 @@ function isNameable(workspace: Workspace): boolean {
 export async function applyAgentTitle(
 	sessionId: string,
 	params: SetTitleParams,
-	deps: AgentTitleDeps = liveDeps,
+	deps: AgentTitleDeps,
 ): Promise<string> {
+	deps.assertActive();
 	const workspaceId = deps.workspaceOf(sessionId);
 	if (!workspaceId) throw new Error("set_title is only available in a top-level chat.");
 	const chatTitle = clampWords(params.chat_title, SESSION_TITLE_MAX_LENGTH);
@@ -78,6 +81,7 @@ export async function applyAgentTitle(
 
 	const lines: string[] = [];
 	if (chatTitle) lines.push(await applyChatTitle(deps, sessionId, workspaceId, chatTitle));
+	deps.assertActive();
 	if (workspaceName)
 		lines.push(applyWorkspaceName(sessionId, workspaceId, workspaceName, params.branch));
 	return lines.join("\n");
@@ -99,8 +103,10 @@ async function applyChatTitle(
 ) {
 	try {
 		const cwd = getWorkspace(workspaceId).worktreePath;
+		deps.assertActive();
 		const applied = await deps.writeChatTitle(sessionId, workspaceId, cwd, title, {
 			onlyIfUnnamed: true,
+			assertActive: deps.assertActive,
 		});
 		return applied
 			? `Chat title set to "${title}".`

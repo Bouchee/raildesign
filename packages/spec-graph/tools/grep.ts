@@ -4,7 +4,7 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { DEFAULT_GREP_LIMIT, formatGrepMatch, type GrepResult, grepSpecs } from "../core/index.ts";
 import type { SpecToolServices } from "./shared.ts";
-import { errorResult, getIndex, textResult, toolError } from "./shared.ts";
+import { errorResult, getIndex, textResult } from "./shared.ts";
 
 const parameters = Type.Object({
 	pattern: Type.String({ description: "Regex or substring to search for within spec files." }),
@@ -44,8 +44,7 @@ export function createSpecGrep(services: SpecToolServices) {
 			"Search the project's spec-graph: regex or substring match within spec files (files whose frontmatter carries `id` + `type`), optionally narrowed by metadata (type / tag / parent / depends-on). Returns size-bounded pages of path:line matches; follow the returned offset only if needed. Oversized text is capped at 2,000 lines / 50 KiB with full output in a temporary file. Read a matched file's body with the normal read tool.",
 		strict: false,
 		parameters: { ...parameters, required: parameters.required ?? [], additionalProperties: true },
-		errorFunction: (_context, error, details) =>
-			toolError(services, error, details?.toolCall?.callId),
+		errorFunction: null,
 		async execute(params) {
 			services.assertActive();
 			if (!Value.Check(parameters, params)) throw new Error("Invalid tool arguments");

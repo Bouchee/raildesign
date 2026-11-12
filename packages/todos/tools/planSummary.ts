@@ -11,7 +11,7 @@ import type { TodoToolServices } from "./shared.ts";
 
 import { Type } from "typebox";
 import { flatItems } from "../core/index.ts";
-import { storeFor, textResult, toolError, withNudges } from "./shared.ts";
+import { storeFor, textResult, withNudges } from "./shared.ts";
 
 const parameters = Type.Object({
 	summary: Type.String({
@@ -27,8 +27,7 @@ export function createTodoPlanSummary(services: TodoToolServices) {
 			"Set the plan's overall completion summary — a short, CUMULATIVE handoff note covering EVERYTHING done across the whole plan (all tasks, all completions), not just the last step. Call it right after the last open item flips done (the todo_update result nudges you). When a summary from an earlier completion still exists, EXTEND it rather than rewriting from scratch. Shape it as a PR body (three H2 sections: '## Summary' / '## Changes' / '## Testing') — the host prepends this verbatim when it renders the PR body, so a well-shaped summary ships as-is. Not per-item: an item's own summary goes on todo_update's summary field.",
 		strict: false,
 		parameters: { ...parameters, required: parameters.required ?? [], additionalProperties: true },
-		errorFunction: (_context, error, details) =>
-			toolError(services, error, details?.toolCall?.callId),
+		errorFunction: null,
 		async execute(params) {
 			services.assertActive();
 			if (!Value.Check(parameters, params)) throw new Error("Invalid tool arguments");

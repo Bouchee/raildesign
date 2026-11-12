@@ -14,14 +14,7 @@ import {
 	serializeFrontmatter,
 } from "../core/index.ts";
 import type { SpecToolServices } from "./shared.ts";
-import {
-	errorResult,
-	getIndex,
-	scaffoldBody,
-	stringEnum,
-	textResult,
-	toolError,
-} from "./shared.ts";
+import { errorResult, getIndex, scaffoldBody, stringEnum, textResult } from "./shared.ts";
 
 const parameters = Type.Object({
 	path: Type.String({
@@ -55,8 +48,7 @@ export function createSpecCreate(services: SpecToolServices) {
 		needsApproval: true,
 		strict: false,
 		parameters: { ...parameters, required: parameters.required ?? [], additionalProperties: true },
-		errorFunction: (_context, error, details) =>
-			toolError(services, error, details?.toolCall?.callId),
+		errorFunction: null,
 		async execute(params) {
 			services.assertActive();
 			if (!Value.Check(parameters, params)) throw new Error("Invalid tool arguments");

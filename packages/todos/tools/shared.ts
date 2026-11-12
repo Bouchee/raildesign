@@ -21,7 +21,6 @@ export interface TodoToolServices {
 	cwd: string;
 	sessionId: string;
 	assertActive(): void;
-	markToolFailed(callId: string | undefined): void;
 }
 
 export function storeFor(services: TodoToolServices): TodoStore {
@@ -69,16 +68,6 @@ export async function errorResult(message: string): Promise<ToolResult<{ error: 
 	const inline = `Error: ${message}`;
 	const text = truncateHead(inline).truncated ? `Error:\n${message}` : inline;
 	return { ...(await textResult(text, { error: message })), isError: true };
-}
-
-export async function toolError(
-	services: TodoToolServices,
-	error: unknown,
-	callId: string | undefined,
-): Promise<string> {
-	services.markToolFailed(callId);
-	const result = await errorResult(error instanceof Error ? error.message : String(error));
-	return result.content.map((block) => block.text).join("\n");
 }
 
 const GLYPH: Record<Todo["status"], string> = {

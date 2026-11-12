@@ -3,7 +3,7 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { graphSlice, LINK_KINDS, SLICE_DIRECTIONS } from "../core/index.ts";
 import type { SpecToolServices } from "./shared.ts";
-import { errorResult, getIndex, stringEnum, textResult, toolError } from "./shared.ts";
+import { errorResult, getIndex, stringEnum, textResult } from "./shared.ts";
 
 const parameters = Type.Object({
 	root: Type.String({ description: "Id of the node to start from." }),
@@ -26,8 +26,7 @@ export function createSpecGraph(services: SpecToolServices) {
 			"Return a bounded slice of the spec-graph rooted at a node: `subtree` (down the parent tree), `ancestors` (up to the tree root), or `neighbors` (across a chosen edge and its reverse). Bounded by `depth` (default 1).",
 		strict: false,
 		parameters: { ...parameters, required: parameters.required ?? [], additionalProperties: true },
-		errorFunction: (_context, error, details) =>
-			toolError(services, error, details?.toolCall?.callId),
+		errorFunction: null,
 		async execute(params) {
 			services.assertActive();
 			if (!Value.Check(parameters, params)) throw new Error("Invalid tool arguments");

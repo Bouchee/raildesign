@@ -3,14 +3,7 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 import type { TodoPromoteFailure } from "../core/index.ts";
 import type { TodoToolServices } from "./shared.ts";
-import {
-	consistencyNudge,
-	errorResult,
-	storeFor,
-	textResult,
-	toolError,
-	withNudges,
-} from "./shared.ts";
+import { consistencyNudge, errorResult, storeFor, textResult, withNudges } from "./shared.ts";
 
 const FAILURE_MESSAGES: Record<TodoPromoteFailure, (id: string, title?: string) => string> = {
 	"unknown-id": (id) =>
@@ -43,8 +36,7 @@ export function createTodoPromote(services: TodoToolServices) {
 			'Promote one loose item into a group of its own in a single atomic step. The item disappears from the loose lane and a group inherits its id (and its title, unless you pass `title`). No duplicate window and no `todo_remove` dance — this IS the promotion. Use it the moment you take a loose item into work (typically a user-authored ask): one `todo_promote`, then `todo_add` the first step and flip it `in_progress`. The empty group is a valid "task taken, plan forming" state — don\'t backfill it with a synthetic placeholder.',
 		strict: false,
 		parameters: { ...parameters, required: parameters.required ?? [], additionalProperties: true },
-		errorFunction: (_context, error, details) =>
-			toolError(services, error, details?.toolCall?.callId),
+		errorFunction: null,
 		async execute(params) {
 			services.assertActive();
 			if (!Value.Check(parameters, params)) throw new Error("Invalid tool arguments");

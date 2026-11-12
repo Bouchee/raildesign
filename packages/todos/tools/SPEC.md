@@ -17,7 +17,7 @@ The tools do not create sessions or perform Git operations.
 ## Public surface
 
 The barrel exports `createTodoTools` and `TodoToolServices`.
-Services provide `cwd`, `sessionId`, `assertActive` and `markToolFailed`.
+Services provide `cwd`, `sessionId` and `assertActive`.
 Each invocation checks the run grant before store access.
 TypeBox validates raw SDK arguments at the tool boundary.
 Status schemas derive from the core tuples.

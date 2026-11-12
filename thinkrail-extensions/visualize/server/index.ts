@@ -27,13 +27,7 @@ export default defineServerExtension({
 				required: VisualizeSchema.required ?? [],
 				additionalProperties: true,
 			},
-			errorFunction: (_context, error, details) => {
-				if (details?.toolCall) session.markToolFailed(details.toolCall.callId);
-				return JSON.stringify({
-					isError: true,
-					error: error instanceof Error ? error.message : String(error),
-				});
-			},
+			errorFunction: null,
 			async execute(params) {
 				session.assertActive();
 				if (!Value.Check(VisualizeSchema, params))

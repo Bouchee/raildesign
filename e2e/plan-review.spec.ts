@@ -14,7 +14,7 @@ import { commitFile, gitAs } from "./fixtures/git";
 // a kebab menu. Actually settling a review (the review subagent's verdict, ask-to-fix's fix cycle,
 // Check All's pass) is @agent territory; the seeded JSON here is exactly the shape those leave behind.
 
-test("reviewable steps show the reviewed counter, Check it, and the settled Checked state", async ({
+test("reviewable steps enable SDK review controls and show settled review state", async ({
 	page,
 }) => {
 	await openFixtureProject(page);
@@ -176,9 +176,9 @@ test("reviewable steps show the reviewed counter, Check it, and the settled Chec
 	await expect(openItem).toHaveAttribute("data-expanded", "false");
 	await expect(openItem.getByTestId("todo-verification-glyph")).toBeVisible();
 	await expect(openItem.getByTestId("plan-item-summary")).not.toBeVisible();
-	// Historical review status remains visible; agent review execution is unavailable.
+	// The registered model and current host enable the existing independent review entry point.
 	await expect(openItem.getByTestId("plan-start-review")).toHaveCount(1);
-	await expect(openItem.getByTestId("plan-start-review")).toBeDisabled();
+	await expect(openItem.getByTestId("plan-start-review")).toBeEnabled();
 	await openItem.getByTestId("plan-item-toggle").click();
 	await expect(openItem).toHaveAttribute("data-expanded", "true");
 	await expect(openItem.getByTestId("plan-item-summary")).toContainText(
@@ -189,11 +189,11 @@ test("reviewable steps show the reviewed counter, Check it, and the settled Chec
 	await expect(verification).toContainText("bun test — 12 pass");
 	await expect(verification).toHaveAttribute("data-status", "claimed");
 
-	// Export remains available; the advanced Check All action is disabled.
+	// Export and Check All remain available for the current host and model.
 	await pane.getByTestId("plan-menu").click();
 	await expect(page.getByTestId("plan-copy-markdown")).toBeVisible();
 	await expect(page.getByTestId("plan-save-markdown")).toBeVisible();
-	await expect(page.getByTestId("plan-review-all")).toHaveAttribute("data-disabled", "");
+	await expect(page.getByTestId("plan-review-all")).not.toHaveAttribute("data-disabled", "");
 	await page.keyboard.press("Escape");
 
 	// The unsettled step: the row's review slot holds the primary Check it button (clicking it asks the

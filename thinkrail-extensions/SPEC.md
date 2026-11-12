@@ -22,7 +22,7 @@ The server entry exports `defineServerExtension` data with a stable name and opt
 `sdkChildTools` supplies tools only to permitted child definitions.
 `interactiveTools` declares response validation and restored-response text.
 Boolean settings belong to the descriptor and the host stores their values.
-`skillPackages` identifies packages whose `pi.skills` declarations supply Skill roots.
+`skillPackages` identifies packages with top-level Skill root declarations.
 There are no Pi factories or extension loaders.
 
 The server registry records each descriptor and its public specifier.

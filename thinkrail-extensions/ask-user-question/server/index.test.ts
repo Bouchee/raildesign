@@ -37,7 +37,6 @@ function compose(
 	assertActive: () => void = () => {},
 ) {
 	const calls: string[] = [];
-	const failures: string[] = [];
 	const services: SdkToolServices = {
 		webAccess: {
 			search: async () => {
@@ -53,9 +52,6 @@ function compose(
 			calls.push(callId);
 			return response;
 		},
-		markToolFailed(callId) {
-			failures.push(callId);
-		},
 		setting: () => richPreviews,
 		workspaceFiles: { check, scratchDir: ".raildesign/context/mockups/" },
 	};
@@ -64,7 +60,6 @@ function compose(
 	return {
 		tool,
 		calls,
-		failures,
 		async execute(input: unknown = args, callId = "tc") {
 			const output = await tool.invoke(new RunContext({}), JSON.stringify(input), {
 				toolCall: {
@@ -121,7 +116,6 @@ describe("the SDK question tool", () => {
 		]) {
 			const fixture = compose({ kind: "response", value });
 			await expect(fixture.execute()).rejects.toThrow();
-			expect(fixture.failures).toEqual(["tc"]);
 		}
 	});
 

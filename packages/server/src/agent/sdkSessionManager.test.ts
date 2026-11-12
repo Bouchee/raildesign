@@ -106,7 +106,6 @@ afterEach(() => {
 const command = (callId: string, command: string) =>
 	modelResponse([functionCall("bash", JSON.stringify({ command, timeoutMs: 10000 }), { callId })]);
 const done = () => modelResponse([assistantMessage("done")]);
-
 function offlineWeb(reply: (request: Request) => Response | Promise<Response>) {
 	const implementation = async (
 		input: Parameters<typeof fetch>[0],
@@ -410,6 +409,11 @@ test("tool failure status follows actual execution and preserves successful erro
 			functionCall("read", { path: "fixture.txt" }, { callId: "successful-read" }),
 			functionCall("read", { path: "missing.txt" }, { callId: "failed-read" }),
 			functionCall("read", "{invalid", { callId: "malformed-read" }),
+			functionCall("read", { path: null }, { callId: "invalid-read" }),
+			functionCall("skill_read", { name: "", path: null }, { callId: "invalid-skill-read" }),
+			functionCall("skill_search", { query: "", limit: null }, { callId: "invalid-skill-search" }),
+			functionCall("todo_list", "{invalid", { callId: "invalid-todo" }),
+			functionCall("spec_search", "{invalid", { callId: "invalid-spec" }),
 		]),
 		command("failed-command", "printf failed-command; exit 7"),
 		done(),
@@ -425,12 +429,22 @@ test("tool failure status follows actual execution and preserves successful erro
 	const results = readSessionRecord(created.sessionId)?.messages.filter(
 		(message) => message.role === "toolResult",
 	);
-	expect(results).toHaveLength(4);
+	expect(results).toHaveLength(9);
 	expect(results?.find((message) => message.toolCallId === "successful-read")).toMatchObject({
 		isError: false,
 		content: [{ type: "text", text: contents }],
 	});
-	for (const callId of ["successful-read", "failed-read", "malformed-read", "failed-command"]) {
+	for (const callId of [
+		"successful-read",
+		"failed-read",
+		"malformed-read",
+		"failed-command",
+		"invalid-read",
+		"invalid-skill-read",
+		"invalid-skill-search",
+		"invalid-todo",
+		"invalid-spec",
+	]) {
 		const failed = callId !== "successful-read";
 		expect(results?.find((message) => message.toolCallId === callId)).toMatchObject({
 			isError: failed,
@@ -440,6 +454,9 @@ test("tool failure status follows actual execution and preserves successful erro
 		);
 		expect(endings).toHaveLength(1);
 		expect(endings[0]?.event).toMatchObject({ isError: failed });
+		if (!["malformed-read", "invalid-todo", "invalid-spec"].includes(callId))
+			expect(readSessionRecord(created.sessionId)?.effects[callId]?.isError).toBe(failed);
+		else expect(readSessionRecord(created.sessionId)?.effects[callId]).toBeUndefined();
 	}
 	model.assertComplete();
 });

@@ -122,13 +122,7 @@ export default defineServerExtension({
 				await validatedSdkArgs(session, args);
 				return true;
 			},
-			errorFunction: (_context, error, details) => {
-				if (details?.toolCall) session.markToolFailed(details.toolCall.callId);
-				return JSON.stringify({
-					isError: true,
-					error: error instanceof Error ? error.message : String(error),
-				});
-			},
+			errorFunction: null,
 			async execute(rawArgs, _context, details) {
 				const args = await validatedSdkArgs(session, rawArgs);
 				if (!details?.toolCall) throw new Error("Question has no call identity");

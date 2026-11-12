@@ -6,7 +6,6 @@ const services: Omit<SdkToolServices, "setting"> = {
 	cwd: "/workspace",
 	assertActive: () => {},
 	toolResponse: () => ({ kind: "deferred" }),
-	markToolFailed: () => {},
 	workspaceFiles: { check: async () => {}, scratchDir: "" },
 	webAccess: { search: async () => "", fetch: async () => "" },
 };

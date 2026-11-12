@@ -27,7 +27,6 @@ export interface SdkToolServices {
 	cwd: string;
 	assertActive(): void;
 	toolResponse(toolCallId: string): ToolResponse;
-	markToolFailed(toolCallId: string): void;
 	setting(key: string): boolean;
 	workspaceFiles: WorkspaceFiles;
 }

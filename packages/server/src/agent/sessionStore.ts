@@ -64,6 +64,7 @@ export interface SummaryReceipt {
 
 export interface ChildRunRecord {
 	parentSessionId: string;
+	purpose?: "review" | undefined;
 	toolCallId: string;
 	task: string;
 	definition: AgentDefinition;
@@ -261,6 +262,7 @@ const recordSchema = z.object({
 	childRun: z
 		.object({
 			parentSessionId: idSchema,
+			purpose: z.literal("review").optional(),
 			toolCallId: z.string().min(1),
 			task: z.string(),
 			definition: z.object({

@@ -3,7 +3,7 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { isValid, validateGraph } from "../core/index.ts";
 import type { SpecToolServices } from "./shared.ts";
-import { getIndex, textResult, toolError } from "./shared.ts";
+import { getIndex, textResult } from "./shared.ts";
 
 const parameters = Type.Object({});
 
@@ -14,8 +14,7 @@ export function createSpecValidate(services: SpecToolServices) {
 			"Validate the spec-graph: report dangling parent/depends-on/references/implements links, duplicate ids, and parent cycles.",
 		strict: false,
 		parameters: { ...parameters, required: parameters.required ?? [], additionalProperties: true },
-		errorFunction: (_context, error, details) =>
-			toolError(services, error, details?.toolCall?.callId),
+		errorFunction: null,
 		async execute(_params) {
 			services.assertActive();
 			if (!Value.Check(parameters, _params)) throw new Error("Invalid tool arguments");

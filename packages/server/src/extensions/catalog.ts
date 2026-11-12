@@ -20,7 +20,6 @@ function describeEntry({ extension }: ServerExtensionEntry): ExtensionDescriptio
 		cwd: "",
 		assertActive: unavailable,
 		toolResponse: unavailable,
-		markToolFailed: unavailable,
 		workspaceFiles: { check: async () => unavailable(), scratchDir: "" },
 		setting(key) {
 			const setting = extension.settings?.[key];
