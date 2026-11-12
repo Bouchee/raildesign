@@ -203,11 +203,14 @@ Ordinary workspace reads retain their existing boundary.
 The host expands `/skill:name` from actual admitted content.
 Manual-only Skills require an explicit user command before model access.
 
-Child resource ownership and cancellation helpers use local `ChildHandle`, `DelegationService` and
-`LifecycleEvent` interfaces with application-owned run details. They validate supplied snapshots and
-wait for owned cleanup; they do not construct a child executor. The unused Pi delegation and subagent
-packages are removed. SDK child execution, definition discovery and concurrency remain Stage 3 work.
-These policy tests do not claim child Runner or MCP/Skill tool live acceptance.
+Child execution uses SDK `Agent.asTool()` for foreground delegation and the same session owner for
+background tasks. Separate durable child records retain definition, parent, tool-call identity,
+approval checkpoint, completion-delivery state and transcript. Current enable policy, project trust
+and concurrency limits apply on admission and execution. Definition tool and Skill allowlists narrow
+the actual SDK graph; children have no MCP or nested delegation tools. Standalone-chat children have
+no Spec tools. Foreground initialization, restoration and invocation failures release the child slot.
+Only the manager's real SDK records supply child ownership; obsolete fake delegation-service adapters
+are removed.
 
 Image dimensions, MIME detection and payload/request budgets remain in the pure `imageGuard` module.
 Its retained tests validate those rules; the current verified text-only model does not enable vision.
@@ -271,3 +274,27 @@ transcript; the model receives bounded text. The existing TodoStore owns all Pla
 Repository sessions compose eight `@thinkrail/spec-graph` FunctionTools and SPEC_RULE. Standalone
 chats receive neither. Create, update and delete use SDK approval interruptions before filesystem effects;
 all tools recheck the run grant and preserve the core's path and frontmatter validation.
+
+## SDK background work and resources
+
+`backgroundCommands` owns bounded noninteractive process execution through the subprocess module.
+The manager retains output in resource history, publishes lifecycle changes and delivers each completion
+once at a safe boundary. Normal parent completion leaves background work running. Parent Stop revokes
+owned run grants, cancels child admissions, recursively disposes child-owned commands and waits for
+cleanup, including commands retained by already completed children. Single-child and stop-all controls
+use the same cleanup; a completed child keeps its settled status. The child completion gate stays closed
+through process settlement, preventing a cleanup-generated result from starting another run.
+
+Resource routes validate workspace and owning parent identities before reading output, child transcripts
+or applying controls. Historical text and archived records grant no process authority. `ChatView` uses
+these routes for the existing resource dock/inspector. Child sessions stay out of the ordinary chat list;
+foreground SDK usage and background child usage are each counted once. Reload refuses active owned work.
+SDK tests exercise approval restart, once-only completion, grant revocation during admission, actual
+child tool graphs and OS process termination. Browser and live gates validate the composed controls.
+
+The parent resource view includes commands owned by its direct children in the same workspace.
+Command summaries retain their actual owner session ID. The manager derives this authorized owner set
+once for resource queries, output/history reads and Stop routing; unrelated child archives are excluded.
+Child command completion is delivered once to the parent's safe boundary and never restarts a completed
+child. Historical output lookup uses the complete owned history, independent of the visible 20-row window.
+Cleanup waits for all outcomes before reopening completion gates, including failed cleanup attempts.

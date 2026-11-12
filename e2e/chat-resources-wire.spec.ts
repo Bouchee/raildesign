@@ -3,7 +3,7 @@ import { enterDefaultWorkspace, openFixtureProject, openPersistedChat } from "./
 import { seedWorkspaceSession } from "./fixtures/sessions";
 import { E2eWire } from "./fixtures/wire";
 
-test("historical process text cannot expose unavailable resource execution endpoints", async ({
+test("resource catalogues enforce ownership and historical text grants no control", async ({
 	page,
 }) => {
 	await openFixtureProject(page);
@@ -28,26 +28,45 @@ test("historical process text cannot expose unavailable resource execution endpo
 		await enterDefaultWorkspace(page);
 		await openPersistedChat(page, "Resource history");
 		const scope = { workspaceId: workspace.id, sessionId: parent.id };
-		await expect(wire.request("session.resources", scope)).rejects.toThrow(/Unknown method/);
+		expect(await wire.request("session.resources", scope)).toMatchObject({
+			...scope,
+			commands: [],
+			subagents: [],
+		});
 		await expect(
-			wire.request("session.resourceHistory", { ...scope, kind: "command" }),
-		).rejects.toThrow(/Unknown method/);
-		await expect(
-			wire.request("backgroundCommand.output", { ...scope, commandId: "old-command" }),
-		).rejects.toThrow(/Unknown method/);
+			wire.request("session.resources", { ...scope, sessionId: "missing-parent" }),
+		).rejects.toMatchObject({ code: "RESOURCE_UNAVAILABLE" });
+		expect(await wire.request("session.resourceHistory", { ...scope, kind: "command" })).toEqual({
+			kind: "command",
+			items: [],
+			hasMore: false,
+		});
+		expect(
+			await wire.request("backgroundCommand.output", { ...scope, commandId: "old-command" }),
+		).toEqual({ available: false });
 		await expect(
 			wire.request("backgroundCommand.stop", { ...scope, commandId: "old-command" }),
-		).rejects.toThrow(/Unknown method/);
+		).rejects.toThrow(/Resource unavailable/);
 		await expect(
 			wire.request("subagent.stop", {
 				workspaceId: workspace.id,
 				parentSessionId: parent.id,
 				childSessionId: "old-child",
 			}),
-		).rejects.toThrow(/Unknown method/);
+		).rejects.toThrow(/Resource unavailable/);
+		expect(
+			await wire.request("subagent.stopAll", {
+				workspaceId: workspace.id,
+				parentSessionId: parent.id,
+			}),
+		).toEqual({ ok: true, targeted: 0 });
 		await expect(
-			wire.request("subagent.stopAll", { workspaceId: workspace.id, parentSessionId: parent.id }),
-		).rejects.toThrow(/Unknown method/);
+			wire.request("subagent.getTranscript", {
+				workspaceId: workspace.id,
+				parentSessionId: parent.id,
+				childSessionId: "old-child",
+			}),
+		).rejects.toThrow(/Resource unavailable/);
 		await expect(wire.request("session.reloadResources", { sessionId: parent.id })).rejects.toThrow(
 			"Select a model before reloading resources",
 		);

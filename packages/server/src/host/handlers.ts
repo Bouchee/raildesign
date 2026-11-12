@@ -22,6 +22,8 @@ import {
 	abortSession,
 	acknowledgeCompletion,
 	admissionContextFor,
+	attachApprovalOwner,
+	backgroundCommandOutput,
 	cancelMcpProbe,
 	cancelMcpProbesForWorkspace,
 	clampThinkingForModel,
@@ -60,9 +62,15 @@ import {
 	respondToTool,
 	saveCustomEndpoint,
 	sendSteeringNow,
+	sessionResourceHistory,
+	sessionResources,
 	setSessionModel,
 	setSessionThinkingLevel,
 	steerSession,
+	stopBackgroundCommand,
+	stopSubagent,
+	stopSubagents,
+	subagentTranscript,
 	updateQueuedMessage,
 } from "../agent";
 
@@ -75,7 +83,6 @@ import { selectDirectory } from "../dialog";
 import { listAvailableEditors, openEditor, revealInFileManager } from "../editors";
 import { hostEnvironmentStatus, updateHostEnvironment } from "../environment";
 import { listExtensionCatalog } from "../extensions";
-
 import { fontsDir, listInstalledFonts, readUserFonts } from "../fonts";
 import { readDir, readFile } from "../fs";
 import {
@@ -336,7 +343,6 @@ async function attachInteractionSession(sessionId: string): Promise<void> {
 	)
 		throw new Error("Session is unavailable in its workspace");
 }
-
 function revealDataFolder(dir: string) {
 	mkdirSync(dir, { recursive: true });
 	revealInFileManager(dir);
@@ -743,7 +749,6 @@ const handlers: WsHandlers = {
 	},
 
 	"todo.generateSummary": (params) => generateTodoSummary(params),
-
 	"git.status": (p) => {
 		void ensureWatch(p.workspaceId);
 		return gitStatus(p.workspaceId, p.scope);
@@ -1021,6 +1026,7 @@ const handlers: WsHandlers = {
 	"mcp.readOutput": (params) => mcpReadOutput(params),
 	"mcp.readLog": (params) => mcpReadLog(params),
 	"mcp.testConnection": (params, ctx) => mcpTestConnection(params, ctx.clientKey),
+	"session.resources": (p) => sessionResources(p.workspaceId, p.sessionId),
 	"session.reloadResources": async (params) => {
 		const { sessionId } = z.object({ sessionId: z.string().min(1) }).parse(params);
 		const record = readSessionRecord(sessionId);
@@ -1033,7 +1039,7 @@ const handlers: WsHandlers = {
 	"session.getCommands": (params) => {
 		const { sessionId } = z.object({ sessionId: z.string().min(1) }).parse(params);
 		const record = readSessionRecord(sessionId);
-		if (!record) throw new Error("Unknown session");
+		if (!record || record.childRun) throw new Error("Unknown session");
 		const workspace = getWorkspace(record.workspaceId);
 		assertChatOpen(workspace.id);
 		if (resolve(workspace.worktreePath) !== record.cwd)
@@ -1049,12 +1055,30 @@ const handlers: WsHandlers = {
 			{ disabledExtensions: new Set(config.disabledExtensions) },
 		);
 	},
+	"session.resourceHistory": (p) => sessionResourceHistory(p.workspaceId, p.sessionId, p),
+	"backgroundCommand.output": (p) =>
+		backgroundCommandOutput(p.workspaceId, p.sessionId, p.commandId),
+	"backgroundCommand.stop": async (p) => {
+		await stopBackgroundCommand(p.workspaceId, p.sessionId, p.commandId);
+		return { ok: true } as const;
+	},
+	"subagent.stop": async (p) => {
+		await stopSubagent(p.workspaceId, p.parentSessionId, p.childSessionId);
+		return { ok: true } as const;
+	},
+	"subagent.stopAll": async (p) => ({
+		ok: true as const,
+		targeted: await stopSubagents(p.workspaceId, p.parentSessionId),
+	}),
+	"subagent.getTranscript": (p) =>
+		subagentTranscript(p.workspaceId, p.parentSessionId, p.childSessionId),
 	"session.getMessages": (p) => {
 		return getSessionMessages(p.sessionId, p.workspaceId, getWorkspace(p.workspaceId).worktreePath);
 	},
 
 	"session.extUiReply": async (params) => {
 		await attachInteractionSession(params.response.sessionId);
+		await attachApprovalOwner(params.response);
 		await resolveExtUi(params.response);
 		return { ok: true } as const;
 	},

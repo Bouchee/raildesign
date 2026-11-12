@@ -16,16 +16,18 @@ import {
 	tallyResources,
 } from "@thinkrail/contracts";
 import { CodedError } from "@thinkrail/shared/codedError";
-import type { BackgroundCommands } from "pi-background-commands";
 import {
 	finishedResources,
 	pageResources,
 	type ResourceHistoryScope,
 	recordResource,
 } from "../resourceHistory";
-import type { ChildHandle, DelegationService, LifecycleEvent } from "./delegation";
-import { INTERRUPTED_ABORT_REASON } from "./delegation";
+import type { BackgroundCommands } from "./backgroundCommands";
 import { isHostResourceId } from "./resourceIdentity";
+
+interface ResourceSnapshotScope extends ResourceHistoryScope {
+	commandSessionIds: readonly string[];
+}
 
 function unavailable(): CodedError {
 	return new CodedError("RESOURCE_UNAVAILABLE", "Resource unavailable");
@@ -34,60 +36,18 @@ function assertScope(scope: ResourceHistoryScope): void {
 	if (!isHostResourceId(scope.workspaceId) || !isHostResourceId(scope.sessionId))
 		throw unavailable();
 }
-function inScope(record: ResourceRecord, scope: ResourceHistoryScope): boolean {
+function inScope(record: ResourceRecord, scope: ResourceSnapshotScope): boolean {
 	return (
 		isHostResourceId(resourceRecordId(record)) &&
 		(record.kind === "command"
-			? record.summary.sessionId === scope.sessionId
+			? scope.commandSessionIds.includes(record.summary.sessionId)
 			: record.summary.parentSessionId === scope.sessionId)
 	);
 }
 
-export function subagentSummary(
-	{ record, snapshot }: Pick<ChildHandle, "record" | "snapshot">,
-	parentSessionId: string,
-): SubagentResourceSummary | undefined {
-	if (!snapshot) return undefined;
-	const live = snapshot.status === "running" || snapshot.status === "queued";
-	return {
-		childSessionId: record.sessionId,
-		parentSessionId,
-		...(record.info.roleName !== undefined ? { roleName: record.info.roleName.slice(0, 200) } : {}),
-		task: snapshot.task.slice(0, 2000),
-		status: snapshot.status,
-		createdAt: record.createdAt,
-		...(record.info.detached === true ? { detached: true } : {}),
-		...(snapshot.details.model !== undefined ? { model: snapshot.details.model } : {}),
-		...(snapshot.details.thinkingLevel !== undefined
-			? { thinkingLevel: snapshot.details.thinkingLevel }
-			: {}),
-		...(snapshot.details.abortReason !== undefined
-			? { abortReason: snapshot.details.abortReason }
-			: {}),
-		...(live ? {} : { durationMs: snapshot.details.durationMs }),
-	};
-}
-
-export function ownedChildResources(
-	service: Pick<DelegationService, "childrenOf">,
-	scope: ResourceHistoryScope,
-): ResourceRecord[] {
-	assertScope(scope);
-	return service.childrenOf(scope.sessionId).flatMap((child): ResourceRecord[] => {
-		if (
-			child.record.scope !== scope.workspaceId ||
-			child.record.parentSessionId !== scope.sessionId ||
-			!isHostResourceId(child.sessionId)
-		)
-			return [];
-		const summary = subagentSummary(child, scope.sessionId);
-		return summary ? [{ kind: "subagent", summary }] : [];
-	});
-}
-
 /** Caller must first authorize the scope. Merge supplied owner snapshots with the application archive. */
 export function resourceHistoryOf(
-	scope: ResourceHistoryScope,
+	scope: ResourceSnapshotScope,
 	kind: ResourceKind,
 	current: readonly ResourceRecord[],
 ) {
@@ -119,7 +79,7 @@ function subagentSummaries(records: readonly ResourceRecord[]): SubagentResource
 }
 
 export function getSessionResources(
-	scope: ResourceHistoryScope,
+	scope: ResourceSnapshotScope,
 	current: readonly ResourceRecord[],
 ): SessionResources {
 	const command = resourceHistoryOf(scope, "command", current);
@@ -141,7 +101,7 @@ export function getSessionResources(
 }
 
 export function getResourceHistoryPage(
-	scope: ResourceHistoryScope,
+	scope: ResourceSnapshotScope,
 	current: readonly ResourceRecord[],
 	request: { kind: ResourceKind; before?: ResourceHistoryCursor; limit?: number },
 ): ResourceHistoryPage {
@@ -215,39 +175,4 @@ export function archiveCommandHistory(
 			}
 		},
 	};
-}
-
-export function archiveSubagentRun(
-	workspaceId: string,
-	service: Pick<DelegationService, "findChild">,
-	event: LifecycleEvent,
-): void {
-	if (event.type !== "run-queued" && event.type !== "run-started" && event.type !== "run-terminal")
-		return;
-	const child = service.findChild(event.sessionId);
-	if (
-		!child ||
-		child.record.scope !== workspaceId ||
-		child.record.parentSessionId !== event.parentSessionId
-	)
-		return;
-	const scope = { workspaceId, sessionId: event.parentSessionId };
-	assertScope(scope);
-	if (!isHostResourceId(child.sessionId)) return;
-	const summary = subagentSummary(child, event.parentSessionId);
-	if (!summary) return;
-	const terminal = event.type === "run-terminal";
-	const cutOff =
-		terminal && summary.status === "aborted" && summary.abortReason === INTERRUPTED_ABORT_REASON;
-	recordResource(
-		{ workspaceId, sessionId: event.parentSessionId },
-		{
-			kind: "subagent",
-			summary: {
-				...summary,
-				...(terminal ? { finishedAt: Date.now() } : {}),
-				...(cutOff ? { interrupted: true } : {}),
-			},
-		},
-	);
 }

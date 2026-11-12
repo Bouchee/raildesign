@@ -12,9 +12,9 @@ tags: [resources, persistence]
 ## Responsibility
 
 Keep every background command and subagent a chat ran — its summary and, for a command, the retained log
-tail — so Resources still shows the chat's whole history after a host restart. The live command owner
-([[module-pi-background-commands]]) and supplied child snapshots stay separate from this archive; `agent`
-feeds it their lifecycle and asks it for what they no longer hold. It records what the owners reported and
+tail — so Resources still shows the chat's whole history after a host restart. The live owners
+([[submodule-server-agent-background-commands]], [[submodule-server-agent]]) feed it their lifecycle and ask
+it for resources they no longer hold. It records what the owners reported and
 never grants control: nothing here is live authority.
 
 ## Boundary
@@ -50,7 +50,7 @@ never grants control: nothing here is live authority.
 - History is unbounded per chat by decision (user-settled, 2026-10): every record and every log tail lives as
   long as the workspace. Chat deletion leaves it in place — a chat restored from the OS trash gets its history
   back, as its subagent transcripts do — and workspace archive removes the workspace's directory.
-- Several hosts may share a data dir but not a live chat (as pi's transcripts already assume); concurrent
+- Several hosts may share a data dir but not a live chat; concurrent
   writers to one chat are last-writer-wins.
 - History starts with the host that introduced the archive: runs from before it are not reconstructed
   from transcripts, whose status, role and timing cannot be recovered faithfully (user-settled, 2026-10).

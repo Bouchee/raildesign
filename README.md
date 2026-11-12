@@ -12,7 +12,8 @@ unknown and require a new user decision. `/compact` summarizes model memory whil
 conversation for display and search. Automatic summaries use the selected verified model's context
 budget; summary failures preserve the previous memory.
 
-The SDK tool graph includes structured questions, visualization, approved Skills, workspace instructions, conversation Plan tools, repository Spec Graph tools and configured MCP tools.
+The SDK tool graph includes structured questions, visualization, approved Skills, workspace instructions, conversation Plan tools, repository Spec Graph tools, configured MCP tools, child tasks and background commands.
+Resources retains owned command output and child transcripts through refresh, with Stop controls.
 Skill search, content reads, manual `/skill:name` commands and idle catalog reload share the current trust and enable policy. Web search and page reading use
 DeepSeek Search and Fetch with a separate host key configured in Extensions settings.
 

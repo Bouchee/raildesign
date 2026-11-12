@@ -3,22 +3,18 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ResourceRecord } from "@thinkrail/contracts";
-import type { BackgroundCommandSnapshot, BackgroundCommands } from "pi-background-commands";
 import { archivedCommandOutput, finishedResources, recordResource } from "../resourceHistory";
+import type { BackgroundCommandSnapshot, BackgroundCommands } from "./backgroundCommands";
 import {
 	archiveCommandHistory,
-	archiveSubagentRun,
 	getResourceHistoryPage,
 	getSessionResources,
-	ownedChildResources,
-	subagentSummary,
 } from "./chatResources";
-import type { ChildHandle } from "./delegation";
 import { isHostResourceId } from "./resourceIdentity";
 
 let root: string;
 let previousData: string | undefined;
-const scope = { workspaceId: "workspace", sessionId: "parent" };
+const scope = { workspaceId: "workspace", sessionId: "parent", commandSessionIds: ["parent"] };
 beforeEach(() => {
 	root = mkdtempSync(join(tmpdir(), "raildesign-resources-"));
 	previousData = process.env.THINKRAIL_DATA_DIR;
@@ -45,45 +41,6 @@ const command = (
 		...(status === "completed" ? { finishedAt: startedAt + 1, exitCode: 0 } : {}),
 	},
 });
-function child(
-	id: string,
-	workspaceId = scope.workspaceId,
-	parentSessionId = scope.sessionId,
-): ChildHandle {
-	return {
-		sessionId: id,
-		record: {
-			sessionId: id,
-			parentSessionId,
-			scope: workspaceId,
-			info: { roleName: "x".repeat(300), detached: true },
-			createdAt: "2026-01-01T00:00:00Z",
-		},
-		snapshot: {
-			status: "running",
-			task: "t".repeat(3_000),
-			details: {
-				childSessionId: id,
-				task: "private-task",
-				status: "running",
-				model: "test/model",
-				durationMs: 100,
-				usage: {
-					input: 1,
-					output: 2,
-					cacheRead: 0,
-					cacheWrite: 0,
-					cost: 0,
-					turns: 1,
-					contextTokens: 3,
-				},
-			},
-		},
-		async abort() {},
-		async dispose() {},
-	};
-}
-
 test("host ids accept only bounded plain components and scope validation fails closed", () => {
 	for (const value of ["a", "workspace_1", "session-123", "a".repeat(200)])
 		expect(isHostResourceId(value)).toBe(true);
@@ -104,7 +61,9 @@ test("host ids accept only bounded plain components and scope validation fails c
 		{ workspaceId: "../x", sessionId: "parent" },
 		{ workspaceId: "workspace", sessionId: "bad/id" },
 	])
-		expect(() => getSessionResources(invalid, [])).toThrow("Resource unavailable");
+		expect(() =>
+			getSessionResources({ ...invalid, commandSessionIds: [invalid.sessionId] }, []),
+		).toThrow("Resource unavailable");
 });
 
 test("merge keeps live ownership, prefers the owner's real settlement over derived interruption and filters foreign parents", () => {
@@ -144,21 +103,6 @@ test("all live records stay visible beside the newest twenty finished records an
 	expect(
 		getResourceHistoryPage(scope, records, { kind: "command", limit: Number.NaN }).items,
 	).toHaveLength(20);
-});
-
-test("child summaries clip public metadata, hide transcript bytes and retain both ownership checks", () => {
-	const own = child("own"),
-		foreign = child("foreign", "other"),
-		sibling = child("sibling", "workspace", "other");
-	const records = ownedChildResources({ childrenOf: () => [own, foreign, sibling] }, scope);
-	expect(records).toHaveLength(1);
-	const summary = subagentSummary(own, scope.sessionId);
-	expect(summary?.roleName).toHaveLength(200);
-	expect(summary?.task).toHaveLength(2_000);
-	expect(summary?.detached).toBe(true);
-	expect(summary?.durationMs).toBeUndefined();
-	expect(JSON.stringify(summary)).not.toContain("private-transcript");
-	expect(subagentSummary({ ...own, snapshot: undefined }, scope.sessionId)).toBeUndefined();
 });
 
 test("command archiving separates explicit user Stop from teardown and preserves the final log tail", () => {
@@ -231,34 +175,15 @@ test("command archiving separates explicit user Stop from teardown and preserves
 	expect(listeners.size).toBe(0);
 });
 
-test("child archival rejects foreign lifecycle events and marks only interrupted aborts", () => {
-	const own = child("own");
-	if (!own.snapshot) throw new Error("Missing fixture snapshot");
-	const terminal = {
-		...own,
-		snapshot: {
-			...own.snapshot,
-			status: "aborted" as const,
-			details: { ...own.snapshot.details, status: "aborted" as const, abortReason: "interrupted" },
-		},
-	};
-	const service = { findChild: () => terminal };
-	archiveSubagentRun(scope.workspaceId, service, {
-		type: "run-started",
-		sessionId: "own",
-		parentSessionId: "foreign",
-	});
-	expect(
-		finishedResources(
-			{ workspaceId: scope.workspaceId, sessionId: "foreign" },
-			"subagent",
-			new Set(),
-		),
-	).toEqual([]);
-	archiveSubagentRun(scope.workspaceId, service, {
-		type: "run-terminal",
-		sessionId: "own",
-		parentSessionId: scope.sessionId,
-	});
-	expect(finishedResources(scope, "subagent", new Set())[0]?.summary.interrupted).toBe(true);
+test("child command summaries retain actual owners only when explicitly authorized", () => {
+	const owned = command("owned-child-command");
+	owned.summary.sessionId = "child";
+	const foreign = command("foreign-child-command");
+	foreign.summary.sessionId = "foreign";
+	const summary = getSessionResources({ ...scope, commandSessionIds: [scope.sessionId, "child"] }, [
+		owned,
+		foreign,
+	]);
+	expect(summary.commands).toEqual([owned.summary]);
+	expect(getSessionResources(scope, [owned]).commands).toEqual([]);
 });

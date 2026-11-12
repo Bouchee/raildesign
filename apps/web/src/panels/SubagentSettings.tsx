@@ -27,13 +27,11 @@ function SourceTag({
 	resetLabel,
 	testId,
 	onReset,
-	disabled = false,
 }: {
 	custom: boolean;
 	resetLabel: string;
 	testId: string;
 	onReset: () => void;
-	disabled?: boolean;
 }) {
 	const t = useT();
 	if (!custom) {
@@ -56,7 +54,6 @@ function SourceTag({
 			data-source="custom"
 			aria-label={resetLabel}
 			tooltip={t("settings.subagents.source.useGlobal")}
-			disabled={disabled}
 			onClick={onReset}
 		>
 			{t("settings.subagents.source.custom")}
@@ -122,7 +119,6 @@ function LimitField({
 
 export function SubagentSettings({
 	protocolVersion,
-	disabled = false,
 	globalEnabled,
 	globalLimit,
 	workspace,
@@ -132,7 +128,6 @@ export function SubagentSettings({
 	onWorkspaceLimitChange,
 }: {
 	protocolVersion: number | null;
-	disabled?: boolean;
 	globalEnabled: boolean;
 	globalLimit: number;
 	workspace: Workspace | null;
@@ -156,9 +151,7 @@ export function SubagentSettings({
 		<SettingsGroup
 			testId="settings-subagents"
 			title={t("settings.subagents.title")}
-			description={t(
-				disabled ? "settings.subagents.unavailable" : "settings.subagents.description",
-			)}
+			description={t("settings.subagents.description")}
 		>
 			<SettingsRow
 				label={t("settings.subagents.allow")}
@@ -172,7 +165,6 @@ export function SubagentSettings({
 						checked={globalEnabled}
 						label={t("settings.subagents.allowGlobally")}
 						testId="subagents-global-toggle"
-						disabled={disabled}
 						onChange={onGlobalEnabledChange}
 					/>
 				}
@@ -187,7 +179,6 @@ export function SubagentSettings({
 							allowEmpty={false}
 							label={t("settings.subagents.globalLimitLabel")}
 							testId="subagent-limit-global-input"
-							disabled={disabled}
 							onCommit={(value) => {
 								if (value !== null) onGlobalLimitChange(value);
 							}}
@@ -212,14 +203,12 @@ export function SubagentSettings({
 								custom={enabledOverride !== undefined}
 								resetLabel={t("settings.subagents.resetEnabled", { name: workspaceLabel })}
 								testId="subagents-workspace-source"
-								disabled={disabled}
 								onReset={() => onWorkspaceEnabledChange(null)}
 							/>
 							<SettingsSwitch
 								checked={workspaceEnabled}
 								label={t("settings.subagents.allowInWorkspace", { name: workspaceLabel })}
 								testId="subagents-workspace-toggle"
-								disabled={disabled}
 								onChange={(enabled) => onWorkspaceEnabledChange(enabled ? "on" : "off")}
 							/>
 						</span>
@@ -236,7 +225,6 @@ export function SubagentSettings({
 									custom={limitOverride !== undefined}
 									resetLabel={t("settings.subagents.resetLimit", { name: workspaceLabel })}
 									testId="subagent-limit-workspace-source"
-									disabled={disabled}
 									onReset={() => onWorkspaceLimitChange(null)}
 								/>
 							</span>
@@ -244,7 +232,7 @@ export function SubagentSettings({
 								saved={limitOverride}
 								placeholder={globalLimit}
 								allowEmpty
-								disabled={disabled || !workspaceEnabled}
+								disabled={!workspaceEnabled}
 								label={t("settings.subagents.workspaceLimitLabel", { name: workspaceLabel })}
 								testId="subagent-limit-workspace-input"
 								onCommit={onWorkspaceLimitChange}

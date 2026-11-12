@@ -5,7 +5,7 @@ status: active
 title: Wire contracts
 parent: architecture
 depends-on: []
-references: [central-integration, module-pi-background-commands]
+references: [central-integration, submodule-server-agent-background-commands]
 tags: [wire]
 ---
 
@@ -923,8 +923,8 @@ the palette ranks with — kept here so host-side search can rank with the same 
 
 The current-chat resource view is a projection of two existing capability owners, not a generic
 process API. `CHAT_RESOURCES_PROTOCOL_VERSION` (71) gates its methods and affordances; hosts through
-v70 must not receive these requests. No native Pi background-task protocol is implied. The command DTOs mirror [[module-pi-background-commands]]
-without importing that package. Subagents retain their Pi child session ids and delegation statuses.
+v70 must not receive these requests. No native Pi background-task protocol is implied. The command DTOs mirror [[submodule-server-agent-background-commands]]
+without importing that package. Subagents use application-owned child session IDs and execution statuses.
 
 - `session.resources({workspaceId, sessionId})` returns separate command and subagent summaries:
   every live record plus the newest twenty finished ones per kind. The snapshot echoes workspace
@@ -954,26 +954,24 @@ without importing that package. Subagents retain their Pi child session ids and 
   finished command the owner no longer holds — or `{available: false}` for an unknown, foreign or
   unarchived command after validating its parent. Output REPLACES the previous snapshot; truncation is
   explicit. It accepts no filesystem path or PID.
-- `backgroundCommand.stop({workspaceId, sessionId, commandId})` and
-  `subagent.stop({workspaceId, parentSessionId, childSessionId})` request cancellation of one owned
-  resource. Known terminal resources are idempotent successes; unknown, expired or foreign ids
-  share the `RESOURCE_UNAVAILABLE` error code. Unavailable parent sessions use that same code.
-  A successful `Ack` acknowledges intent, not observed termination.
-- `subagent.stopAll({workspaceId, parentSessionId})` captures the currently active direct children,
-  requests every cancellation before returning `Ack & {targeted: number}`, and never waits for child
-  settlement. The individual subagent stop follows the same intent-only acknowledgement rule. Neither
-  operation stops the parent, removes child records, or disables future launches; lifecycle invalidations
-  report eventual settlement.
+- `backgroundCommand.stop({workspaceId, sessionId, commandId})` requests cancellation of an owned
+  command and acknowledges the request; lifecycle changes report process settlement.
+- `subagent.stop({workspaceId, parentSessionId, childSessionId})` revokes the owned child grant and
+  waits for its run and command cleanup. A completed child keeps its settled status while its remaining
+  commands are stopped. Unknown or foreign resources are rejected before effects.
+- `subagent.stopAll({workspaceId, parentSessionId})` captures direct children with active runs or
+  commands, starts cancellation for each, and waits for cleanup before returning `Ack & {targeted: number}`.
+  Neither operation stops the parent, removes child records, or disables future launches.
 - `session.resourcesChanged` is a scoped `{workspaceId, sessionId}` invalidation on membership or
   lifecycle changes. Clients reread the snapshot; output bytes do not ride a broadcast or transcript
   tool update after the start acknowledgement. Existing `subagent.getTranscript` remains unchanged.
 
 `DelegationRunDetails.abortReason` is an optional application-owned string.
 Historical details without this field stay valid; non-string values are rejected by its guard. User
-Stop uses `"user"` so the portable completion owner can suppress idle-parent wake-up without a
+Stop uses `"user"` so the SDK session completion owner can suppress idle-parent wake-up without a
 wire-owned cancellation registry.
 
-`background-command-completion` is a displayed Pi custom message, not a catalog update. Its guarded
+`background-command-completion` is a displayed application custom message, not a catalog update. Its guarded
 wire details contain terminal snapshot metadata without the full command, plus the owner's bounded
 plain-text diagnostic excerpt and truncation flag, and the same optional `delivery` marker as a
 subagent completion (`wake` | `run` | `appended` — how the result reached the agent; absent in
@@ -983,7 +981,7 @@ reads as absent everywhere. The conversation may render that historical notice,
 but must never infer current resource authority from it; logs and controls still use scoped reads.
 
 Every read/control validates workspace membership and parent lineage, not merely a syntactically
-valid id. Parent and child session ids use Pi's canonical grammar, including internal dots; workspace,
+valid id. Parent and child session IDs use bounded plain application identifiers; workspace,
 command, and transcript authority still comes from their owning registries rather than the spelling of
 an opaque id. The start capability stays agent-facing; there is no browser shell-execution method.
 Reconnection invalidates old control authority until hydration completes; transient read failure
@@ -1277,3 +1275,8 @@ so an already-loaded old client clears retired markers after reconnect. No activ
 
 `web` (types + the runtime exports listed above) and `server` (same, + mapping `session.*` to `AgentSession` methods). The
 shell panels need `domain` + `wsProtocol`; application types + `SessionEvent` are the wire for the agent session.
+
+A parent resource catalogue may include commands from its direct children in the same workspace.
+`BackgroundCommandSummary.sessionId` remains the actual command-owning session. Output and Stop requests
+address the parent scope plus command ID; the host resolves only that parent and its verified children.
+Catalogue pagination does not limit access to an owned archived command's retained output.

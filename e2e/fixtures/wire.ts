@@ -12,13 +12,17 @@ export class E2eWireTransientError extends Error {}
 function readResponse(
 	data: unknown,
 	id: string,
-): { ok: boolean; result?: unknown; error?: string } | null {
+): { ok: boolean; result?: unknown; error?: string; errorCode?: string } | null {
 	if (typeof data !== "object" || data === null) return null;
 	const frame = data as Record<string, unknown>;
 	if (frame.id !== id || typeof frame.ok !== "boolean") return null;
 	return frame.ok
 		? { ok: true, result: frame.result }
-		: { ok: false, error: typeof frame.error === "string" ? frame.error : "Unknown host error" };
+		: {
+				ok: false,
+				error: typeof frame.error === "string" ? frame.error : "Unknown host error",
+				...(typeof frame.errorCode === "string" ? { errorCode: frame.errorCode } : {}),
+			};
 }
 
 export class E2eWire {
@@ -83,7 +87,13 @@ export class E2eWire {
 				if (!response) return;
 				cleanup();
 				if (response.ok) resolve(response.result as WsResult<M>);
-				else reject(new Error(`${method} failed on the isolated host wire: ${response.error}`));
+				else
+					reject(
+						Object.assign(
+							new Error(`${method} failed on the isolated host wire: ${response.error}`),
+							{ code: response.errorCode },
+						),
+					);
 			};
 			const onClose = () => {
 				cleanup();

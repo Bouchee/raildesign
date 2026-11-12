@@ -1642,7 +1642,6 @@
 	"settings.subagents.source.global": "全局",
 	"settings.subagents.source.useGlobal": "使用全局设置",
 	"settings.subagents.title": "子 agent",
-	"settings.subagents.unavailable": "子智能体执行尚未接通。这些设置会保留，待执行功能启用后使用。",
 	"settings.subagents.workspaceDescription": "在你更改某个值之前，{{name}} 遵循全局设置。",
 	"settings.subagents.workspaceHeading": "此工作区",
 	"settings.subagents.workspaceLimitLabel": "{{name}} 中每个会话的子 agent 数",

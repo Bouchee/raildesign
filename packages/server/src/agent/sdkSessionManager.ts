@@ -5,36 +5,49 @@ import {
 	Agent,
 	type AgentInputItem,
 	MaxTurnsExceededError,
+	RunContext,
 	Runner,
 	RunState,
 	type RunStreamEvent,
 	type Tool,
+	tool,
 } from "@openai/agents";
 import type {
 	AgentSettlement,
 	AssistantMessage,
+	DelegationRunDetails,
 	ExtUiRequest,
 	ExtUiResponse,
 	ImageContent,
 	QueueLane,
 	RemovedQueuedMessage,
+	ResourceHistoryCursor,
+	ResourceKind,
+	ResourceRecord,
 	SessionCreatedPayload,
 	SessionDeletedPayload,
 	SessionEvent,
 	SessionEventPayload,
 	SessionQueueContent,
 	SessionQueueState,
+	SessionResources,
 	SessionState,
 	SessionStateRecord,
 	SessionStats,
 	SessionSummary,
+	SubagentResourceSummary,
 	ThinkingLevel,
 	ToolResultMessage,
 	TranscriptMessage,
 	WireModel,
 } from "@thinkrail/contracts";
-import { firstPromptOfTexts, normalizeSessionTitle } from "@thinkrail/contracts";
+import {
+	firstPromptOfTexts,
+	normalizeSessionTitle,
+	SUBAGENT_COMPLETION_CUSTOM_TYPE,
+} from "@thinkrail/contracts";
 import { parseToolResultContent } from "@thinkrail/extension-api/server";
+import { CodedError } from "@thinkrail/shared/codedError";
 import { createSpecTools, SPEC_RULE } from "@thinkrail/spec-graph";
 import { createTodoTools, TODO_RULE } from "@thinkrail/todos";
 import { WORKFLOW_RULE } from "@thinkrail/workflow";
@@ -47,11 +60,26 @@ import {
 	workspaceFiles,
 } from "../extensions";
 import { logger } from "../log";
-import { loadConfig, loadProjects, loadWorkspaces } from "../persistence";
+import { dataDir, loadConfig, loadProjects, loadWorkspaces } from "../persistence";
+import { archivedCommandOutput, finishedResources, recordResource } from "../resourceHistory";
 import { trashFile } from "../trash";
+import {
+	type BackgroundCommands,
+	tail as commandExcerpt,
+	createBackgroundCommands,
+} from "./backgroundCommands";
+import {
+	archiveCommandHistory,
+	resourceHistoryOf,
+	getResourceHistoryPage as resourcePage,
+	getSessionResources as summarizeResources,
+} from "./chatResources";
+import { discoverAgentDefinitions } from "./childDefinitions";
+import { toSpawnMapping } from "./childMapping";
 import { configureLocalSdkTracing } from "./localTracing";
 import {
 	applySessionMcpApproval,
+	mcpResourceSummaries,
 	pauseSessionMcpConnections,
 	reconcileMcpSessions,
 	sessionMcpApproval,
@@ -67,6 +95,7 @@ import {
 import { workspaceTools } from "./sdkTools";
 import {
 	type ApprovalRequest,
+	type ChildRunRecord,
 	listSessionRecords,
 	PersistentSession,
 	readSessionRecord,
@@ -78,6 +107,7 @@ import { admissionContextFor } from "./skillAdmission";
 import {
 	createSkillTools,
 	expandSkillCommand,
+	readAdmittedSkill,
 	skillCommandName,
 	skillInstructions,
 	workspaceInstructions,
@@ -133,6 +163,10 @@ interface Entry {
 	store: PersistentSession;
 	active?: ActiveRun;
 	flush?: ReturnType<typeof setTimeout>;
+	commands?: BackgroundCommands;
+	commandArchive?: { finish: () => void };
+	closingResources?: boolean;
+	foregroundChildren?: Set<string>;
 }
 const sessions = new Map<string, Entry>();
 const closingSessions = new Set<string>();
@@ -142,7 +176,7 @@ let publish: (payload: SessionEventPayload, workspaceId: string) => void = () =>
 let publishCreated: (payload: SessionCreatedPayload) => void = () => {};
 let publishDeleted: (payload: SessionDeletedPayload) => void = () => {};
 let publishState: (record: SessionStateRecord) => void = () => {};
-let publishDialog: (request: ExtUiRequest) => void = () => {};
+let publishRawDialog: (request: ExtUiRequest) => void = () => {};
 let projectOf: (workspaceId: string) => string | null = () => null;
 let releaseSessionResources: ((sessionId: string) => Promise<void>) | undefined;
 
@@ -166,7 +200,75 @@ export function setSessionProjectResolver(fn: typeof projectOf): void {
 	projectOf = fn;
 }
 export function setExtUiPublisher(fn: typeof publishDialog): void {
-	publishDialog = fn;
+	publishRawDialog = fn;
+}
+
+function publishDialog(request: ExtUiRequest): void {
+	const child = sessions.get(request.sessionId)?.store.record.childRun;
+	if (!child) {
+		publishRawDialog(request);
+		return;
+	}
+	if (!sessions.has(child.parentSessionId)) return;
+	publishRawDialog({
+		...request,
+		sessionId: child.parentSessionId,
+		...("title" in request ? { title: `${child.definition.name}: ${request.title}` } : {}),
+	});
+}
+function childApproval(entry: Entry): ApprovalRequest | undefined {
+	if (entry.store.record.childRun) return undefined;
+	let candidates: SessionRecord[];
+	try {
+		candidates = childRecords(entry);
+	} catch (error) {
+		if (
+			error &&
+			typeof error === "object" &&
+			"code" in error &&
+			(error.code === "ENOENT" || error.code === "ENOTDIR")
+		)
+			return undefined;
+		throw error;
+	}
+	const records = candidates.filter(
+		(record) => record.childRun?.status === "running" && record.pendingApproval,
+	);
+	records.sort(
+		(a, b) =>
+			(a.childRun?.createdAt ?? "").localeCompare(b.childRun?.createdAt ?? "") ||
+			a.sessionId.localeCompare(b.sessionId),
+	);
+	const child = records[0],
+		request = child?.pendingApproval?.request;
+	return child && request
+		? {
+				...request,
+				sessionId: entry.store.record.sessionId,
+				title: `${child.childRun?.definition.name}: ${request.title}`,
+			}
+		: undefined;
+}
+function visibleState(entry: Entry): SessionState {
+	const state = structuredClone(entry.store.record.state);
+	if (!state.needsInput) {
+		const request = childApproval(entry);
+		if (request) state.needsInput = { kind: "dialog", interactionId: request.id, request };
+	}
+	return state;
+}
+export async function attachApprovalOwner(response: ExtUiResponse): Promise<void> {
+	const entry = mustGet(response.sessionId);
+	if (
+		entry.store.record.pendingApproval?.request.id === response.id ||
+		entry.store.record.decisions[response.id]
+	)
+		return;
+	const child = childRecords(entry).find(
+		(record) => record.pendingApproval?.request.id === response.id || record.decisions[response.id],
+	);
+	if (child && !(await ensureSessionAttached(child.sessionId, child.workspaceId, child.cwd)))
+		throw new Error("Child approval is unavailable");
 }
 
 function idleState(): SessionState {
@@ -191,12 +293,17 @@ function stateRecord(entry: Entry): SessionStateRecord {
 		sessionId: record.sessionId,
 		workspaceId: record.workspaceId,
 		projectId: projectOf(record.workspaceId) ?? "",
-		state: structuredClone(record.state),
+		state: visibleState(entry),
 		...(record.title ? { title: record.title } : {}),
 		...(firstPrompt ? { firstPrompt } : {}),
 	};
 }
 function notifyState(entry: Entry): void {
+	if (entry.store.record.childRun) {
+		const parent = sessions.get(entry.store.record.childRun.parentSessionId);
+		if (parent) publishState(stateRecord(parent));
+		return;
+	}
 	publishState(stateRecord(entry));
 }
 function flush(entry: Entry): void {
@@ -236,6 +343,24 @@ function mustGet(sessionId: string): Entry {
 	return entry;
 }
 function assertActive(entry: Entry, run: ActiveRun): void {
+	const child = entry.store.record.childRun;
+	if (child) {
+		const parent = sessions.get(child.parentSessionId);
+		if (
+			!parent ||
+			parent.store.record.workspaceId !== entry.store.record.workspaceId ||
+			closingSessions.has(child.parentSessionId) ||
+			deletingSessions.has(child.parentSessionId) ||
+			!subagentsAllowed(parent)
+		)
+			throw new Error("The child owner is unavailable");
+		if (
+			child.definition.source === "project" &&
+			loadProjects().find((project) => project.id === projectOf(entry.store.record.workspaceId))
+				?.resourceTrust !== "granted"
+		)
+			throw new Error("Project resources are not trusted");
+	}
 	const workspace = loadWorkspaces().find(
 		(candidate) => candidate.id === entry.store.record.workspaceId,
 	);
@@ -664,6 +789,21 @@ export function respondToTool(
 
 export function resolveExtUi(response: ExtUiResponse): void {
 	const entry = mustGet(response.sessionId);
+	if (
+		!entry.store.record.childRun &&
+		!entry.store.record.decisions[response.id] &&
+		entry.store.record.pendingApproval?.request.id !== response.id
+	) {
+		const child = childRecords(entry).find(
+			(record) =>
+				record.pendingApproval?.request.id === response.id || record.decisions[response.id],
+		);
+		if (child) {
+			if (!sessions.has(child.sessionId)) throw new Error("Child approval is not attached");
+			resolveExtUi({ ...response, sessionId: child.sessionId });
+			return;
+		}
+	}
 	const decision = entry.store.record.decisions[response.id];
 	if (decision) {
 		if (
@@ -735,7 +875,10 @@ export function resolveExtUi(response: ExtUiResponse): void {
 	pending.resolve(approved);
 }
 export function pendingExtUiDialog(sessionId: string): ApprovalRequest | null {
-	return sessions.get(sessionId)?.store.record.pendingApproval?.request ?? null;
+	const entry = sessions.get(sessionId);
+	return entry
+		? (entry.store.record.pendingApproval?.request ?? childApproval(entry) ?? null)
+		: null;
 }
 export function notifyExtUi(
 	sessionId: string,
@@ -752,7 +895,1036 @@ function startStream(
 	session: PersistentSession,
 	signal: AbortSignal,
 ) {
-	return runner.run(agent, input, { stream: true, session, signal, maxTurns: 20 });
+	return runner.run(agent, input, {
+		stream: true,
+		session,
+		signal,
+		maxTurns: session.record.childRun?.definition.maxTurns ?? 20,
+	});
+}
+
+const childWaiters = new Map<string, Set<() => void>>();
+const childQueues = new Map<string, string[]>();
+const queuedChildControllers = new Map<string, AbortController>();
+const childTasks = new Map<string, Promise<void>>();
+let publishResources: (resources: SessionResources) => void = () => {};
+export function setSessionResourcesPublisher(fn: typeof publishResources): void {
+	publishResources = fn;
+}
+
+function childRecords(entry: Entry): SessionRecord[] {
+	const { sessionId, workspaceId } = entry.store.record;
+	return listSessionRecords().filter(
+		(record) =>
+			record.workspaceId === workspaceId && record.childRun?.parentSessionId === sessionId,
+	);
+}
+function subagentsAllowed(entry: Entry): boolean {
+	const workspace = loadWorkspaces().find((item) => item.id === entry.store.record.workspaceId);
+	return (
+		workspace?.subagentsOverride === "on" ||
+		(workspace?.subagentsOverride !== "off" && loadConfig().subagentsEnabled)
+	);
+}
+function childSummary(record: SessionRecord): SubagentResourceSummary {
+	const child = record.childRun;
+	if (!child) throw new Error("Not a child session");
+	return {
+		childSessionId: record.sessionId,
+		parentSessionId: child.parentSessionId,
+		roleName: child.definition.name.slice(0, 200),
+		task: child.task.slice(0, 2000),
+		status: child.status,
+		createdAt: child.createdAt,
+		detached: child.detached,
+		model: record.model ? `${record.model.provider}/${record.model.id}` : "",
+		thinkingLevel: record.thinkingLevel,
+		...(child.finishedAt !== undefined
+			? { finishedAt: child.finishedAt, durationMs: child.finishedAt - Date.parse(child.createdAt) }
+			: {}),
+		...(child.abortReason ? { abortReason: child.abortReason } : {}),
+		...(child.abortReason === "interrupted" ? { interrupted: true as const } : {}),
+	};
+}
+function commandOwners(entry: Entry): Entry[] {
+	return [
+		entry,
+		...childRecords(entry).map(
+			(record) => sessions.get(record.sessionId) ?? { store: new PersistentSession(record) },
+		),
+	];
+}
+function resourceScope(entry: Entry) {
+	return {
+		workspaceId: entry.store.record.workspaceId,
+		sessionId: entry.store.record.sessionId,
+		commandSessionIds: commandOwners(entry).map((owner) => owner.store.record.sessionId),
+	};
+}
+function resourceParent(entry: Entry): Entry | undefined {
+	const id = entry.store.record.childRun?.parentSessionId;
+	const parent = id ? sessions.get(id) : undefined;
+	return parent?.store.record.workspaceId === entry.store.record.workspaceId ? parent : undefined;
+}
+function ownedResourceSnapshots(entry: Entry): ResourceRecord[] {
+	return [
+		...commandOwners(entry).flatMap((owner) => {
+			const current = owner.commands?.list() ?? [];
+			const archived =
+				owner === entry
+					? []
+					: finishedResources(
+							{
+								workspaceId: owner.store.record.workspaceId,
+								sessionId: owner.store.record.sessionId,
+							},
+							"command",
+							new Set(current.map((command) => command.id)),
+						);
+			return [...current.map((summary) => ({ kind: "command" as const, summary })), ...archived];
+		}),
+		...childRecords(entry).map((record) => ({
+			kind: "subagent" as const,
+			summary: childSummary(record),
+		})),
+	];
+}
+function resourceIsLive(record: ResourceRecord): boolean {
+	return record.kind === "command"
+		? record.summary.status === "running" || record.summary.status === "stopping"
+		: record.summary.status === "queued" || record.summary.status === "running";
+}
+function resourceChanged(entry: Entry): void {
+	if (sessions.get(entry.store.record.sessionId) !== entry) return;
+	const snapshots = ownedResourceSnapshots(entry);
+	entry.store.record.state.backgroundWork = snapshots.some(resourceIsLive);
+	flush(entry);
+	publishResources(summarizeResources(resourceScope(entry), snapshots));
+	notifyState(entry);
+	const parent = resourceParent(entry);
+	if (parent) resourceChanged(parent);
+}
+function archiveChild(entry: Entry): void {
+	const child = entry.store.record.childRun;
+	if (!child) return;
+	recordResource(
+		{ workspaceId: entry.store.record.workspaceId, sessionId: child.parentSessionId },
+		{ kind: "subagent", summary: childSummary(entry.store.record) },
+	);
+	const parent = sessions.get(child.parentSessionId);
+	if (parent) resourceChanged(parent);
+}
+function wakeChildQueue(parentSessionId: string): void {
+	for (const wake of childWaiters.get(parentSessionId) ?? []) wake();
+}
+async function acquireChildSlot(child: Entry, signal: AbortSignal): Promise<void> {
+	const metadata = child.store.record.childRun;
+	if (!metadata) throw new Error("Missing child owner");
+	const parent = mustGet(metadata.parentSessionId);
+	let queue = childQueues.get(metadata.parentSessionId);
+	if (!queue) {
+		queue = [];
+		childQueues.set(metadata.parentSessionId, queue);
+	}
+	if (!queue.includes(child.store.record.sessionId)) queue.push(child.store.record.sessionId);
+	try {
+		while (true) {
+			signal.throwIfAborted();
+			if (!subagentsAllowed(parent)) throw new Error("Child agents are disabled");
+			const workspace = loadWorkspaces().find(
+				(item) => item.id === parent.store.record.workspaceId,
+			);
+			const limit = Math.max(
+				1,
+				workspace?.subagentMaxConcurrentOverride ?? loadConfig().subagentMaxConcurrent,
+			);
+			const active = childRecords(parent).filter(
+				(record) => record.childRun?.status === "running",
+			).length;
+			if (queue[0] === child.store.record.sessionId && active < limit) break;
+			await new Promise<void>((resolveWait, reject) => {
+				const waiters = childWaiters.get(metadata.parentSessionId) ?? new Set<() => void>();
+				childWaiters.set(metadata.parentSessionId, waiters);
+				const finish = () => {
+					waiters.delete(finish);
+					signal.removeEventListener("abort", abort);
+					resolveWait();
+				};
+				const abort = () => {
+					waiters.delete(finish);
+					reject(new Error("Child run cancelled"));
+				};
+				waiters.add(finish);
+				signal.addEventListener("abort", abort, { once: true });
+			});
+		}
+		child.store.update((record) => {
+			if (record.childRun) record.childRun.status = "running";
+		});
+		archiveChild(child);
+	} finally {
+		const index = queue.indexOf(child.store.record.sessionId);
+		if (index >= 0) queue.splice(index, 1);
+		wakeChildQueue(metadata.parentSessionId);
+	}
+}
+function childDetails(child: Entry): DelegationRunDetails {
+	const record = child.store.record,
+		metadata = record.childRun;
+	if (!metadata) throw new Error("Missing child metadata");
+	const stats = statsFromRecord(record);
+	return {
+		childSessionId: record.sessionId,
+		roleName: metadata.definition.name,
+		roleSource: metadata.definition.source,
+		task: metadata.task,
+		status: metadata.status,
+		model: record.model ? `${record.model.provider}/${record.model.id}` : "",
+		thinkingLevel: record.thinkingLevel,
+		usage: {
+			input: stats.tokens.input,
+			output: stats.tokens.output,
+			cacheRead: stats.tokens.cacheRead,
+			cacheWrite: stats.tokens.cacheWrite,
+			cost: 0,
+			turns: record.messages.filter((message) => message.role === "assistant").length,
+			contextTokens: record.modelContextTokens ?? 0,
+		},
+		durationMs: (metadata.finishedAt ?? Date.now()) - Date.parse(metadata.createdAt),
+		...(metadata.abortReason ? { abortReason: metadata.abortReason } : {}),
+	};
+}
+// Ends a foreground child that failed. A failed result keeps its details so the card can open the
+// child transcript; a stopped run rethrows so cancellation stays an SDK abort.
+function failedForegroundChild(child: Entry, childRun: ActiveRun, error: unknown) {
+	finishChild(child, childRun.controller.signal.aborted ? "aborted" : "error");
+	childRun.granted = false;
+	delete child.active;
+	if (childRun.controller.signal.aborted) throw error;
+	return {
+		content: [
+			{ type: "text" as const, text: error instanceof Error ? error.message : String(error) },
+		],
+		details: childDetails(child),
+		isError: true,
+	};
+}
+function childOutput(child: Entry) {
+	const message = child.store.record.messages.findLast(
+		(item) => item.role === "assistant" && textOf(item.content).trim(),
+	);
+	return {
+		content: [
+			{
+				type: "text" as const,
+				text:
+					message && "content" in message
+						? textOf(message.content).slice(0, 50000)
+						: "Child run has no final report.",
+			},
+		],
+		details: childDetails(child),
+		isError:
+			child.store.record.childRun?.status === "error" ||
+			child.store.record.childRun?.status === "aborted",
+	};
+}
+function queueResourceCompletion(
+	parent: Entry,
+	id: string,
+	text: string,
+	customType: string,
+	details: unknown,
+): void {
+	if (
+		parent.stopping ||
+		closingSessions.has(parent.store.record.sessionId) ||
+		deletingSessions.has(parent.store.record.sessionId)
+	)
+		return;
+	if (parent.store.record.messages.some((message) => message.id === id)) return;
+	const message: TranscriptMessage = {
+		id,
+		role: "custom",
+		customType,
+		content: [{ type: "text", text }],
+		details,
+		display: true,
+		timestamp: Date.now(),
+	};
+	parent.store.update((record) => {
+		record.messages.push(message);
+		record.queue.push({
+			id: `resource-input-${id}`,
+			kind: "followUp",
+			state: "pending",
+			text,
+			internal: true,
+		});
+	});
+	emit(parent, { type: "message_end", message });
+	if (!parent.active)
+		void drainQueue(parent).catch((error) =>
+			log.warn("Could not deliver resource completion", error),
+		);
+}
+function flushChildCompletions(parent: Entry): void {
+	if (parent.active || parent.stopping) return;
+	for (const record of childRecords(parent)) {
+		const metadata = record.childRun;
+		if (
+			!metadata?.detached ||
+			metadata.completionDelivered ||
+			metadata.collected ||
+			metadata.status === "queued" ||
+			metadata.status === "running"
+		)
+			continue;
+		const child = sessions.get(record.sessionId) ?? { store: new PersistentSession(record) };
+		const output = childOutput(child);
+		const text = `Subagent "${metadata.definition.name}" (${record.sessionId}) ${metadata.status}:\n${output.content[0]?.text ?? ""}`;
+		queueResourceCompletion(
+			parent,
+			`child-${record.sessionId}`,
+			text,
+			SUBAGENT_COMPLETION_CUSTOM_TYPE,
+			{ ...output.details, delivery: "wake" },
+		);
+		if (parent.store.record.messages.some((message) => message.id === `child-${record.sessionId}`))
+			child.store.update((current) => {
+				if (current.childRun) current.childRun.completionDelivered = true;
+			});
+	}
+}
+function finishChild(child: Entry, status: ChildRunRecord["status"], reason?: string): void {
+	if (child.store.record.childRun?.finishedAt !== undefined) return;
+	child.store.update((record) => {
+		if (record.childRun) {
+			record.childRun.status = status;
+			record.childRun.finishedAt = Date.now();
+			record.state.execution = "idle";
+			record.state.needsInput = null;
+			record.state.completion = {
+				completionId: record.state.runId ?? record.sessionId,
+				...(status === "error"
+					? { outcome: "failed" as const, failure: "error" as const }
+					: { outcome: status === "completed" ? ("succeeded" as const) : ("cancelled" as const) }),
+			};
+			if (reason) record.childRun.abortReason = reason;
+		}
+	});
+	archiveChild(child);
+	const parent = child.store.record.childRun?.parentSessionId;
+	if (parent) {
+		wakeChildQueue(parent);
+		const owner = sessions.get(parent);
+		if (owner) flushChildCompletions(owner);
+	}
+}
+async function childTools(entry: Entry, run: ActiveRun): Promise<Tool[]> {
+	if (entry.store.record.childRun) return [];
+	const project = loadProjects().find(
+		(item) => item.id === projectOf(entry.store.record.workspaceId),
+	);
+	const definitions = discoverAgentDefinitions({
+		cwd: entry.store.record.cwd,
+		agentDir: dataDir(),
+		includeProject: project?.resourceTrust === "granted",
+	});
+	const description = definitions
+		.map(
+			(definition) =>
+				`${definition.name}: ${definition.description}${definition.model ? ` [model ${definition.model}]` : ""}`,
+		)
+		.join("\n");
+	return [
+		tool({
+			name: "Agent",
+			description: `Delegate one task to a child agent. Children cannot call MCP or delegate more children. Background results arrive automatically; do not poll.\n${description}`,
+			isEnabled: () => subagentsAllowed(entry),
+			parameters: z.object({
+				subagent_type: z.string(),
+				task: z.string().min(1).max(100000),
+				model: z.string().nullable().optional(),
+				run_in_background: z.boolean().optional(),
+			}),
+			errorFunction: (_context, error, details) => {
+				const call = details?.toolCall ? run.toolCalls.get(details.toolCall.callId) : undefined;
+				if (call) call.failed = true;
+				return error instanceof Error ? error.message : String(error);
+			},
+			execute: async (args, context, details) => {
+				assertActive(entry, run);
+				if (!subagentsAllowed(entry)) throw new Error("Child agents are disabled");
+				if (!details?.toolCall) throw new Error("Child call identity is required");
+				const definition = definitions.find((item) => item.name === args.subagent_type);
+				if (!definition) throw new Error("Unknown child agent definition");
+				if (
+					definition.source === "project" &&
+					loadProjects().find((item) => item.id === projectOf(entry.store.record.workspaceId))
+						?.resourceTrust !== "granted"
+				)
+					throw new Error("Project resources are not trusted");
+				const available = await listAvailableModels();
+				assertActive(entry, run);
+				const mapped = toSpawnMapping(definition, {
+					cwd: entry.store.record.cwd,
+					availableModels: available,
+					...(args.model ? { model: args.model } : {}),
+				});
+				const model = mapped.session.model
+					? available.find(
+							(item) =>
+								item.id === mapped.session.model?.id &&
+								item.provider === mapped.session.model.provider,
+						)
+					: entry.store.record.model;
+				if (!model) throw new Error("Child model is unavailable");
+				const toolCallId = details.toolCall.callId;
+				let record = childRecords(entry).find((item) => item.childRun?.toolCallId === toolCallId);
+				let child: Entry;
+				if (record) {
+					child = sessions.get(record.sessionId) ?? { store: new PersistentSession(record) };
+					sessions.set(record.sessionId, child);
+				} else {
+					const created = await createSession({
+						cwd: entry.store.record.cwd,
+						workspaceId: entry.store.record.workspaceId,
+						model,
+						thinkingLevel: mapped.session.thinkingLevel ?? entry.store.record.thinkingLevel,
+						childRun: {
+							parentSessionId: entry.store.record.sessionId,
+							toolCallId: details.toolCall.callId,
+							task: args.task,
+							definition: { ...definition, systemPrompt: mapped.session.systemPrompt },
+							enabledExtensions: snapshotSdkExtensions(
+								loadConfig().disabledExtensions,
+								loadConfig().extensionSettings,
+								"child",
+							),
+							detached: args.run_in_background === true,
+							createdAt: new Date().toISOString(),
+							status: "queued",
+							completionDelivered: false,
+							collected: false,
+						},
+					});
+					child = mustGet(created.sessionId);
+					record = child.store.record;
+					try {
+						assertActive(entry, run);
+					} catch (error) {
+						finishChild(child, "aborted", "user");
+						throw error;
+					}
+					archiveChild(child);
+				}
+				const metadata = record.childRun;
+				if (!metadata) throw new Error("Missing child owner");
+				if (
+					metadata.status === "completed" ||
+					metadata.status === "error" ||
+					metadata.status === "aborted"
+				)
+					return childOutput(child);
+				if (metadata.detached) {
+					if (!childTasks.has(record.sessionId)) {
+						const controller = new AbortController();
+						queuedChildControllers.set(record.sessionId, controller);
+						const work = (async () => {
+							try {
+								await acquireChildSlot(child, controller.signal);
+								controller.signal.throwIfAborted();
+								await promptSession(record.sessionId, metadata.task);
+								if (child.store.record.pendingApproval || child.store.record.pendingToolResponse)
+									return;
+								const completion = child.store.record.state.completion;
+								finishChild(
+									child,
+									completion?.outcome === "succeeded"
+										? "completed"
+										: completion?.outcome === "cancelled"
+											? "aborted"
+											: "error",
+								);
+							} catch {
+								finishChild(child, "aborted", "interrupted");
+							} finally {
+								queuedChildControllers.delete(record.sessionId);
+								childTasks.delete(record.sessionId);
+							}
+						})();
+						childTasks.set(record.sessionId, work);
+					}
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Background child ${record.sessionId} started. Its report will arrive automatically.`,
+							},
+						],
+						details: childDetails(child),
+					};
+				}
+				const childRun: ActiveRun = child.active ?? {
+					id: randomUUID(),
+					enabledExtensions: metadata.enabledExtensions,
+					controller: new AbortController(),
+					granted: true,
+					done: Promise.resolve(),
+					toolCalls: new Map(),
+					startedTools: new Set<string>(),
+				};
+				child.active = childRun;
+				try {
+					if (metadata.status === "queued")
+						await acquireChildSlot(child, childRun.controller.signal);
+					if (!child.store.record.messages.some((message) => message.role === "user"))
+						child.store.update((current) => {
+							current.messages.push({
+								id: randomUUID(),
+								role: "user",
+								content: metadata.task,
+								timestamp: Date.now(),
+							});
+							current.state = { ...idleState(), execution: "running", runId: childRun.id };
+						});
+					const agent = await buildSessionAgent(child, childRun, model);
+					let hasChildOutcome = false;
+					const childTool = agent.asTool({
+						toolName: "Agent",
+						toolDescription: "Run one foreground child task.",
+						runConfig: {
+							tracingDisabled: !loadConfig().sdkTracingEnabled,
+							traceIncludeSensitiveData: false,
+						},
+						runOptions: {
+							session: child.store,
+							signal: childRun.controller.signal,
+							maxTurns: metadata.definition.maxTurns ?? 20,
+						},
+						onStream: ({ event }) => projectStream(child, childRun, event),
+						customOutputExtractor: (result) => {
+							hasChildOutcome = true;
+							childRun.state = result.state;
+							const usage = result.state.usage;
+							const last = child.store.record.messages.findLast(
+								(message) => message.role === "assistant",
+							);
+							if (last?.role === "assistant") {
+								const accounted = statsFromRecord(child.store.record).tokens;
+								last.usage.input += usage.inputTokens - accounted.input;
+								last.usage.output += usage.outputTokens - accounted.output;
+								last.usage.totalTokens += usage.totalTokens - accounted.total;
+								last.usage.cacheRead +=
+									usage.inputTokensDetails.reduce(
+										(sum, part) =>
+											sum + (typeof part.cached_tokens === "number" ? part.cached_tokens : 0),
+										0,
+									) - accounted.cacheRead;
+								last.usage.cacheWrite +=
+									usage.inputTokensDetails.reduce(
+										(sum, part) =>
+											sum +
+											(typeof part.cache_write_tokens === "number" ? part.cache_write_tokens : 0),
+										0,
+									) - accounted.cacheWrite;
+								flush(child);
+							}
+							if (!result.interruptions.length) {
+								finishChild(child, "completed");
+								childRun.granted = false;
+								delete child.active;
+							}
+							return result.interruptions.length ? "" : (result.finalOutput ?? "");
+						},
+					});
+					let childInvocationDetails = details;
+					if (details.resumeState) {
+						const resumed = await RunState.fromString(agent, details.resumeState);
+						for (const interruption of resumed.getInterruptions()) {
+							if (interruption.rawItem.type !== "function_call")
+								throw new Error("Unsupported child approval");
+							const callId = interruption.rawItem.callId;
+							const decision = Object.values(entry.store.record.decisions).find(
+								(item) => item.runId === run.id && item.toolCallId === callId,
+							);
+							if (decision?.value === true) resumed.approve(interruption);
+							else if (decision) resumed.reject(interruption);
+						}
+						childInvocationDetails = { ...details, resumeState: resumed.toString() };
+					}
+					const invocation = childTool.invoke(
+						context ?? new RunContext(),
+						JSON.stringify({ input: metadata.task }),
+						childInvocationDetails,
+					);
+					childRun.done = invocation.then(
+						() => {},
+						() => {},
+					);
+					const output = await invocation;
+					if (!hasChildOutcome)
+						throw new Error(
+							typeof output === "string" ? output : "The child SDK run did not return an outcome",
+						);
+					return childOutput(child);
+				} catch (error) {
+					return failedForegroundChild(child, childRun, error);
+				}
+			},
+		}),
+		tool({
+			name: "get_subagent_result",
+			description:
+				"Read a child result owned by this parent. Background reports also arrive automatically.",
+			isEnabled: () => subagentsAllowed(entry),
+			parameters: z.object({ session_id: z.string() }),
+			execute: ({ session_id }) => {
+				assertActive(entry, run);
+				const child = ownedChildEntry(entry, session_id);
+				child.store.update((record) => {
+					if (record.childRun && record.childRun.finishedAt !== undefined) {
+						record.childRun.collected = true;
+						record.childRun.completionDelivered = true;
+					}
+				});
+				return childOutput(child);
+			},
+		}),
+	];
+}
+function ownedChildEntry(parent: Entry, id: string): Entry {
+	const record = sessions.get(id)?.store.record ?? readSessionRecord(id);
+	if (
+		!record ||
+		record.workspaceId !== parent.store.record.workspaceId ||
+		record.childRun?.parentSessionId !== parent.store.record.sessionId
+	)
+		throw new CodedError("RESOURCE_UNAVAILABLE", "Resource unavailable");
+	return sessions.get(id) ?? { store: new PersistentSession(record) };
+}
+function commandService(entry: Entry): BackgroundCommands {
+	if (entry.commands) return entry.commands;
+	const service = createBackgroundCommands({
+		sessionId: entry.store.record.sessionId,
+		getContext: () => ({
+			cwd: entry.store.record.cwd,
+			sessionFile: sessionRecordPath(entry.store.record.sessionId),
+			model: entry.store.record.model ?? undefined,
+			thinkingLevel: entry.store.record.thinkingLevel,
+			exposeSessionEnvironment: false,
+		}),
+	});
+	entry.commands = service;
+	entry.commandArchive = archiveCommandHistory(
+		entry.store.record.workspaceId,
+		entry.store.record.sessionId,
+		service,
+		() => entry.closingResources === true,
+	);
+	service.onChange(() => resourceChanged(entry));
+	service.bindCompletion({
+		canDeliverCompletion: () => {
+			const recipient = entry.store.record.childRun ? resourceParent(entry) : entry;
+			return !!recipient && !recipient.active && !recipient.stopping && !entry.stopping;
+		},
+		deliver: (batch) => {
+			const recipient = entry.store.record.childRun ? resourceParent(entry) : entry;
+			if (!recipient) return [];
+			for (const completion of batch) {
+				if (completion.snapshot.status === "stopped") continue;
+				const { command: _command, ...summary } = completion.snapshot;
+				const excerpt = commandExcerpt(completion.output.text, 4096, 40);
+				const output = {
+					text: excerpt.text,
+					truncated: completion.output.truncated || excerpt.truncated,
+				};
+				queueResourceCompletion(
+					recipient,
+					`command-${completion.snapshot.id}`,
+					`Background command ${completion.snapshot.name} ${completion.snapshot.status}:\n${output.text}`,
+					"background-command-completion",
+					{ ...summary, output, delivery: "wake" },
+				);
+			}
+			return batch;
+		},
+	});
+	return service;
+}
+function backgroundTools(entry: Entry, run: ActiveRun): Tool[] {
+	return [
+		tool({
+			name: "background_command",
+			description:
+				"Manage session-owned background commands. Use action start, list, output or stop. Output of a finished command claims its completion.",
+			parameters: z.object({
+				action: z.enum(["start", "list", "output", "stop"]),
+				command: z.string().min(1).max(65536).nullish(),
+				name: z.string().max(200).nullish(),
+				timeout: z.number().positive().max(2147483.647).nullish(),
+				id: z.string().min(1).nullish(),
+			}),
+			needsApproval: async (_context, args) => args.action === "start",
+			errorFunction: (_context, error, details) => {
+				const call = details?.toolCall ? run.toolCalls.get(details.toolCall.callId) : undefined;
+				if (call) call.failed = true;
+				return error instanceof Error ? error.message : String(error);
+			},
+			execute: (args) => {
+				assertActive(entry, run);
+				const allowed =
+					args.action === "start"
+						? ["action", "command", "name", "timeout"]
+						: args.action === "list"
+							? ["action"]
+							: ["action", "id"];
+				if (Object.entries(args).some(([key, value]) => value != null && !allowed.includes(key)))
+					throw new Error("Unsupported inputs for this background command action");
+				const service = commandService(entry);
+				if (args.action === "start") {
+					if (!args.command) throw new Error("start requires command");
+					const handle = service.start({
+						command: args.command,
+						...(args.name ? { name: args.name } : {}),
+						...(args.timeout ? { timeout: args.timeout } : {}),
+					});
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Accepted background command ${handle.id} (${handle.snapshot.name}): ${handle.snapshot.status}`,
+							},
+						],
+						details: { snapshot: handle.snapshot },
+					};
+				}
+				if (args.action === "list") {
+					const commands = service.list();
+					return {
+						content: [
+							{
+								type: "text",
+								text:
+									commands
+										.map((snapshot) => `${snapshot.id} (${snapshot.name}): ${snapshot.status}`)
+										.join("\n") || "No background commands in this session.",
+							},
+						],
+						details: { commands },
+					};
+				}
+				if (!args.id) throw new Error("output and stop require a command id");
+				const handle = service.find(args.id);
+				if (!handle) throw new Error("Background command unavailable in this session");
+				if (args.action === "stop") {
+					const snapshot = handle.stop();
+					return {
+						content: [{ type: "text", text: `Stop requested; ${snapshot.id}: ${snapshot.status}` }],
+						details: { snapshot },
+					};
+				}
+				const output = handle.output;
+				if (!output) throw new Error("Background command output unavailable");
+				const snapshot = handle.snapshot;
+				if (snapshot.finishedAt !== undefined) handle.claimCompletion();
+				return {
+					content: [
+						{
+							type: "text",
+							text: `${snapshot.id} (${snapshot.name}): ${snapshot.status}\n\n${output.truncated ? "[Output truncated; retained tail only.]\n" : ""}${output.text || "(no output)"}`,
+						},
+					],
+					details: { snapshot, output },
+				};
+			},
+		}),
+	];
+}
+async function settleResourceCleanup(pending: Promise<unknown>[]): Promise<void> {
+	const results = await Promise.allSettled(pending);
+	const failures = results.filter(
+		(result): result is PromiseRejectedResult => result.status === "rejected",
+	);
+	if (failures.length)
+		throw new AggregateError(
+			failures.map((result) => result.reason),
+			"Resource cleanup failed",
+		);
+}
+async function stopOwnedResources(entry: Entry, reason = "user"): Promise<void> {
+	const pending: Promise<unknown>[] = [pauseSessionMcpConnections(entry.store.record.sessionId)];
+
+	for (const record of childRecords(entry)) {
+		const live = record.childRun?.status === "queued" || record.childRun?.status === "running";
+		queuedChildControllers.get(record.sessionId)?.abort();
+		const child = sessions.get(record.sessionId);
+		if (child) child.stopping = true;
+		const preserveApproval =
+			live &&
+			reason === "interrupted" &&
+			!deletingSessions.has(entry.store.record.sessionId) &&
+			((!record.childRun?.detached &&
+				!!entry.store.record.runCheckpoint &&
+				!!(entry.store.record.pendingApproval || entry.store.record.pendingToolResponse)) ||
+				!!(record.pendingApproval || record.pendingToolResponse)) &&
+			!Object.values(record.effects).some((effect) => effect.status !== "completed");
+		if (child?.active) {
+			if (preserveApproval) child.active.suspended = true;
+			child.active.granted = false;
+			child.active.controller.abort();
+			child.active.approval?.reject(new Error("Parent stopped"));
+			child.active.toolResponse?.reject(new Error("Parent stopped"));
+			pending.push(
+				child.active.done.then(() => {
+					if (preserveApproval) {
+						delete child.active;
+						sessions.delete(record.sessionId);
+					}
+				}),
+			);
+		}
+		if (child) {
+			pending.push(
+				settleResourceCleanup([
+					child.active?.done ?? Promise.resolve(),
+					stopOwnedResources(child, reason),
+				]).finally(() => {
+					delete child.stopping;
+				}),
+			);
+			if (live && !preserveApproval) finishChild(child, "aborted", reason);
+		}
+		const task = childTasks.get(record.sessionId);
+		if (task) pending.push(task);
+	}
+	if (entry.commands) {
+		const commands = entry.commands;
+		entry.closingResources = reason === "interrupted";
+		pending.push(
+			commands.dispose().then(() => {
+				entry.commandArchive?.finish();
+				delete entry.commandArchive;
+				if (entry.commands === commands) delete entry.commands;
+				delete entry.closingResources;
+			}),
+		);
+	}
+	await settleResourceCleanup(pending);
+	resourceChanged(entry);
+}
+export async function sessionResources(
+	workspaceId: string,
+	sessionId: string,
+): Promise<SessionResources> {
+	const entry = await ownedSessionEntry(workspaceId, sessionId);
+	return {
+		...summarizeResources(resourceScope(entry), ownedResourceSnapshots(entry)),
+		mcpServers: mcpResourceSummaries(sessionId),
+	};
+}
+async function ownedSessionEntry(workspaceId: string, sessionId: string): Promise<Entry> {
+	const workspace = loadWorkspaces().find((item) => item.id === workspaceId);
+	if (!workspace || !(await ensureSessionAttached(sessionId, workspaceId, workspace.worktreePath)))
+		throw new CodedError("RESOURCE_UNAVAILABLE", "Resource unavailable");
+	return mustGet(sessionId);
+}
+export async function reloadSessionResources(
+	sessionId: string,
+	workspaceId: string,
+	cwd: string,
+): Promise<void> {
+	const record = sessions.get(sessionId)?.store.record ?? readSessionRecord(sessionId);
+	if (
+		!record ||
+		record.workspaceId !== workspaceId ||
+		record.cwd !== resolve(cwd) ||
+		record.childRun
+	)
+		throw new Error("Session is unavailable in its workspace");
+	if (
+		record.state.execution === "running" ||
+		record.pendingApproval ||
+		record.pendingToolResponse ||
+		record.runCheckpoint
+	)
+		throw new Error("Resources can only reload in an idle session");
+	const entry = await ownedSessionEntry(workspaceId, sessionId);
+	if (
+		entry.active ||
+		entry.stopping ||
+		entry.summaryController ||
+		ownedResourceSnapshots(entry).some(resourceIsLive)
+	)
+		throw new Error("Resources can only reload in an idle session");
+	const model = entry.store.record.model;
+	if (!model) throw new Error("Select a model before reloading resources");
+	const run: ActiveRun = {
+		id: randomUUID(),
+		enabledExtensions: snapshotSdkExtensions(
+			loadConfig().disabledExtensions,
+			loadConfig().extensionSettings,
+		),
+		controller: new AbortController(),
+		granted: true,
+		done: Promise.resolve(),
+		toolCalls: new Map(),
+		startedTools: new Set(),
+	};
+	entry.active = run;
+	run.done = (async () => {
+		try {
+			assertActive(entry, run);
+			await reconcileMcpSessions([sessionId]);
+			assertActive(entry, run);
+			await buildSessionAgent(entry, run, model, model.id);
+			assertActive(entry, run);
+		} finally {
+			run.granted = false;
+			run.controller.abort();
+			if (entry.active === run) delete entry.active;
+		}
+	})();
+	await run.done;
+}
+export async function sessionResourceHistory(
+	workspaceId: string,
+	sessionId: string,
+	request: { kind: ResourceKind; before?: ResourceHistoryCursor; limit?: number },
+) {
+	const entry = await ownedSessionEntry(workspaceId, sessionId);
+	return resourcePage(resourceScope(entry), ownedResourceSnapshots(entry), request);
+}
+export async function backgroundCommandOutput(
+	workspaceId: string,
+	sessionId: string,
+	commandId: string,
+) {
+	const entry = await ownedSessionEntry(workspaceId, sessionId);
+	const handle = commandOwners(entry)
+		.map((owner) => owner.commands?.find(commandId))
+		.find(Boolean);
+	if (handle)
+		return {
+			available: true as const,
+			command: handle.snapshot,
+			output: handle.output ?? { text: "", truncated: false },
+		};
+	const output = commandOwners(entry)
+		.map((owner) =>
+			archivedCommandOutput({ workspaceId, sessionId: owner.store.record.sessionId }, commandId),
+		)
+		.find((value) => value !== undefined);
+	const summary = resourceHistoryOf(
+		resourceScope(entry),
+		"command",
+		ownedResourceSnapshots(entry),
+	).finished.find((item) => item.kind === "command" && item.summary.id === commandId);
+	return output && summary?.kind === "command"
+		? { available: true as const, command: summary.summary, output }
+		: { available: false as const };
+}
+export async function stopBackgroundCommand(
+	workspaceId: string,
+	sessionId: string,
+	commandId: string,
+): Promise<void> {
+	const entry = await ownedSessionEntry(workspaceId, sessionId);
+	const handle = commandOwners(entry)
+		.map((owner) => owner.commands?.find(commandId))
+		.find(Boolean);
+	if (!handle) throw new CodedError("RESOURCE_UNAVAILABLE", "Resource unavailable");
+	handle.stop();
+}
+export async function stopSubagent(
+	workspaceId: string,
+	parentSessionId: string,
+	childSessionId: string,
+): Promise<void> {
+	const parent = await ownedSessionEntry(workspaceId, parentSessionId);
+	const child = ownedChildEntry(parent, childSessionId);
+	queuedChildControllers.get(childSessionId)?.abort();
+	if (sessions.has(childSessionId)) await abortSession(childSessionId);
+	finishChild(child, "aborted", "user");
+}
+export async function stopSubagents(workspaceId: string, parentSessionId: string): Promise<number> {
+	const parent = await ownedSessionEntry(workspaceId, parentSessionId);
+	const records = childRecords(parent).filter((record) => {
+		const child = sessions.get(record.sessionId);
+		return (
+			record.childRun?.status === "running" ||
+			record.childRun?.status === "queued" ||
+			(child !== undefined &&
+				(!!child.active || ownedResourceSnapshots(child).some(resourceIsLive)))
+		);
+	});
+	await Promise.all(
+		records.map((record) => stopSubagent(workspaceId, parentSessionId, record.sessionId)),
+	);
+	return records.length;
+}
+export async function subagentTranscript(
+	workspaceId: string,
+	parentSessionId: string,
+	childSessionId: string,
+) {
+	const parent = await ownedSessionEntry(workspaceId, parentSessionId);
+	const child = ownedChildEntry(parent, childSessionId);
+	return {
+		messages: structuredClone(child.store.record.messages),
+		...(child.store.record.childRun ? { status: child.store.record.childRun.status } : {}),
+	};
+}
+
+function reconcileStoredChildren(parent: Entry): void {
+	if (parent.store.record.childRun) return;
+	for (const record of childRecords(parent)) {
+		const child = record.childRun;
+		if (
+			!child ||
+			(child.status !== "queued" && child.status !== "running") ||
+			sessions.get(record.sessionId)?.active ||
+			childTasks.has(record.sessionId) ||
+			queuedChildControllers.has(record.sessionId)
+		)
+			continue;
+		const waiting =
+			!!record.runCheckpoint && !!(record.pendingApproval || record.pendingToolResponse);
+		const nested =
+			!child.detached &&
+			!!parent.store.record.runCheckpoint &&
+			!!(parent.store.record.pendingApproval || parent.store.record.pendingToolResponse);
+		if (
+			(waiting || nested) &&
+			!Object.values(record.effects).some((effect) => effect.status !== "completed")
+		)
+			continue;
+		const store = new PersistentSession(record);
+		store.update((current) => {
+			if (current.childRun) {
+				current.childRun.status = "aborted";
+				current.childRun.abortReason = "interrupted";
+				current.childRun.finishedAt = Date.now();
+				current.childRun.completionDelivered = true;
+			}
+			current.state.execution = "idle";
+			current.state.needsInput = null;
+			current.state.completion = {
+				completionId: current.state.runId ?? current.sessionId,
+				outcome: "interrupted",
+			};
+			for (const effect of Object.values(current.effects))
+				if (effect.status === "started") effect.status = "unknown";
+			delete current.pendingApproval;
+			delete current.pendingToolResponse;
+			delete current.runCheckpoint;
+		});
+		recordResource(
+			{ workspaceId: record.workspaceId, sessionId: parent.store.record.sessionId },
+			{ kind: "subagent", summary: childSummary(store.record) },
+		);
+	}
 }
 
 function captureStructuredToolResults(tools: Tool[], run: ActiveRun): void {
@@ -793,18 +1965,22 @@ async function buildSessionAgent(
 	model: WireModel,
 	sdkModel: Agent["model"] = createConfiguredModel(model, entry.store.record.sessionId),
 ): Promise<Agent> {
+	const childDefinition = entry.store.record.childRun?.definition;
 	const skillOptions = {
+		...(childDefinition ? { allowedSkills: childDefinition.skills ?? [] } : {}),
 		markToolFailed: (callId: string | undefined) => {
 			const call = callId ? run.toolCalls.get(callId) : undefined;
 			if (call) call.failed = true;
 		},
-		manualSkills: entry.store.record.messages.flatMap((message) =>
-			message.role === "user"
-				? [skillCommandName(textOf(message.content))].filter(
-						(name): name is string => name !== undefined,
-					)
-				: [],
-		),
+		manualSkills: childDefinition
+			? []
+			: entry.store.record.messages.flatMap((message) =>
+					message.role === "user"
+						? [skillCommandName(textOf(message.content))].filter(
+								(name): name is string => name !== undefined,
+							)
+						: [],
+				),
 		cwd: entry.store.record.cwd,
 		admission: () =>
 			admissionContextFor(
@@ -816,46 +1992,65 @@ async function buildSessionAgent(
 		assertActive: () => assertActive(entry, run),
 		signal: run.controller.signal,
 	};
-	const projectContext = workspaceInstructions(entry.store.record.cwd);
+	// Preloaded Skills are read inside the SDK run (dynamic instructions), so a read failure fails that run.
+	const preloadedSkills = () =>
+		childDefinition?.skills
+			?.map((name) => readAdmittedSkill(skillOptions, name, null).text)
+			.join("\n\n");
+	const projectContext =
+		!childDefinition || childDefinition.inheritProjectContext
+			? workspaceInstructions(entry.store.record.cwd)
+			: "";
 	const skillCatalog = skillInstructions(skillOptions, model);
+	// A standalone chat is not a repository: it and its children get no Spec tools or rule.
 	const repository =
 		loadWorkspaces().find((item) => item.id === entry.store.record.workspaceId)?.kind !== "chat";
+	const applicationTools = [
+		...(await childTools(entry, run)),
+		...backgroundTools(entry, run),
+		...createTodoTools({
+			markToolFailed: (callId) => {
+				const call = callId ? run.toolCalls.get(callId) : undefined;
+				if (call) call.failed = true;
+			},
+			cwd: entry.store.record.cwd,
+			sessionId: entry.store.record.sessionId,
+			assertActive: () => assertActive(entry, run),
+		}),
+		...(repository
+			? createSpecTools({
+					markToolFailed: (callId) => {
+						const call = callId ? run.toolCalls.get(callId) : undefined;
+						if (call) call.failed = true;
+					},
+					cwd: entry.store.record.cwd,
+					assertActive: () => assertActive(entry, run),
+				})
+			: []),
+		...(childDefinition && !childDefinition.extensions && !childDefinition.skills?.length
+			? []
+			: createSkillTools(skillOptions)),
+		...(await (childDefinition
+			? Promise.resolve([])
+			: sessionMcpTools({
+					sessionId: entry.store.record.sessionId,
+					workspaceId: entry.store.record.workspaceId,
+					cwd: entry.store.record.cwd,
+					signal: run.controller.signal,
+					assertActive: () => assertActive(entry, run),
+					markToolFailed: (callId: string) => {
+						const call = run.toolCalls.get(callId);
+						if (call) call.failed = true;
+					},
+				}))),
+	];
 	const agent = new Agent({
-		name: "RailDesign",
-		instructions: `You are RailDesign, a coding assistant. Work only in the assigned worktree: ${entry.store.record.cwd}. Use read and search to inspect files. Use apply_patch for edits and bash to run project checks. Request approval for commands and edits. A denied operation is not permission to try another route. Report actual checks and remaining limits.\n${projectContext}\n${skillCatalog}\n${TODO_RULE}\n${repository ? SPEC_RULE : ""}\n${WORKFLOW_RULE}`,
+		name: childDefinition?.name ?? "RailDesign",
+		instructions: () =>
+			`${childDefinition?.systemPrompt ?? ""}\nYou are RailDesign, a coding assistant. Work only in the assigned worktree: ${entry.store.record.cwd}. Use read and search to inspect files. Use apply_patch for edits and bash to run project checks. Request approval for commands and edits. A denied operation is not permission to try another route. Report actual checks and remaining limits.\n${projectContext}\n${preloadedSkills() ?? ""}\n${skillCatalog}\n${TODO_RULE}\n${repository ? SPEC_RULE : ""}\n${WORKFLOW_RULE}`,
 		model: sdkModel,
 		tools: [
-			...createTodoTools({
-				markToolFailed: (callId) => {
-					const call = callId ? run.toolCalls.get(callId) : undefined;
-					if (call) call.failed = true;
-				},
-				cwd: entry.store.record.cwd,
-				sessionId: entry.store.record.sessionId,
-				assertActive: () => assertActive(entry, run),
-			}),
-			...(repository
-				? createSpecTools({
-						markToolFailed: (callId) => {
-							const call = callId ? run.toolCalls.get(callId) : undefined;
-							if (call) call.failed = true;
-						},
-						cwd: entry.store.record.cwd,
-						assertActive: () => assertActive(entry, run),
-					})
-				: []),
-			...createSkillTools(skillOptions),
-			...(await sessionMcpTools({
-				sessionId: entry.store.record.sessionId,
-				workspaceId: entry.store.record.workspaceId,
-				cwd: entry.store.record.cwd,
-				signal: run.controller.signal,
-				assertActive: () => assertActive(entry, run),
-				markToolFailed: (callId: string) => {
-					const call = run.toolCalls.get(callId);
-					if (call) call.failed = true;
-				},
-			})),
+			...applicationTools,
 			...workspaceTools(
 				{
 					workspaceId: entry.store.record.workspaceId,
@@ -901,7 +2096,8 @@ async function buildSessionAgent(
 							: { kind: "response", value: answer.response };
 					},
 				},
-				run.enabledExtensions,
+				childDefinition && !childDefinition.extensions ? [] : run.enabledExtensions,
+				childDefinition ? "child" : "parent",
 			),
 		],
 		// A tool result marked `terminate` ends the run without another model call.
@@ -927,7 +2123,14 @@ async function buildSessionAgent(
 		const toolCall = details.toolCall;
 		addToolCall(entry, run, toolCall);
 		const previous = entry.store.record.effects[toolCall.callId];
-		if (previous) throw new Error("A recorded tool effect cannot be replayed");
+		if (
+			previous &&
+			!(
+				toolCall.name === "Agent" &&
+				childRecords(entry).some((record) => record.childRun?.toolCallId === toolCall.callId)
+			)
+		)
+			throw new Error("A recorded tool effect cannot be replayed");
 		entry.store.update((record) => {
 			delete record.runCheckpoint;
 			record.effects[toolCall.callId] = {
@@ -956,6 +2159,19 @@ async function buildSessionAgent(
 			run.toolCalls.get(details.toolCall.callId)?.failed,
 		);
 	});
+	if (childDefinition) {
+		const aliases = new Set(
+			childDefinition.tools?.flatMap((name) =>
+				["grep", "find", "ls"].includes(name) ? ["search"] : [name],
+			),
+		);
+		agent.tools = agent.tools.filter(
+			(candidate) =>
+				candidate.type !== "function" ||
+				(!["Agent", "get_subagent_result", "ask_user_question"].includes(candidate.name) &&
+					(!childDefinition.tools || aliases.has(candidate.name))),
+		);
+	}
 	captureStructuredToolResults(agent.tools, run);
 	return agent;
 }
@@ -1211,6 +2427,15 @@ async function executeRun(
 				}
 				emit(entry, { type: "agent_end", messages: entry.store.record.messages, willRetry: false });
 				emit(entry, { type: "agent_settled", terminal });
+				if (entry.store.record.childRun)
+					finishChild(
+						entry,
+						terminal.stopReason === "stop"
+							? "completed"
+							: terminal.stopReason === "aborted"
+								? "aborted"
+								: "error",
+					);
 			}
 		} finally {
 			run.granted = false;
@@ -1225,6 +2450,8 @@ async function executeRun(
 		} catch (error) {
 			log.warn("Automatic summary kept the prior history", error);
 		}
+		flushChildCompletions(entry);
+		for (const owner of commandOwners(entry)) owner.commands?.flushCompletions({ atTurnEnd: true });
 		await drainQueue(entry);
 	}
 }
@@ -1258,7 +2485,9 @@ function queueOf(record: SessionRecord): SessionQueueContent {
 	const queue = record.queue;
 	return {
 		steering: queue.filter((input) => input.kind === "steering").map(queuedContent),
-		followUp: queue.filter((input) => input.kind === "followUp").map(queuedContent),
+		followUp: queue
+			.filter((input) => input.kind === "followUp" && !input.internal)
+			.map(queuedContent),
 	};
 }
 export function getQueuedMessageContent(sessionId: string): SessionQueueContent {
@@ -1274,7 +2503,9 @@ function queueStateOf(record: SessionRecord): SessionQueueState {
 	});
 	return {
 		steering: record.queue.filter((input) => input.kind === "steering").map(project),
-		followUp: record.queue.filter((input) => input.kind === "followUp").map(project),
+		followUp: record.queue
+			.filter((input) => input.kind === "followUp" && !input.internal)
+			.map(project),
 		...(record.queue.some((input) => input.images?.length) ? { hasImages: true as const } : {}),
 	};
 }
@@ -1283,7 +2514,9 @@ export function queuedMessages(sessionId: string): SessionQueueState {
 }
 
 function publishQueue(entry: Entry): void {
-	entry.store.record.state.queuedCount = entry.store.record.queue.length;
+	entry.store.record.state.queuedCount = entry.store.record.queue.filter(
+		(input) => !input.internal,
+	).length;
 	emit(entry, { type: "queue_update", ...queuedMessages(entry.store.record.sessionId) });
 	notifyState(entry);
 }
@@ -1617,6 +2850,7 @@ export interface CreateSessionInput {
 	model?: WireModel;
 	thinkingLevel?: ThinkingLevel;
 	modelOptional?: boolean;
+	childRun?: ChildRunRecord;
 }
 export interface CreateSessionResult {
 	sessionId: string;
@@ -1639,6 +2873,7 @@ export async function createSession(input: CreateSessionInput): Promise<CreateSe
 	const entry: Entry = {
 		store: new PersistentSession({
 			version: 2,
+			...(input.childRun ? { childRun: input.childRun } : {}),
 			sessionId,
 			workspaceId: input.workspaceId,
 			cwd: resolve(input.cwd),
@@ -1665,8 +2900,10 @@ export async function createSession(input: CreateSessionInput): Promise<CreateSe
 	flush(entry);
 	sessions.set(sessionId, entry);
 	observeStore(entry);
-	publishCreated(summaryOf(entry));
-	notifyState(entry);
+	if (!input.childRun) {
+		publishCreated(summaryOf(entry));
+		notifyState(entry);
+	}
 	return {
 		sessionId,
 		model: entry.store.record.model,
@@ -1711,10 +2948,9 @@ export function promptSession(
 	const run: ActiveRun = {
 		id: randomUUID(),
 		inputId: id,
-		enabledExtensions: snapshotSdkExtensions(
-			loadConfig().disabledExtensions,
-			loadConfig().extensionSettings,
-		),
+		enabledExtensions:
+			entry.store.record.childRun?.enabledExtensions ??
+			snapshotSdkExtensions(loadConfig().disabledExtensions, loadConfig().extensionSettings),
 		controller: new AbortController(),
 		granted: true,
 		done: Promise.resolve(),
@@ -1724,21 +2960,25 @@ export function promptSession(
 	let modelText: string;
 	entry.active = run;
 	try {
-		modelText = expandSkillCommand(
-			{
-				cwd: entry.store.record.cwd,
-				admission: () =>
-					admissionContextFor(
-						loadProjects().find((item) => item.id === projectOf(entry.store.record.workspaceId)),
-						loadWorkspaces().find((item) => item.id === entry.store.record.workspaceId)
-							?.skillOverrides ?? {},
-						loadConfig().otherAgentSkills,
-					),
-				assertActive: () => assertActive(entry, run),
-				signal: run.controller.signal,
-			},
-			text,
-		);
+		modelText = entry.store.record.childRun
+			? text
+			: expandSkillCommand(
+					{
+						cwd: entry.store.record.cwd,
+						admission: () =>
+							admissionContextFor(
+								loadProjects().find(
+									(item) => item.id === projectOf(entry.store.record.workspaceId),
+								),
+								loadWorkspaces().find((item) => item.id === entry.store.record.workspaceId)
+									?.skillOverrides ?? {},
+								loadConfig().otherAgentSkills,
+							),
+						assertActive: () => assertActive(entry, run),
+						signal: run.controller.signal,
+					},
+					text,
+				);
 	} finally {
 		delete entry.active;
 	}
@@ -1765,6 +3005,7 @@ export function promptSession(
 		timestamp: Date.now(),
 	};
 	const queuedInput = entry.store.record.queue.some((input) => input.id === id);
+	const backgroundWork = ownedResourceSnapshots(entry).some(resourceIsLive);
 	const firstSeq = entry.store.record.eventSeq + 1;
 	entry.store.update((record) => {
 		const existing = record.messages.findIndex((item) => item.id === message.id);
@@ -1776,7 +3017,8 @@ export function promptSession(
 			...idleState(),
 			execution: "running",
 			runId: run.id,
-			queuedCount: record.queue.length,
+			queuedCount: record.queue.filter((input) => !input.internal).length,
+			backgroundWork,
 		};
 		record.eventSeq += queuedInput ? 1 : 2;
 	});
@@ -1796,63 +3038,21 @@ export function promptSession(
 		: executeRun(entry, run, content);
 	return run.done;
 }
-export async function reloadSessionResources(
+export async function abortSession(
 	sessionId: string,
-	workspaceId: string,
-	cwd: string,
+	reason: "user" | "interrupted" = "user",
 ): Promise<void> {
-	const record = sessions.get(sessionId)?.store.record ?? readSessionRecord(sessionId);
-	if (!record || record.workspaceId !== workspaceId || record.cwd !== resolve(cwd))
-		throw new Error("Session is unavailable in its workspace");
-	if (
-		record.state.execution === "running" ||
-		record.pendingApproval ||
-		record.pendingToolResponse ||
-		record.runCheckpoint
-	)
-		throw new Error("Resources can only reload in an idle session");
-	if (!(await ensureSessionAttached(sessionId, workspaceId, cwd)))
-		throw new Error("Session is unavailable in its workspace");
-	const entry = mustGet(sessionId);
-	if (entry.active || entry.stopping || entry.summaryController)
-		throw new Error("Resources can only reload in an idle session");
-	const model = entry.store.record.model;
-	if (!model) throw new Error("Select a model before reloading resources");
-	const run: ActiveRun = {
-		id: randomUUID(),
-		enabledExtensions: snapshotSdkExtensions(
-			loadConfig().disabledExtensions,
-			loadConfig().extensionSettings,
-		),
-		controller: new AbortController(),
-		granted: true,
-		done: Promise.resolve(),
-		toolCalls: new Map(),
-		startedTools: new Set(),
-	};
-	entry.active = run;
-	run.done = (async () => {
-		try {
-			assertActive(entry, run);
-			await reconcileMcpSessions([sessionId]);
-			assertActive(entry, run);
-			await buildSessionAgent(entry, run, model, model.id);
-			assertActive(entry, run);
-		} finally {
-			run.granted = false;
-			run.controller.abort();
-			if (entry.active === run) delete entry.active;
-		}
-	})();
-	await run.done;
-}
-
-export async function abortSession(sessionId: string): Promise<void> {
 	const entry = mustGet(sessionId);
 	entry.summaryController?.abort();
 	const run = entry.active;
 	if (!run) {
-		await Promise.all([entry.summaryDone, pauseSessionMcpConnections(sessionId)]);
+		entry.stopping = true;
+		try {
+			await stopOwnedResources(entry, reason);
+			await entry.summaryDone;
+		} finally {
+			delete entry.stopping;
+		}
 		return;
 	}
 	entry.stopping = true;
@@ -1861,7 +3061,7 @@ export async function abortSession(sessionId: string): Promise<void> {
 	run.approval?.reject(new Error("Run cancelled"));
 	run.toolResponse?.reject(new Error("Run cancelled"));
 	try {
-		await Promise.all([run.done, pauseSessionMcpConnections(sessionId)]);
+		await Promise.all([run.done, stopOwnedResources(entry, reason)]);
 	} finally {
 		delete entry.stopping;
 	}
@@ -1875,7 +3075,9 @@ export function getSessionWorkspaceId(sessionId: string): string | undefined {
 export function liveSessionIdsOf(workspaceId?: string): string[] {
 	return [...sessions]
 		.filter(
-			([, entry]) => workspaceId === undefined || entry.store.record.workspaceId === workspaceId,
+			([, entry]) =>
+				!entry.store.record.childRun &&
+				(workspaceId === undefined || entry.store.record.workspaceId === workspaceId),
 		)
 		.map(([sessionId]) => sessionId);
 }
@@ -1883,7 +3085,7 @@ export function isSessionStreaming(sessionId: string): boolean {
 	return !!sessions.get(sessionId)?.active;
 }
 export function getSessionState(sessionId: string): SessionState {
-	return structuredClone(mustGet(sessionId).store.record.state);
+	return visibleState(mustGet(sessionId));
 }
 export async function ensureSessionAttached(
 	sessionId: string,
@@ -1908,6 +3110,7 @@ export async function ensureSessionAttached(
 	if (!record || record.workspaceId !== workspaceId || record.cwd !== resolve(cwd)) return false;
 	const entry: Entry = { store: new PersistentSession(record) };
 	sessions.set(sessionId, entry);
+	reconcileStoredChildren(entry);
 	observeStore(entry);
 	const interruptedEffects = Object.entries(record.effects).filter(
 		([, effect]) => effect.status !== "completed" && effect.runId === record.state.runId,
@@ -2011,7 +3214,8 @@ export async function getSessionMessages(sessionId: string, workspaceId: string,
 }
 export async function listSessions(workspaceId: string, cwd: string): Promise<SessionSummary[]> {
 	const records = listSessionRecords().filter(
-		(record) => record.workspaceId === workspaceId && record.cwd === resolve(cwd),
+		(record) =>
+			!record.childRun && record.workspaceId === workspaceId && record.cwd === resolve(cwd),
 	);
 	return records
 		.map((record) =>
@@ -2050,7 +3254,7 @@ export function renameSession(
 	workspaceId: string,
 	cwd: string,
 	name: string,
-	options: { onlyIfUnnamed?: boolean } = {},
+	options: { onlyIfUnnamed?: boolean; assertActive?: () => void } = {},
 ): Promise<boolean> {
 	const title = normalizeSessionTitle(name);
 	if (!title) return Promise.reject(new Error("Invalid session title"));
@@ -2059,6 +3263,7 @@ export function renameSession(
 		if (closingSessions.has(sessionId) || deletingSessions.has(sessionId))
 			throw new Error("Session is closing");
 		const entry = mustGet(sessionId);
+		options.assertActive?.();
 		if (options.onlyIfUnnamed && entry.store.record.title?.trim()) return false;
 		if (entry.store.record.title === title) return true;
 		entry.store.update((record) => {
@@ -2142,8 +3347,9 @@ export async function markWorkspaceUnread(
 	}
 	return null;
 }
-export function getSessionStats(sessionId: string): SessionStats {
-	const entry = mustGet(sessionId);
+function statsFromRecord(record: SessionRecord): SessionStats {
+	const entry = { store: { record } };
+	const sessionId = record.sessionId;
 	const tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
 
 	for (const message of entry.store.record.messages)
@@ -2163,6 +3369,21 @@ export function getSessionStats(sessionId: string): SessionStats {
 		tokens.total += receipt.usage.total;
 	}
 	return { sessionId, totalMessages: entry.store.record.messages.length, tokens, cost: null };
+}
+export function getSessionStats(sessionId: string): SessionStats {
+	const entry = mustGet(sessionId),
+		stats = statsFromRecord(entry.store.record);
+	if (!entry.store.record.childRun)
+		for (const child of childRecords(entry)) {
+			if (!child.childRun?.detached) continue;
+			const usage = statsFromRecord(child).tokens;
+			stats.tokens.input += usage.input;
+			stats.tokens.output += usage.output;
+			stats.tokens.total += usage.total;
+			stats.tokens.cacheRead += usage.cacheRead;
+			stats.tokens.cacheWrite += usage.cacheWrite;
+		}
+	return stats;
 }
 export async function readFinalAssistantTexts(
 	workspaceId: string,
@@ -2198,7 +3419,8 @@ export async function removeSession(sessionId: string): Promise<void> {
 			run.approval?.reject(new Error("Approval saved for continuation"));
 			run.toolResponse?.reject(new Error("Tool response saved for continuation"));
 			await run.done;
-		} else await abortSession(sessionId);
+		} else await abortSession(sessionId, "interrupted");
+		await stopOwnedResources(entry, "interrupted");
 		await releaseSessionResources?.(sessionId);
 		flush(entry);
 		sessions.delete(sessionId);
@@ -2247,8 +3469,10 @@ export async function settleSessionsForShutdown(): Promise<void> {
 	await Promise.all([...sessions.keys()].map((id) => removeSession(id)));
 }
 export function disposeAllSessions(): void {
+	for (const controller of queuedChildControllers.values()) controller.abort();
 	for (const entry of sessions.values()) {
 		entry.summaryController?.abort();
+		void entry.commands?.dispose().catch((error) => log.warn("Command cleanup failed", error));
 		if (entry.active) {
 			entry.active.suspended = true;
 			entry.active.granted = false;

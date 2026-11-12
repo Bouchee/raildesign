@@ -1,4 +1,4 @@
-import type { BashOperations } from "@earendil-works/pi-coding-agent";
+import type { CommandOperations } from "./types";
 
 export async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
 	const deadline = Date.now() + timeoutMs;
@@ -12,7 +12,7 @@ export function controlledOperations() {
 	type Call = {
 		command: string;
 		cwd: string;
-		options: Parameters<BashOperations["exec"]>[2];
+		options: Parameters<CommandOperations["exec"]>[2];
 		resolve(value: { exitCode: number | null }): void;
 		reject(error: Error): void;
 	};
@@ -24,7 +24,7 @@ export function controlledOperations() {
 			if (!call) throw new Error(`Missing executor call ${index}`);
 			return call;
 		},
-		createOperations(): BashOperations {
+		createOperations(): CommandOperations {
 			return {
 				exec: (command, cwd, options) =>
 					new Promise((resolve, reject) => {

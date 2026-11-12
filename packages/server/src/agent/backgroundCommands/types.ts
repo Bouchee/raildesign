@@ -1,4 +1,17 @@
-import type { BashOperations, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ThinkingLevel, WireModel } from "@thinkrail/contracts";
+
+export interface CommandOperations {
+	exec(
+		command: string,
+		cwd: string,
+		options: {
+			env?: NodeJS.ProcessEnv;
+			onData(data: Buffer): void;
+			signal?: AbortSignal;
+			timeout?: number;
+		},
+	): Promise<{ exitCode: number | null }>;
+}
 
 export type BackgroundCommandStatus = "running" | "stopping" | "completed" | "error" | "stopped";
 
@@ -11,8 +24,8 @@ export interface BackgroundCommandStart {
 export interface BackgroundCommandContext {
 	cwd: string;
 	sessionFile?: string | undefined;
-	model?: Pick<NonNullable<ExtensionContext["model"]>, "provider" | "id"> | undefined;
-	thinkingLevel?: ExtensionContext["thinkingLevel"];
+	model?: Pick<WireModel, "provider" | "id"> | undefined;
+	thinkingLevel?: ThinkingLevel;
 	shellPath?: string | undefined;
 	commandPrefix?: string | undefined;
 	exposeSessionEnvironment?: boolean;
@@ -25,7 +38,7 @@ export interface BackgroundCommandsBinding {
 }
 
 export interface BackgroundCommandsOptions {
-	createOperations?(options: { shellPath?: string }): BashOperations;
+	createOperations?(options: { shellPath?: string }): CommandOperations;
 }
 
 export interface BackgroundCommandSnapshot {

@@ -12,22 +12,22 @@ tags: [chat]
 
 The application owns its message, tool, usage and event types in `sessionProtocol.ts`; browser code does not import engine types. `session.event` carries `{sessionId, runId, seq, event}` with increasing per-session sequence numbers. SDK details and checkpoints remain on the host. The initial transcript snapshot carries its event sequence watermark; events arriving before hydration are buffered and only later events are applied. Stable message IDs join streamed snapshots and final messages. Basic tool approvals use the existing confirmation UI with session, run, interaction and revision ownership; failures keep the pending card visible. A declared tool without an execution result state is pending: its card and routine row use a neutral marker, and execution summaries/bodies begin only after `tool_execution_start`.
 
-Skills catalog, trust management, manual commands and idle session reload use the current SDK host routes in `ChatView`. Reload clears the stale badge only after host success. MCP configuration and OAuth remain reachable in Settings. `ChatView` supplies owned full-output reads and MCP Settings navigation to tool cards. Stage 1 mounts no advanced resource polling, resource inspector or subagent transcript executor in `ChatView`. Historical tool cards and resource renderers remain usable as pure projections. Queue actions, compaction commands, continuation synchronization, automatic plan summaries and TODO add nudges are absent from active composition. Ordinary prompts send only while idle; Stop remains available during a run. Agent review controls remain disabled until that execution path exists. Protocol-version thresholds alone do not authorize a removed host operation.
+`ChatView` connects the existing resource hook, header trigger, dock and inspector to the SDK host's owned resource routes. Command output and child transcripts load only for the selected detail. Historical text does not create resource authority. Skills retain catalog, trust and disable controls, manual commands and idle reload. Reload keeps the current watcher baseline and clears its stale badge only after host success. Stop remains available for owned work. Protocol versions gate available routes; they do not replace host ownership checks.
+
+Manual Skill completion reads the existing `session.getCommands` route on mount, reconnect and successful
+reload. Install its result only while the same chat and connection remain current. Show load failures;
+do not synthesize a successful command catalogue. The host applies current admission and disable policy.
 
 ## Responsibility
 
-The chat/agent conversation UI: **presentational React primitives** that render pi's **canonical
-message / content-block model**, a **tool-renderer registry** (the extension point), and `ChatView`
-(the app-integration layer). Hand-rolled — pi ships no web UI, and the official
-`@earendil-works/pi-web-ui` (MIT, **Lit**, runs the agent in-browser / "Direct Mode") is the canonical
-event→render *reference* we learn from but do **not** adopt (architecture + framework mismatch with our
-host-runs-pi / typed-WS / React+shadcn model). Built so others can reuse/contribute (extraction-ready as
-a future `packages/chat-ui`). Built-in tool renderers live in the child
+The chat/agent conversation UI consists of presentational React primitives over application-owned
+messages, a tool-renderer registry, and `ChatView` for store and transport integration. It retains the
+upstream content-block layout without importing an execution engine. Built-in tool renderers live in the child
 [tools/SPEC.md](tools/SPEC.md); extracted extension renderers live in [[module-thinkrail-extensions]].
 
 ## Rendering model — rows and progressive disclosure
 
-The transcript is pi-canonical turns (`ChatTurn` in `types.ts`: user/assistant are pi messages; `system`,
+The transcript uses application turns (`ChatTurn` in `types.ts`: user/assistant are application messages; `system`,
 `error`, `retry` are web-local notices; `compaction` carries both the live lifecycle and the durable summary
 record pi leaves where it replaced earlier messages), but the list renders **derived rows, not raw turns** — folding
 spans assistant-message boundaries (pi emits one assistant message per tool round), so a per-turn item
@@ -248,7 +248,7 @@ blocks in order into rows; `ChatTurnView` dispatches on row kind:
   the report's first line). **Always collapsed by default, failures included** — the red state carries
   the signal and the agent's reaction follows directly; the old always-open 240px log read as an
   unexplained box. Expanding shows the bounded excerpt (escaped plain text, wrapped, natural height, no
-  inner scroll) or the report Markdown without pi-subagents' `Subagent "x" (id) status:` header. The open
+  inner scroll) or the report Markdown without the child host's `Subagent "x" (id) status:` header. The open
   action comes from `ChatActions.resultOpener`: `ChatView` opens the Resources inspector at that row while
   the client holds it (the snapshot's window or a page loaded past it), a subagent it does not hold falls
   back to the transcript dialog, and a command has no fallback (no action). A row whose
@@ -1051,18 +1051,15 @@ both message orders. *Rejected:* keeping the modal for non-MCP extensions — ev
   during a run. The existing baseline helper waits for watcher readiness and the real
   `session.reloadResources` reply before `markSkillsSynced` clears the badge. The same manager remains
   reachable from New Workspace before a session exists.
-- **Live session telemetry follows Pi's finalized boundaries.** `SessionStatsBar` renders only the host's
+- **Live session telemetry follows host settlement boundaries.** `SessionStatsBar` renders only the
   authoritative `session.getStats` snapshot; the web never derives billed totals or context usage from
-  message content. Totals include delegated subagent spend, which the host records into the parent as pi
-  `usage` entries after each response of a running subagent and at its run's end, so the toolbar moves
-  while a subagent works instead of jumping when it finishes. The mounted chat refreshes on mount/reconnect, after each finalized message, compaction,
-  settlement, and appended spend- or context-bearing entry (`usage` from subagent runs or cache warming,
-  `compaction`, `branch_summary`, `context_edit`), and after Pi accepts a model change. A reconnect read may race a restarted host before
-  transcript sync has reattached the persisted session, so that sync edge retriggers the read. Consecutive
-  Pi events batched into one store commit
-  collapse to one read, and a response superseded by a newer session revision, host generation, or unmount
-  is ignored. Text deltas do not trigger reads because Pi itself cannot finalize new usage until the message
-  boundary; transient read failure keeps the last good snapshot rather than replacing it with guessed state.
+  message content. SDK parent usage already includes foreground `Agent.asTool` work. The host adds
+  background and independent review child usage once. Child transcripts account for each model response
+  once across approval continuations. The mounted chat refreshes on mount/reconnect, finalized messages,
+  compaction, settlement and accepted model changes. A reconnect read can race host reattachment, so
+  transcript synchronization retriggers it. Events batched into one store commit collapse to one read.
+  Responses superseded by a newer session revision, host generation or unmount are ignored. Text deltas
+  do not finalize usage; transient read failures preserve the last valid snapshot.
 - **Adaptive composer geometry** (`Composer`) — an idle draft that fits one visual line renders as a
   shared two-tier shell: a full-width, one-visual-line message row above a stable action footer. The
   model · effort pill is the footer's one left-hand trigger; History and Send remain explicit on the right. A wrap, explicit
@@ -1826,3 +1823,7 @@ footer; its approval or question card shows the waiting state, including after s
   is the seam for extracting a standalone `packages/chat-ui` later.
 - Keep this spec at **intent + boundary + invariants**; per-component behavior belongs in the
   components' jsdoc, per-tool detail in [tools/SPEC.md](tools/SPEC.md).
+
+Command log polling keeps the wire request scoped to the visible parent chat. Its response check binds
+both command ID and the actual owner session ID from the selected authoritative resource summary.
+The owner participates in the polling/cache key, so changing selections cannot reuse another child's log.

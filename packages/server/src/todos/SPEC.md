@@ -84,7 +84,7 @@ as a permanently open foreign window and force every sibling chat into the fallb
   self-sufficient — its file list is *derived*, never denormalized into the JSON (see the `listTodos`
   decoration below).
 - **Adopt in-window commits.** The host is the intended sole committer during an item's window (the
-  worker subagent's prompt forbids it from committing — [[module-pi-subagents]]), but that is guidance,
+  worker subagent's prompt forbids it from committing — [[submodule-server-agent]]), but that is guidance,
   not enforcement, and the user may hand-commit too. So before the delta commit, any commit that landed
   in `base.head..HEAD` while the item was open (`git.listCommitsSince`) and is owned by no plan item is
   **attached to the item as a `commit` artifact** — oldest-first, ahead of the delta commit, so the

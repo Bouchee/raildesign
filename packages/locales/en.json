@@ -2128,7 +2128,6 @@
 	"settings.subagents.source.global": "Global",
 	"settings.subagents.source.useGlobal": "Use global",
 	"settings.subagents.title": "Subagents",
-	"settings.subagents.unavailable": "Sub-agent execution is not available yet. These settings are preserved for when execution is enabled.",
 	"settings.subagents.workspaceDescription": "{{name}} follows the global settings until you change a value.",
 	"settings.subagents.workspaceHeading": "This workspace",
 	"settings.subagents.workspaceLimitLabel": "Subagents per chat in {{name}}",

@@ -29,6 +29,7 @@ export interface SkillToolOptions {
 	admission: () => SkillAdmissionContext;
 	loadOptions?: SkillLoadOptions;
 	manualSkills?: readonly string[];
+	allowedSkills?: readonly string[];
 	markToolFailed?: (callId: string | undefined) => void;
 	assertActive: () => void;
 	signal: AbortSignal;
@@ -38,7 +39,11 @@ function admittedSkills(options: SkillToolOptions): Skill[] {
 	options.assertActive();
 	options.signal.throwIfAborted();
 	return loadSkillInventory(options.cwd, options.admission(), options.loadOptions)
-		.entries.filter(({ catalog }) => catalog.decision === "load")
+		.entries.filter(
+			({ catalog }) =>
+				catalog.decision === "load" &&
+				(!options.allowedSkills || options.allowedSkills.includes(catalog.name)),
+		)
 		.map(({ skill }) => skill);
 }
 

@@ -53,6 +53,7 @@ import {
 	setSessionProjectResolver,
 	setSessionPublisher,
 	setSessionResourceCleanup,
+	setSessionResourcesPublisher,
 	setSessionStatePublisher,
 	settleSessionsForShutdown,
 	watchUserMcpConfig,
@@ -861,6 +862,11 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 	setTurnPublisher((turn) => {
 		publishScoped(WS_CHANNELS.turnChanged, turn, { workspaceId: turn.workspaceId });
 	});
+	setSessionResourcesPublisher((resources) =>
+		publishScoped(WS_CHANNELS.sessionResourcesChanged, resources, {
+			workspaceId: resources.workspaceId,
+		}),
+	);
 	setSessionPublisher((payload, workspaceId) => {
 		if (isTodoToolEnd(payload.event))
 			void maybeAttachChangeArtifacts(workspaceId, payload.sessionId).catch((error) =>
@@ -970,6 +976,7 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 function restoreSeamDefaults(): void {
 	setSkillPathClassifier(null);
 	setSessionResourceCleanup(undefined);
+	setSessionResourcesPublisher(() => {});
 	setMcpToolGrantWriter(undefined);
 	setMcpProjectResolver(undefined);
 	setMcpAuthorizationResolver(undefined);

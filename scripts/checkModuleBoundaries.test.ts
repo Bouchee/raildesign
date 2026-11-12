@@ -10,12 +10,11 @@ const modules = {
 	"packages/artifact-tests": "@thinkrail/artifact-tests",
 	"packages/contracts": "@thinkrail/contracts",
 	"packages/shared": "@thinkrail/shared",
-	"packages/workflow": "@thinkrail/workflow",
 	"packages/todos": "@thinkrail/todos",
 	"packages/spec-graph": "@thinkrail/spec-graph",
-	"packages/pi-background-commands": "pi-background-commands",
-	"packages/visualize": "@thinkrail/visualize",
+	"packages/workflow": "@thinkrail/workflow",
 	"packages/ask-user-question": "@thinkrail/ask-user-question",
+	"packages/visualize": "@thinkrail/visualize",
 	"packages/server": "@thinkrail/server",
 	"apps/web": "@thinkrail/web",
 	"apps/cli": "@thinkrail/cli",
@@ -46,7 +45,6 @@ function fixture(): string {
 		"packages/server": {
 			"@thinkrail/contracts": "workspace:*",
 			"@thinkrail/shared": "workspace:*",
-			"pi-background-commands": "workspace:*",
 		},
 		"apps/web": { "@thinkrail/contracts": "workspace:*" },
 		"apps/cli": {
@@ -75,11 +73,7 @@ test("accepts the declared package rings and thin launcher edges", () => {
 		"packages/shared/src/value.ts",
 		'import type { Project } from "@thinkrail/contracts";',
 	);
-	write(
-		root,
-		"packages/server/src/value.ts",
-		'import "pi-background-commands"; export * from "@thinkrail/contracts";',
-	);
+	write(root, "packages/server/src/value.ts", 'export * from "@thinkrail/contracts";');
 	write(root, "apps/web/src/value.tsx", 'import type { Project } from "@thinkrail/contracts";');
 	write(root, "apps/cli/src/value.ts", 'import { bootHost } from "@thinkrail/server";');
 	write(
@@ -96,19 +90,15 @@ test("accepts the declared package rings and thin launcher edges", () => {
 	expect(moduleBoundaryViolations(root)).toEqual([]);
 });
 
-test("keeps background commands portable and out of browser imports", () => {
+test("keeps background commands inside the host", () => {
 	const root = fixture();
-	write(root, "packages/pi-background-commands/src/leak.ts", 'import "@thinkrail/server";');
-	write(root, "packages/pi-background-commands/src/contracts.ts", 'import "@thinkrail/contracts";');
 	write(
 		root,
 		"apps/web/src/commandLeak.ts",
-		'import type { Command } from "pi-background-commands";',
+		'import type { Command } from "@thinkrail/server/agent";',
 	);
 	expect(moduleBoundaryViolations(root)).toEqual([
-		'apps/web/src/commandLeak.ts: import "pi-background-commands" creates forbidden apps/web -> packages/pi-background-commands edge',
-		'packages/pi-background-commands/src/contracts.ts: import "@thinkrail/contracts" creates forbidden packages/pi-background-commands -> packages/contracts edge',
-		'packages/pi-background-commands/src/leak.ts: import "@thinkrail/server" creates forbidden packages/pi-background-commands -> packages/server edge',
+		'apps/web/src/commandLeak.ts: import "@thinkrail/server/agent" creates forbidden apps/web -> packages/server edge',
 	]);
 });
 
@@ -312,7 +302,7 @@ for (const [host, entry, relativeBase] of [
 	});
 }
 
-test("discovers new pi and ThinkRail extensions and rejects host and sibling dependencies", () => {
+test("discovers extension helpers and rejects host and sibling dependencies", () => {
 	const root = sdkFixture();
 	write(root, "packages/future/leak.ts", 'import "@thinkrail/server";');
 	write(root, "thinkrail-extensions/another/web/leak.ts", 'import "@thinkrail/web";');

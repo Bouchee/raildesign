@@ -197,7 +197,7 @@ jobs:
           no-cache: true
       - run: bun install --frozen-lockfile
       - run: bun test packages/spec-graph
-      - run: bun test packages/pi-background-commands
+      - run: bun test packages/server/src/agent/backgroundCommands
       - run: bun test packages/server/src/subprocess
       - run: bun run test:windows-paths
       - run: bun test apps/desktop/src/windowsFrame.test.ts apps/desktop/src/windowChrome.test.ts apps/desktop/src/windowsWindowIcon.test.ts apps/desktop/src/windowsTaskbarIdentity.test.ts

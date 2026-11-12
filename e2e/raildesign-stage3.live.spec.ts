@@ -133,3 +133,65 @@ test(
 		}
 	},
 );
+
+test(
+	"a background command survives refresh and parent Stop retains its output",
+	{ tag: "@agent" },
+	async ({ page }, testInfo) => {
+		test.setTimeout(240_000);
+		const workspace = await openWorkspaceChat(page);
+		const wire = await E2eWire.connect();
+		const sessionId = await parentSession(wire, workspace);
+		const command = "printf 'STAGE3_BACKGROUND_READY\\n'; sleep 60";
+		try {
+			await send(
+				page,
+				`Call background_command exactly once with action start, name Stage3 background, timeout 90, command exactly: ${command}. Then reply STARTED. Do not wait, poll or call another tool.`,
+			);
+			await settle(wire, workspace.id, sessionId, (input) => input.command === command);
+			const resources = await wire.request("session.resources", {
+				workspaceId: workspace.id,
+				sessionId,
+			});
+			const running = resources.commands.find((entry) => entry.name === "Stage3 background");
+			if (!running) throw new Error("The model did not start the background command");
+			expect(running.status).toBe("running");
+			await expect
+				.poll(async () => {
+					const result = await wire.request("backgroundCommand.output", {
+						workspaceId: workspace.id,
+						sessionId,
+						commandId: running.id,
+					});
+					return result.available ? result.output.text : "";
+				})
+				.toContain("STAGE3_BACKGROUND_READY");
+			await page.reload();
+			await expect(page.getByTestId("resources-trigger")).toHaveAttribute("data-active-count", "1");
+			await wire.request("session.abort", { sessionId });
+			await expect
+				.poll(async () => {
+					const stopped = await wire.request("session.resources", {
+						workspaceId: workspace.id,
+						sessionId,
+					});
+					return stopped.commands.find((entry) => entry.id === running.id)?.status;
+				})
+				.toBe("stopped");
+			const output = await wire.request("backgroundCommand.output", {
+				workspaceId: workspace.id,
+				sessionId,
+				commandId: running.id,
+			});
+			expect(output.available && output.output.text.includes("STAGE3_BACKGROUND_READY")).toBe(true);
+			await expect(page.getByTestId("resources-trigger")).toHaveAttribute("data-active-count", "0");
+			await testInfo.attach("stage3-background-stop", {
+				contentType: "application/json",
+				body: Buffer.from(JSON.stringify({ resources, output })),
+			});
+		} finally {
+			await wire.request("session.abort", { sessionId });
+			wire.close();
+		}
+	},
+);

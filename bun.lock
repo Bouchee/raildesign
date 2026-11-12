@@ -210,21 +210,6 @@
         "react": "catalog:",
       },
     },
-    "packages/pi-background-commands": {
-      "name": "pi-background-commands",
-      "version": "0.0.0",
-      "devDependencies": {
-        "@earendil-works/pi-ai": "catalog:",
-        "@earendil-works/pi-coding-agent": "catalog:",
-        "@types/bun": "catalog:",
-        "typebox": "catalog:",
-        "typescript": "catalog:",
-      },
-      "peerDependencies": {
-        "@earendil-works/pi-coding-agent": "*",
-        "typebox": "*",
-      },
-    },
     "packages/resource-renderers": {
       "name": "@thinkrail/resource-renderers",
       "version": "0.0.0",
@@ -259,8 +244,6 @@
       "name": "@thinkrail/server",
       "version": "0.0.0",
       "dependencies": {
-        "@earendil-works/pi-ai": "catalog:",
-        "@earendil-works/pi-coding-agent": "catalog:",
         "@modelcontextprotocol/client": "catalog:",
         "@openai/agents": "catalog:",
         "@stroncium/procfs": "1.2.1",
@@ -276,13 +259,11 @@
         "@thinkrail/workflow": "workspace:*",
         "bun-pty": "0.5.2",
         "openai": "catalog:",
-        "pi-background-commands": "workspace:*",
         "pino": "10.4.0",
         "pino-pretty": "13.2.0",
         "pino-roll": "4.0.0",
         "proper-lockfile": "catalog:",
         "trash": "10.1.1",
-        "typebox": "catalog:",
         "yaml": "catalog:",
         "zod": "catalog:",
       },
@@ -2058,8 +2039,6 @@
     "pdfjs-dist": ["pdfjs-dist@6.4.299", "", { "optionalDependencies": { "@napi-rs/canvas": "^1.0.10" } }, "sha512-AVl138zALtfaAPvADulE0PZThbYzCBS79nL4pOSL/6Sm/4AH5A21BD9VHt97OlCuzJuCpmeZtAtkinisF4Vb1g=="],
 
     "pe-library": ["pe-library@2.0.1", "", {}, "sha512-/qjYFqNSlq59B5DI36am++5/3gMgh02QnzpYigrwrW6s+QpU0mHf09/iA4wjTu21UUxodyV7ZCetV5MiDhaN/A=="],
-
-    "pi-background-commands": ["pi-background-commands@workspace:packages/pi-background-commands"],
 
     "piccolore": ["piccolore@0.1.3", "", {}, "sha512-o8bTeDWjE086iwKrROaDf31K0qC/BENdm15/uH9usSC/uZjJOKb2YGiVHfLY4GhwsERiPI1jmwI2XrA7ACOxVw=="],
 

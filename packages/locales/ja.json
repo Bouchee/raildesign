@@ -1550,7 +1550,6 @@
 	"settings.subagents.source.global": "グローバル",
 	"settings.subagents.source.useGlobal": "グローバルを使用",
 	"settings.subagents.title": "サブエージェント",
-	"settings.subagents.unavailable": "サブエージェントの実行はまだ利用できません。有効化に備えて設定は保持されます。",
 	"settings.subagents.workspaceDescription": "値を変更するまで、{{name}} はグローバル設定に従います。",
 	"settings.subagents.workspaceHeading": "このワークスペース",
 	"settings.subagents.workspaceLimitLabel": "{{name}} のチャットごとのサブエージェント数",

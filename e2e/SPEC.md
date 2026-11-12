@@ -135,17 +135,21 @@ MCP tool-card browser fixtures validate owned output reads and Settings actions 
 
 ## Chat resource controls
 
-Stage 1 has no live background/subagent/MCP resource catalog. `chat-resources-wire.spec.ts` checks
-explicit rejection of the removed execution methods; `chat-resources.spec.ts` checks hidden entries,
-no catalog requests, reload and usable phone composer focus. Historical process text carries no
-execution authority. The isolated wire advertises the current protocol and retains real server error
-text. No old protocol or successful resource-RPC shim reactivates an unavailable product entry.
+Stage 3 connects the existing background-command, subagent and MCP resource UI to owned SDK host routes.
+`chat-resources-wire.spec.ts` checks an actual empty catalogue and history, missing command output,
+not-found controls, parent ownership and no authority from historical process text. It also exercises
+idle Skill reload through the real host route. `chat-resources.spec.ts` checks catalogue hydration,
+empty inspector, reload and usable phone composer focus. Metadata stays current while the inspector
+is closed. Detail reads and controls remain bound to host-reported resources.
 
 Props-only inspector/dock/detail rendering remains covered by `resources/resources.test.tsx` and
-projection ownership, failures and controls by `useChatResources.test.ts`. Those unit checks cover
-markup, selected state and bounded data behavior; they do not establish native popup focus return or
-phone popup geometry. Resource-only browser focus/layout, archive/history reads and actual process
-execution need a Stage 3 gate when that product entry exists. `mcp-settings.spec.ts` retains real configuration/approval/connection/error/secret-masking coverage through Settings and the actual management routes. It does not require the Stage 3 resource dock. `skills-switches.spec.ts` and `other-agent-skills.spec.ts` preserve catalog, trust and switch behavior. `subagent-settings.spec.ts` reads real global/workspace persistence and authoritative pushes while verifying disabled execution controls, inheritance, limit validation and geometry. Historical MCP tool-card fixtures separately exercise owned Full output reads and Settings deep links without granting live resource authority.
+projection ownership, failures and controls by `useChatResources.test.ts`. Those checks cover markup,
+selected state and bounded data behavior. Browser and focused live gates separately check compiled
+UI behavior and real SDK tool effects. `mcp-settings.spec.ts` keeps real configuration, approval,
+connection, error and secret-masking coverage. `skills-switches.spec.ts` and `other-agent-skills.spec.ts`
+keep catalog, trust and switch behavior. `subagent-settings.spec.ts` uses the actual switches and limit
+inputs and verifies authoritative pushes, persistence, inheritance, range validation and phone geometry.
+Read-only historical cards remain separate from live resource authority.
 
 `templates-compose.spec.ts` checks that admitted Skill commands appear beside prompt templates.
 `skills-switches.spec.ts` verifies that the idle reload control is enabled and no unavailable-execution
@@ -567,3 +571,11 @@ Plan mutation and approved Spec creation, then checks stored state and the Plan 
 It is a focused live-provider check; adding the scenario does not claim it ran in an offline batch.
 
 The SDK E2E model fixture leaves `maxTokens` unset (`null`) to use the product's bounded default output budget.
+
+The Stage 3 background live scenario checks command output through refresh and parent Stop.
+Subagent live checks cover separate transcripts and owned cancellation. Unit process regressions cover
+commands retained by completed children and all three Stop controls.
+
+The child-owned command browser fixture seeds real child/session archive records and checks the parent's
+command row and log through reload, including the absence of Stop authority for settled history.
+Actual parent, child and stop-all process termination is covered by SDK tests with live OS processes.

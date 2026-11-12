@@ -1,5 +1,6 @@
 import {
 	type PromptHit,
+	type ResourceKind,
 	sameModel,
 	type TemplateInfo,
 	type ThinkingLevel,
@@ -7,6 +8,7 @@ import {
 import { t as translate, useT } from "@thinkrail/locales/react";
 import { useCallback, useEffect, useInsertionEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
+import { useNow } from "@/components/useNow";
 import { randomUuid } from "@/lib";
 import { type ParsedTemplate, templateToSlashCommand, useTemplateCommandPicker } from "@/prompt";
 import {
@@ -35,7 +37,7 @@ import {
 import { mentionLookup } from "./fileTargets";
 import { HistoryOverlay } from "./HistoryOverlay";
 import { awaitingToolCallIdOf } from "./interactionState";
-import { parseModelRef } from "./ModelEffortLabel";
+import { parseModelRef, RunModelLabel } from "./ModelEffortLabel";
 import type { ModelSelection } from "./ModelEffortPicker";
 import {
 	mergeNativeChatCommands,
@@ -45,8 +47,20 @@ import {
 import type { PromptImagesOwner } from "./promptImages";
 import { QueueStrip } from "./QueueStrip";
 import { deriveRecentPrompts } from "./recentPrompts";
+import {
+	CommandLogView,
+	newestResourceId,
+	ResourcesAttention,
+	ResourcesButton,
+	ResourcesDock,
+	ResourcesInspector,
+	type ResourceTarget,
+} from "./resources";
 import { SkillsDialog } from "./SkillsDialog";
+import { SubagentTranscriptDialog, SubagentTranscriptPane } from "./SubagentTranscriptDialog";
 import { TemplateEditorDialog } from "./TemplateEditorDialog";
+import { useChatResources, useCommandLog } from "./useChatResources";
+import { inspectedResult, useFreshResults } from "./useFreshResults";
 import { useModelCatalog } from "./useModelCatalog";
 import { useModelPreferences } from "./useModelPreferences";
 import { useSessionStats } from "./useSessionStats";
@@ -167,7 +181,81 @@ export default function ChatView({
 		syncedConnectionGeneration,
 		commandsRefreshTick,
 	]);
-
+	const resources = useChatResources(workspaceId, sessionId);
+	const groups = resources.groups;
+	const resourcesVisible = resources.visible;
+	const now = useNow();
+	const [inspectorOpen, setInspectorOpen] = useState(false);
+	const [selectedResource, setSelectedResource] = useState<string | null>(null);
+	const [transcriptChild, setTranscriptChild] = useState<string | null>(null);
+	const [expandedResources, setExpandedResources] = useState<
+		Partial<Record<ResourceKind, boolean>>
+	>({});
+	const {
+		commands: freshCommands,
+		subagents: freshSubagents,
+		count: freshCount,
+		markSeen,
+	} = useFreshResults(workspaceId, sessionId, groups.recentFinished, resources.authoritative);
+	const freshIds = new Set([
+		...freshCommands.map((command) => command.id),
+		...freshSubagents.map((child) => child.childSessionId),
+	]);
+	const selectedCommand = [...groups.commands, ...groups.finishedCommands].find(
+		(command) => command.id === selectedResource,
+	);
+	const selectedChild = [...groups.subagents, ...groups.finishedSubagents].find(
+		(child) => child.childSessionId === selectedResource,
+	);
+	const commandLog = useCommandLog(
+		workspaceId,
+		sessionId,
+		inspectorOpen ? (selectedCommand ?? null) : null,
+	);
+	const selectResource = useCallback(
+		(id: string) => {
+			setSelectedResource(id);
+			const target = inspectedResult(groups, id, id);
+			if (target) markSeen(target);
+		},
+		[groups, markSeen],
+	);
+	const openResource = useCallback(
+		(id: string | null) => {
+			setExpandedResources({});
+			setInspectorOpen(true);
+			if (id) selectResource(id);
+			else setSelectedResource(null);
+		},
+		[selectResource],
+	);
+	const openFinished = useCallback(
+		() =>
+			openResource(
+				newestResourceId(freshCommands, freshSubagents) ??
+					newestResourceId(groups.finishedCommands, groups.finishedSubagents),
+			),
+		[
+			freshCommands,
+			freshSubagents,
+			groups.finishedCommands,
+			groups.finishedSubagents,
+			openResource,
+		],
+	);
+	const resultOpener = useCallback(
+		(target: ResourceTarget) => {
+			const id = target.kind === "command" ? target.id : target.childSessionId;
+			const available =
+				target.kind === "command"
+					? [...groups.commands, ...groups.finishedCommands].some((command) => command.id === id)
+					: [...groups.subagents, ...groups.finishedSubagents].some(
+							(child) => child.childSessionId === id,
+						);
+			return resourcesVisible && available ? () => openResource(id) : undefined;
+		},
+		[groups, resourcesVisible, openResource],
+	);
 	const openMcpSettings = useCallback(
 		() => useAppStore.getState().openSettings(SettingsSection.Mcp),
 		[],
@@ -177,6 +265,9 @@ export default function ChatView({
 			getTransport().request("mcp.readOutput", { workspaceId, sessionId, toolCallId }),
 		[workspaceId, sessionId],
 	);
+	useEffect(() => {
+		if (resources.knownUnsupported) setInspectorOpen(false);
+	}, [resources.knownUnsupported]);
 	const workspaceRoot = useAppStore(
 		(s) => selectWorkspaceById(s, workspaceId)?.worktreePath ?? undefined,
 	);
@@ -585,6 +676,25 @@ export default function ChatView({
 				<ChatHeader
 					stats={stats}
 					statusEntries={Object.entries(extUiStatus)}
+					skillsStale={skillsStale}
+					resources={
+						resourcesVisible ? (
+							<>
+								<ResourcesButton
+									activeCount={
+										resources.authoritative ? groups.activeCount + groups.mcpActiveCount : null
+									}
+									freshCount={freshCount}
+									open={inspectorOpen}
+									working={groups.activeCount > 0}
+									onClick={() => (inspectorOpen ? setInspectorOpen(false) : openResource(null))}
+								/>
+								{groups.mcpAttentionCount > 0 ? (
+									<ResourcesAttention count={groups.mcpAttentionCount} onOpen={openMcpSettings} />
+								) : null}
+							</>
+						) : null
+					}
 					{...(projectId ? { onOpenSkills: () => setSkillsOpen(true) } : {})}
 				/>
 			</div>
@@ -597,10 +707,77 @@ export default function ChatView({
 				focusComposer={focusComposer}
 				onTryAgain={onTryAgain}
 				historyOpen={historyState.open}
-				inspectorOpen={false}
-				stillRunning={undefined}
+				inspectorOpen={inspectorOpen}
+				stillRunning={
+					resourcesVisible && groups.activeCount > 0
+						? { count: groups.activeCount, onOpen: () => openResource(null) }
+						: undefined
+				}
+				resultOpener={resultOpener}
+				markResultSeen={markSeen}
+				openSubagentTranscript={setTranscriptChild}
 				readMcpOutput={readMcpOutput}
 				openMcpSettings={openMcpSettings}
+				resourcesOverlay={
+					resourcesVisible ? (
+						<ResourcesInspector
+							open={inspectorOpen}
+							onOpenChange={setInspectorOpen}
+							onCloseAutoFocus={(event) => {
+								event.preventDefault();
+								focusComposer();
+							}}
+							commands={groups.commands}
+							subagents={groups.subagents}
+							finishedCommands={groups.finishedCommands}
+							finishedSubagents={groups.finishedSubagents}
+							history={groups.history}
+							remaining={groups.remaining}
+							newIds={freshIds}
+							expanded={expandedResources}
+							onExpandedChange={(kind, expanded) =>
+								setExpandedResources((current) => ({ ...current, [kind]: expanded }))
+							}
+							{...(resources.loadOlder ? { onLoadMore: resources.loadOlder } : {})}
+							retained={resources.retained}
+							now={now}
+							authoritative={resources.authoritative}
+							loading={resources.loading}
+							staleness={resources.staleness}
+							error={resources.projection?.error ?? null}
+							actions={resources.actions}
+							selectedId={selectedResource}
+							onSelect={selectResource}
+							onRetry={resources.retry}
+							onStopCommand={resources.stopCommand}
+							onStopSubagent={resources.stopSubagent}
+							onStopAll={resources.stopAll}
+							renderSubagentModel={(child) => (
+								<RunModelLabel model={child.model} thinkingLevel={child.thinkingLevel} />
+							)}
+							mcpServers={groups.mcpServers}
+							onMcpSetEnabled={resources.setMcpEnabled}
+							onMcpReconnect={resources.reconnectMcp}
+							onOpenMcpSettings={openMcpSettings}
+							detail={
+								selectedCommand ? (
+									<CommandLogView
+										{...commandLog}
+										onRetry={commandLog.retry}
+										interrupted={selectedCommand.interrupted ?? false}
+										retained={resources.retained}
+									/>
+								) : selectedChild ? (
+									<SubagentTranscriptPane
+										workspaceId={workspaceId}
+										parentSessionId={sessionId}
+										childSessionId={selectedChild.childSessionId}
+									/>
+								) : null
+							}
+						/>
+					) : null
+				}
 				openProviderSettings={openProviderSettings}
 				findModel={findModel}
 				dockTarget={dockTarget}
@@ -622,6 +799,22 @@ export default function ChatView({
 				onEdit={(id) => void removeQueued(id, true)}
 				onRemove={(id) => void removeQueued(id, false)}
 			/>
+			{resourcesVisible && !inspectorOpen ? (
+				<ResourcesDock
+					commands={groups.commands}
+					subagents={groups.subagents}
+					finishedCount={groups.finishedCount}
+					freshCount={freshCount}
+					now={now}
+					authoritative={resources.authoritative}
+					staleness={resources.staleness}
+					actions={resources.actions}
+					onInspect={openResource}
+					onOpenFinished={openFinished}
+					onStopCommand={resources.stopCommand}
+					onStopSubagent={resources.stopSubagent}
+				/>
+			) : null}
 			<div className="relative shrink-0">
 				<HistoryOverlay
 					state={historyState}
@@ -671,6 +864,16 @@ export default function ChatView({
 					templatesEmpty={templatesEmpty}
 				/>
 			</div>
+			{transcriptChild ? (
+				<SubagentTranscriptDialog
+					workspaceId={workspaceId}
+					parentSessionId={sessionId}
+					childSessionId={transcriptChild}
+					onOpenChange={(open) => {
+						if (!open) setTranscriptChild(null);
+					}}
+				/>
+			) : null}
 			{projectId ? (
 				<SkillsDialog
 					projectId={projectId}

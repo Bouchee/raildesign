@@ -20,6 +20,7 @@ import type {
 import { z } from "zod";
 import { logger } from "../log";
 import { dataDir } from "../persistence";
+import type { AgentDefinition } from "./childDefinitions";
 import { type CompactOptions, type CompactResult, compactSession } from "./sessionSummary";
 
 const log = logger("agent");
@@ -37,6 +38,7 @@ export interface StoredInput {
 	images?: readonly ImageContent[] | undefined;
 	kind: "steering" | "followUp";
 	state: "pending" | "staged";
+	internal?: boolean | undefined;
 	error?: string | undefined;
 }
 
@@ -60,8 +62,24 @@ export interface SummaryReceipt {
 		| undefined;
 }
 
+export interface ChildRunRecord {
+	parentSessionId: string;
+	toolCallId: string;
+	task: string;
+	definition: AgentDefinition;
+	enabledExtensions: { name: string; settings: Record<string, boolean> }[];
+	detached: boolean;
+	createdAt: string;
+	status: "queued" | "running" | "completed" | "error" | "aborted";
+	finishedAt?: number | undefined;
+	completionDelivered: boolean;
+	collected: boolean;
+	abortReason?: string | undefined;
+}
+
 export interface SessionRecord {
 	version: 2;
+	childRun?: ChildRunRecord | undefined;
 	sessionId: string;
 	workspaceId: string;
 	cwd: string;
@@ -240,6 +258,37 @@ const stateSchema = z.object({
 });
 const recordSchema = z.object({
 	version: z.literal(2),
+	childRun: z
+		.object({
+			parentSessionId: idSchema,
+			toolCallId: z.string().min(1),
+			task: z.string(),
+			definition: z.object({
+				name: z.string().min(1),
+				description: z.string(),
+				source: z.enum(["builtin", "personal", "project"]),
+				filePath: z.string().optional(),
+				tools: z.array(z.string()).optional(),
+				model: z.string().optional(),
+				thinking: thinkingSchema.optional(),
+				maxTurns: z.number().int().positive().optional(),
+				inheritProjectContext: z.boolean().optional(),
+				skills: z.array(z.string()).optional(),
+				extensions: z.boolean().optional(),
+				systemPrompt: z.string(),
+			}),
+			enabledExtensions: z.array(
+				z.object({ name: z.string(), settings: z.record(z.string(), z.boolean()) }),
+			),
+			detached: z.boolean(),
+			createdAt: z.string(),
+			status: z.enum(["queued", "running", "completed", "error", "aborted"]),
+			finishedAt: z.number().finite().optional(),
+			completionDelivered: z.boolean(),
+			collected: z.boolean(),
+			abortReason: z.string().optional(),
+		})
+		.optional(),
 	sessionId: idSchema,
 	workspaceId: z.string().min(1),
 	cwd: z.string().min(1),
@@ -288,6 +337,7 @@ const recordSchema = z.object({
 			images: z.array(imageSchema).optional(),
 			kind: z.enum(["steering", "followUp"]),
 			state: z.enum(["pending", "staged"]),
+			internal: z.boolean().optional(),
 			error: z.string().optional(),
 		}),
 	),
@@ -438,7 +488,7 @@ export class PersistentSession implements Session {
 		const previous = this.record;
 		const next = structuredClone(this.record);
 		change(next);
-		next.state.queuedCount = next.queue.length;
+		next.state.queuedCount = next.queue.filter((input) => !input.internal).length;
 		next.revision += 1;
 		next.updatedAt = Date.now();
 		writeSessionRecord(next, this.directory);
@@ -535,7 +585,7 @@ function appendHistory(record: SessionRecord, items: AgentInputItem[]): void {
 			if (previous && !isDeepStrictEqual(previous, item))
 				throw new Error("Conflicting user input ID");
 			const queued = record.queue.find((input) => input.id === id);
-			if (queued && !record.messages.some((message) => message.id === id))
+			if (queued && !queued.internal && !record.messages.some((message) => message.id === id))
 				record.messages.push({
 					id,
 					role: "user",

@@ -15,8 +15,6 @@
 		"test": "bun test"
 	},
 	"dependencies": {
-		"@earendil-works/pi-ai": "catalog:",
-		"@earendil-works/pi-coding-agent": "catalog:",
 		"@stroncium/procfs": "1.2.1",
 		"@thinkrail/contracts": "workspace:*",
 		"@thinkrail/ext-ask-user-question": "workspace:*",
@@ -26,7 +24,6 @@
 		"@thinkrail/locales": "workspace:*",
 		"@thinkrail/shared": "workspace:*",
 		"bun-pty": "0.5.2",
-		"pi-background-commands": "workspace:*",
 		"@thinkrail/spec-graph": "workspace:*",
 		"@thinkrail/workflow": "workspace:*",
 		"@thinkrail/todos": "workspace:*",
@@ -34,7 +31,6 @@
 		"pino-pretty": "13.2.0",
 		"pino-roll": "4.0.0",
 		"trash": "10.1.1",
-		"typebox": "catalog:",
 		"@openai/agents": "catalog:",
 		"openai": "catalog:",
 		"zod": "catalog:",

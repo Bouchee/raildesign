@@ -2036,7 +2036,6 @@
 	"settings.subagents.source.global": "Глобальное",
 	"settings.subagents.source.useGlobal": "Использовать глобальное",
 	"settings.subagents.title": "Субагенты",
-	"settings.subagents.unavailable": "Выполнение субагентов пока недоступно. Эти настройки сохранены до его включения.",
 	"settings.subagents.workspaceDescription": "{{name}} использует глобальные настройки, пока вы не измените значение.",
 	"settings.subagents.workspaceHeading": "Эта рабочая область",
 	"settings.subagents.workspaceLimitLabel": "Субагенты на чат в {{name}}",

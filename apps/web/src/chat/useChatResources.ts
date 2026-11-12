@@ -328,7 +328,7 @@ export interface CommandLogState {
 }
 
 export function startCommandLogPolling(
-	scope: ChatResourceScope & { commandId: string },
+	scope: ChatResourceScope & { commandId: string; ownerSessionId: string },
 	deps: {
 		state: () => ResourceStore;
 		read: () => Promise<BackgroundCommandOutputResult>;
@@ -346,7 +346,7 @@ export function startCommandLogPolling(
 			const result = await deps.read();
 			if (
 				result.available &&
-				(result.command.id !== scope.commandId || result.command.sessionId !== scope.sessionId)
+				(result.command.id !== scope.commandId || result.command.sessionId !== scope.ownerSessionId)
 			)
 				throw new Error("Command output belongs to another resource.");
 			return result;
@@ -365,7 +365,13 @@ export function startCommandLogPolling(
 	});
 }
 
-export function useCommandLog(workspaceId: string, sessionId: string, commandId: string | null) {
+export function useCommandLog(
+	workspaceId: string,
+	sessionId: string,
+	command: { id: string; sessionId: string } | null,
+) {
+	const commandId = command?.id ?? null;
+	const ownerSessionId = command?.sessionId ?? null;
 	const generation = useAppStore((state) => state.connectionGeneration);
 	const ready = useAppStore(
 		(state) =>
@@ -379,11 +385,11 @@ export function useCommandLog(workspaceId: string, sessionId: string, commandId:
 		state: CommandLogState;
 	} | null>(null);
 	const poller = useRef<ReturnType<typeof startDetailPolling> | null>(null);
-	const key = JSON.stringify([workspaceId, sessionId, commandId]);
+	const key = JSON.stringify([workspaceId, sessionId, commandId, ownerSessionId]);
 	useEffect(() => {
-		if (!commandId || !ready) return;
+		if (!commandId || !ownerSessionId || !ready) return;
 		const polling = startCommandLogPolling(
-			{ workspaceId, sessionId, commandId },
+			{ workspaceId, sessionId, commandId, ownerSessionId },
 			{
 				state: useAppStore.getState,
 				read: () =>
@@ -402,7 +408,7 @@ export function useCommandLog(workspaceId: string, sessionId: string, commandId:
 			polling.dispose();
 			poller.current = null;
 		};
-	}, [workspaceId, sessionId, commandId, ready, generation, key]);
+	}, [workspaceId, sessionId, commandId, ownerSessionId, ready, generation, key]);
 	return {
 		...(stored?.key === key ? stored.state : { result: null, error: null }),
 		stale: !ready || (stored?.key === key && stored.generation !== generation),

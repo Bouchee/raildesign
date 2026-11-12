@@ -85,11 +85,9 @@ test("a maximal unbroken workspace name stays contained on a phone-sized setting
 	await openChatSettings(page);
 	for (const control of Object.values(controls(page))) {
 		if ((await control.getAttribute("data-source")) === "global") continue;
-		await expect(control).toBeDisabled();
+		await expect(control).toBeEnabled();
 	}
-	await expect(page.getByTestId("settings-subagents")).toContainText(
-		"Sub-agent execution is not available yet",
-	);
+	await expect(page.getByTestId("subagents-global-toggle")).toBeEnabled();
 	const heading = page.getByTestId("subagents-workspace-heading");
 	await expect(heading).toContainText(longName);
 	for (const element of [heading, page.getByTestId("settings-subagents")]) {
@@ -126,7 +124,7 @@ test("global and workspace subagent switches converge from authoritative pushes"
 
 		const globalFrame = channelHold.arm("settings.changed");
 		releaseGlobal = globalFrame.release;
-		await wire.request("settings.update", { config: { subagentsEnabled: false } });
+		await source.global.click();
 		await globalFrame.held;
 		await expect(source.global).toHaveAttribute("data-active", "true");
 		await expect(observer.global).toHaveAttribute("data-active", "false");
@@ -137,7 +135,7 @@ test("global and workspace subagent switches converge from authoritative pushes"
 
 		const workspaceFrame = channelHold.arm("workspace.updated");
 		releaseWorkspace = workspaceFrame.release;
-		await wire.request("workspace.setSubagentsOverride", { id, override: "on" });
+		await source.workspace.click();
 		await workspaceFrame.held;
 		await expect(source.workspace).toHaveAttribute("data-active", "false");
 		await expect(observer.workspace).toHaveAttribute("data-active", "true");
@@ -199,17 +197,20 @@ test("global and workspace subagent limits persist, inherit, and converge across
 		await expect(source.workspaceLimit).toHaveAttribute("placeholder", "4");
 		await expect(source.limitSource).toHaveAttribute("data-source", "global");
 
-		await expect(source.globalLimit).toBeDisabled();
-		await expect(source.workspaceLimit).toBeDisabled();
+		await expect(source.globalLimit).toBeEnabled();
+		await expect(source.workspaceLimit).toBeEnabled();
 		await expect(
 			wire.request("settings.update", { config: { subagentMaxConcurrent: 0 } }),
 		).rejects.toThrow();
 		await expect(source.globalLimit).toHaveValue("4");
-		await wire.request("settings.update", { config: { subagentMaxConcurrent: 6 } });
+		await source.globalLimit.fill("6");
+		await source.globalLimit.press("Enter");
+		await expect(source.globalLimit).toHaveValue("6");
 		await expect(observer.globalLimit).toHaveValue("6");
 		await expect(observer.workspaceLimit).toHaveAttribute("placeholder", "6");
 
-		await wire.request("workspace.setSubagentMaxConcurrent", { id, value: 2 });
+		await source.workspaceLimit.fill("2");
+		await source.workspaceLimit.press("Enter");
 		for (const current of [source, observer]) {
 			await expect(current.workspaceLimit).toHaveValue("2");
 			await expect(current.limitSource).toHaveAttribute("data-source", "custom");

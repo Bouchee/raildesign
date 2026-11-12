@@ -435,7 +435,7 @@ test("stale controls do not dispatch and late acknowledgements/errors cannot aff
 	}
 });
 
-function logFixture() {
+function logFixture(ownerSessionId = scope.sessionId) {
 	const reads: ReturnType<typeof deferred<BackgroundCommandOutputResult>>[] = [];
 	const tasks: (() => void)[] = [];
 	const scheduler: DetailPollScheduler = {
@@ -451,7 +451,7 @@ function logFixture() {
 	let result: BackgroundCommandOutputResult | null = null;
 	let error: string | null = null;
 	const polling = startCommandLogPolling(
-		{ ...scope, commandId: "cmd" },
+		{ ...scope, commandId: "cmd", ownerSessionId },
 		{
 			state,
 			read: () => {
@@ -579,6 +579,23 @@ test("closed logs, old connections, foreign responses and removed parents cannot
 	f.reads[0]?.resolve(foreign);
 	await flush();
 	expect(f.result()).toBeNull();
+	expect(f.error()).toBe("Command output belongs to another resource.");
+	f.polling.dispose();
+});
+
+test("command logs validate the selected child owner while retaining the parent connection scope", async () => {
+	const f = logFixture("child");
+	const own = output("child log");
+	if (own.available) own.command.sessionId = "child";
+	f.reads[0]?.resolve(own);
+	await flush();
+	expect(f.result()).toEqual(own);
+	f.tick();
+	const foreign = output("wrong owner");
+	if (foreign.available) foreign.command.sessionId = "other-child";
+	f.reads[1]?.resolve(foreign);
+	await flush();
+	expect(f.result()).toEqual(own);
 	expect(f.error()).toBe("Command output belongs to another resource.");
 	f.polling.dispose();
 });

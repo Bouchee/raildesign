@@ -11,7 +11,7 @@ tags: [ui]
 
 ## RailDesign stage 1
 
-Active panels offer no continue-to-workspace execution, agent plan review or streaming plan send. Historical continuation and plan rendering stay available. A prompt directed to an existing busy chat is restored to its draft instead of being queued. New Workspace preserves Skills catalog management and project-trust actions alongside templates, models and normal creation. MCP configuration, validation, trust and OAuth remain available through Settings. Configured tools execute through the SDK graph with per-call consent; the panel shows no execution-unavailable notice. The complete subagent settings component retains inheritance, limits and real persistence callbacks; its controls are disabled with an explicit notice while SDK child execution is unavailable.
+Active panels offer no continue-to-workspace execution, agent plan review or streaming plan send. Historical continuation and plan rendering stay available. A prompt directed to an existing busy chat is restored to its draft instead of being queued. New Workspace preserves Skills catalog management and project-trust actions alongside templates, models and normal creation. MCP configuration, validation, trust and OAuth remain available through Settings. Configured tools execute through the SDK graph with per-call consent; the panel shows no execution-unavailable notice. Subagent settings expose inheritance, limits and real persistence callbacks for SDK child execution.
 
 The application owns message, tool, usage and event types in `sessionProtocol.ts`. `session.event` carries `{sessionId,runId,seq,event}` with increasing per-session sequence numbers. Initial transcript hydration buffers events and applies only events above `SessionSummary.eventSeq`. Stable IDs join streamed and final messages. SDK details, routing credentials and checkpoints stay on the host. Basic confirmations carry session, run, interaction and revision ownership, and remain visible on reply failure. Stage 1 exposes read/search/command/edit, approval and Stop; durable continuous input and compaction are available in stage 2; advanced execution controls remain assigned to stage 3. RailDesign does not offer upstream analytics consent, surveys, Central or old Pi configuration folders.
 
@@ -638,7 +638,7 @@ a project picker, the prompt hero, and the reused
   prompt. The first prompt is snapshotted before asynchronous workspace creation begins.
   Listing/get failures preserve the draft. Extension commands and `/compact` stay absent because no live
   session exists. A caption under the prompt marks the catalog as **from the current checkout** (the created
-  worktree's session is authoritative if the selected base branch differs). Stage 1 offers no Skills manager or project-trust UI and makes no skill/trust requests; unsupported resource loading cannot gate workspace creation. The model picker, templates, target and branch choices remain available. When the menu is closed, **Enter submits** (matching the submit button's
+  worktree's session is authoritative if the selected base branch differs). The shared Skills manager and project-trust actions remain available before session creation. Resource loading does not bypass trust or change the selected workspace. The model picker, templates, target and branch choices remain available. When the menu is closed, **Enter submits** (matching the submit button's
   `↵` affordance) and
   **Shift+Enter** inserts a newline. **Worktree-mode submit on a v103+ host** = `workspace.startCreate({
   projectId, baseRef, kickoff })`, where the kickoff always travels — text, any attached images, and the held
@@ -932,7 +932,7 @@ a project picker, the prompt hero, and the reused
   may inject its stable backend-profile/window adapter. Another browser, native window, or host is unaffected. Composer growth
   remains a top-level `AppConfig` field and converges on `settings.changed`, with a toast on rejection.
   Explanatory copy says “message box” rather than the internal “composer” name for where the user types.
-  The final **Subagents** group (`SubagentSettings.tsx`) retains global enablement and concurrency limits, workspace inheritance, Custom/Global source tags, resets, range validation, and real persistence callbacks. A missing override inherits its global value; a disabled workspace also disables its limit. The active Stage 1 settings panel explicitly disables all switches, limit inputs and reset buttons with an execution-unavailable notice. The component and its tests retain the full behavior for when SDK child execution is enabled);
+  The final **Subagents** group (`SubagentSettings.tsx`) exposes global enablement and concurrency limits, workspace inheritance, Custom/Global source tags, resets, range validation, and real persistence callbacks. A missing override inherits its global value; a disabled workspace also disables its limit. SDK child execution uses these settings; switches, editable limits and custom resets remain active);
   the
   **shell-owned injected Layout
   section** (Balanced/Focus/Review

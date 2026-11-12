@@ -106,7 +106,7 @@ model round. Stop delegates to agent cancellation and completes after owned exec
 Stage-2 queue, steering, compaction and recovery operations call the durable session owner. Stable input
 IDs survive wire replay; queue mutation addresses the input ID. Stop preserves queued input and completes
 after cleanup. Compaction carries an operation ID, and approval replies bind the tool call as well as the
-interaction. Plan review, child and background execution remain assigned to subsequent groups. MCP configuration, validation,
+interaction. Plan review remains assigned to the subsequent group. Child and background execution use the SDK session owner. MCP configuration, validation,
 per-entry approvals, OAuth, status and cleanup remain real
 services through `mcp.*`. `provider.loginReply`/`provider.loginCancel` serve only owned MCP OAuth flows;
 obsolete model-provider login routes remain absent. Skills catalog/trust/enable and child configuration
@@ -138,7 +138,8 @@ concurrency; idle-settled rows are paced at 30 minutes, user-parked rows are lef
 maintenance failures are logged and cannot become unhandled promises.
 
 Host composes review sends with agent sessions and serializes review/change operations per workspace.
-SDK Todo/Spec Graph tools use their existing stores. History
+SDK Todo/Spec Graph tools use their existing stores. Resource routes read owned command logs and child
+transcripts; historical message text grants no access. History
 scope labels/readers are injected by host, as are search readers and filesystem preflight checks.
 Settings changes persist in their owner and broadcast a full merged config. Layout/focus/placement
 stay frontend-local. Native actions remain in their own services rather than agent/Git/PTY execution.
@@ -179,3 +180,6 @@ automatic review/fix orchestration remain separately gated; pure parsing is not 
 The session publisher observes `todo_*` completion through `isTodoToolEnd` and schedules
 `maybeAttachChangeArtifacts` for the owning workspace/session. The existing Todo service serializes
 Git artifact reconciliation; failures are logged without failing event publication.
+
+The host publishes owned resource lifecycle changes and routes parent-addressed child approvals through
+`attachApprovalOwner` before applying the original interaction receipt.

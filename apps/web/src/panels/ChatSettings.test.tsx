@@ -22,19 +22,19 @@ test("Chat settings renders one chat line-width control with its Fit to pane swi
 	);
 });
 
-test("Chat settings preserves subagent configuration while execution is unavailable", () => {
+test("Chat settings exposes the SDK subagent execution controls", () => {
 	const initial = useAppStore.getInitialState();
 	const previous = initial.protocolVersion;
 	initial.protocolVersion = SUBAGENT_CONCURRENCY_PROTOCOL_VERSION;
 	try {
 		const markup = renderToStaticMarkup(<ChatSettings />);
 		expect(markup).toContain('data-testid="settings-subagents"');
-		expect(markup.match(/<button[^>]*data-testid="subagents-global-toggle"[^>]*>/)?.[0]).toContain(
-			'disabled=""',
-		);
+		expect(
+			markup.match(/<button[^>]*data-testid="subagents-global-toggle"[^>]*>/)?.[0],
+		).not.toContain('disabled=""');
 		expect(
 			markup.match(/<input[^>]*data-testid="subagent-limit-global-input"[^>]*>/)?.[0],
-		).toContain('disabled=""');
+		).not.toContain('disabled=""');
 	} finally {
 		initial.protocolVersion = previous;
 	}

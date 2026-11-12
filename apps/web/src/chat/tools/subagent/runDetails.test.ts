@@ -137,7 +137,7 @@ test("usage counters leave run time to the caller; run counters append it", () =
 	expect(runCounters(t, details())).toEqual([...usageCounters(t, details()), "45s"]);
 });
 
-test("the completion report drops pi-subagents' header and teases its first readable line", () => {
+test("the completion report drops the child host's header and teases its first readable line", () => {
 	const report = completionReport(
 		'Subagent "reviewer" (01JX.child) completed:\n\n## **Verdict:** approve\n\n- nit: one owner',
 	);

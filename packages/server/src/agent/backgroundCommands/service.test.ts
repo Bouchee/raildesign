@@ -1,6 +1,22 @@
-import { expect, test } from "bun:test";
-import { type BackgroundCommandCompletion, createBackgroundCommands } from "../index";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { type BackgroundCommandCompletion, createBackgroundCommands } from "./index";
 import { controlledOperations, waitFor } from "./test-support";
+
+let directory: string;
+let previous: string | undefined;
+beforeEach(() => {
+	previous = process.env.THINKRAIL_DATA_DIR;
+	directory = mkdtempSync(join(tmpdir(), "raildesign-background-"));
+	process.env.THINKRAIL_DATA_DIR = directory;
+});
+afterEach(() => {
+	if (previous === undefined) delete process.env.THINKRAIL_DATA_DIR;
+	else process.env.THINKRAIL_DATA_DIR = previous;
+	rmSync(directory, { recursive: true, force: true });
+});
 
 function fixture() {
 	const executor = controlledOperations();
@@ -32,6 +48,35 @@ test("a real command acknowledges running, streams output, and settles successfu
 		await service.dispose();
 	}
 });
+
+test.skipIf(process.platform === "win32")(
+	"Stop terminates the owned descendant process",
+	async () => {
+		const service = createBackgroundCommands({
+			sessionId: "process-tree",
+			getContext: () => ({ cwd: directory }),
+		});
+		try {
+			const command = service.start({ command: 'sleep 30 & printf "CHILD=%s\\n" "$!"; wait' });
+			await waitFor(() => /CHILD=\d+/.test(command.output?.text ?? ""));
+			const pid = Number(command.output?.text.match(/CHILD=(\d+)/)?.[1]);
+			expect(Number.isSafeInteger(pid) && pid > 0).toBe(true);
+			command.stop();
+			await waitFor(() => command.snapshot.status === "stopped");
+			await waitFor(() => {
+				try {
+					process.kill(pid, 0);
+					return false;
+				} catch (error) {
+					if (error instanceof Error && "code" in error && error.code === "ESRCH") return true;
+					throw error;
+				}
+			});
+		} finally {
+			await service.dispose();
+		}
+	},
+);
 
 test("admission counts stopping work, rejects invalid inputs, and never queues a ninth command", async () => {
 	const { executor, service } = fixture();
@@ -333,10 +378,10 @@ test("context, shell settings, timeout and session identity are captured indepen
 	expect(executor.call().command).toBe("export SETTING=one\ncommand1");
 	expect(executor.call().cwd).toBe("/first");
 	expect(executor.call().options.timeout).toBe(2);
-	expect(executor.call().options.env?.PI_SESSION_FILE).toBe("/first.jsonl");
+	expect(executor.call().options.env?.RAILDESIGN_SESSION_FILE).toBe("/first.jsonl");
 	expect(executor.call(1).command).toBe("export SETTING=two\ncommand2");
 	expect(executor.call(1).options.timeout).toBeUndefined();
-	expect(executor.call(1).options.env?.PI_SESSION_ID).toBe("immutable");
+	expect(executor.call(1).options.env?.RAILDESIGN_SESSION_ID).toBe("immutable");
 	expect(first.snapshot.sessionId).toBe("immutable");
 	expect(second.snapshot.sessionId).toBe("immutable");
 	for (const call of executor.calls) call.resolve({ exitCode: 0 });

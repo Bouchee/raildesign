@@ -91,3 +91,11 @@ test("workspace instructions preserve ancestor order and reject symbolic links a
 	writeFileSync(join(options.cwd, "AGENTS.md"), "x".repeat(128 * 1024 + 1));
 	expect(() => workspaceInstructions(options.cwd)).toThrow("128 KiB");
 });
+
+test("a child Skill allowlist limits both metadata and reads", () => {
+	options.allowedSkills = [];
+	expect(skillInstructions(options)).not.toContain("<name>demo</name>");
+	expect(() => readAdmittedSkill(options, "demo", null)).toThrow("not approved");
+	options.allowedSkills = ["demo"];
+	expect(readAdmittedSkill(options, "demo", null).text).toContain("Follow these instructions");
+});
