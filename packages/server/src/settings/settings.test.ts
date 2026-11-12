@@ -183,14 +183,28 @@ test("loadConfig degrades a partial/corrupt file over DEFAULT_CONFIG", () => {
 	expect(getConfig()).toEqual(DEFAULT_CONFIG);
 });
 
-test("an older host preserves unknown top-level config extensions when updating a known field", () => {
+test("loading drops retired Pi switches while preserving SDK and unknown stored settings", () => {
 	writeFileSync(
 		join(dataDir, "config.json"),
-		JSON.stringify({ ...DEFAULT_CONFIG, futureSetting: { mode: "new" } }),
+		JSON.stringify({
+			...DEFAULT_CONFIG,
+			disabledPackages: ["npm:old-pi-extension"],
+			disabledExtensions: ["visualize"],
+			extensionSettings: { "ask-user-question": { richPreviews: false } },
+			futureSetting: { mode: "new" },
+		}),
 	);
 	resetConfigCache();
-	updateConfig({ theme: "acme.changed" });
+	const published: AppConfig[] = [];
+	setSettingsPublisher((config) => published.push(config));
+	expect(getConfig()).not.toHaveProperty("disabledPackages");
+	const config = updateConfig({ theme: "acme.changed" });
+	expect(config).not.toHaveProperty("disabledPackages");
+	expect(config.disabledExtensions).toEqual(["visualize"]);
+	expect(config.extensionSettings).toEqual({ "ask-user-question": { richPreviews: false } });
+	expect(published).toEqual([config]);
 	const onDisk = JSON.parse(readFileSync(join(dataDir, "config.json"), "utf8"));
+	expect(onDisk).not.toHaveProperty("disabledPackages");
 	expect(onDisk.futureSetting).toEqual({ mode: "new" });
 });
 
@@ -201,6 +215,9 @@ test("an unknown update key rejects the whole update before persistence or broad
 	const published: AppConfig[] = [];
 	setSettingsPublisher((config) => published.push(config));
 
+	expect(() => updateConfig({ disabledPackages: [] } as unknown as AppConfigUpdate)).toThrow(
+		"Unknown setting: disabledPackages",
+	);
 	expect(() => updateConfig({ futureSetting: true } as unknown as AppConfigUpdate)).toThrow(
 		"Unknown setting: futureSetting",
 	);
@@ -434,29 +451,6 @@ test("extension settings merge per extension and key, persist, and drop non-bool
 	);
 	resetConfigCache();
 	expect(getConfig().extensionSettings).toEqual({ a: { on: true } });
-});
-
-test("disabled packages default empty, round-trip deduped, and reject a malformed list", () => {
-	expect(DEFAULT_CONFIG.disabledPackages).toEqual([]);
-	expect(getConfig().disabledPackages).toEqual([]);
-	const next = updateConfig({
-		disabledPackages: ["npm:@acme/pi-jira", "local:/x", "npm:@acme/pi-jira"],
-	});
-	expect(next.disabledPackages).toEqual(["npm:@acme/pi-jira", "local:/x"]);
-	resetConfigCache();
-	expect(getConfig().disabledPackages).toEqual(["npm:@acme/pi-jira", "local:/x"]);
-	for (const value of ["npm:x", [""], [1]]) {
-		const invalid = { disabledPackages: value } as unknown as AppConfigUpdate;
-		expect(() => updateConfig(invalid)).toThrow(
-			"disabledPackages must be a list of package identities",
-		);
-	}
-	writeFileSync(
-		join(dataDir, "config.json"),
-		JSON.stringify({ disabledPackages: ["npm:x", 3, ""] }),
-	);
-	resetConfigCache();
-	expect(getConfig().disabledPackages).toEqual(["npm:x"]);
 });
 
 test("an out-of-range subagent limit is rejected before persistence or broadcast", () => {

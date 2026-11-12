@@ -17,7 +17,8 @@ Plan and Spec Graph, configured MCP tools, and foreground or background child ta
 child transcripts and background-command output, with ownership checks and Stop controls. Plan review
 uses an independent SDK child. Web search and page reading use DeepSeek Search and Fetch with a separate
 host key configured in Extensions settings. Skill search, content reads, manual `/skill:name` commands
-and idle catalog reload share current trust and enable policy.
+and idle catalog reload share current trust and enable policy. The Extensions settings page manages bundled SDK
+extensions and their declared settings; Pi package installation and Pi built-in switches are retired.
 
 Desktop releases and private-server deployment have separate acceptance stages. This source checkout
 does not establish a released installer or cross-platform acceptance.

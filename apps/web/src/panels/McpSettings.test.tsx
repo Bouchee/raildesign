@@ -333,7 +333,7 @@ test("file-level config problems render one error notice per file with its path 
 	expect(html).toContain("Problem in /data/mcp.json");
 	expect(html).toContain('data-source="/repo/.raildesign/mcp.json"');
 	expect(html).toContain("JSON Parse error: Expected &#x27;}&#x27;");
-	expect(html.match(/Edit the file directly to fix it/g)).toHaveLength(2);
+	expect(html.match(/Edit the configuration file to correct the error\./g)).toHaveLength(2);
 });
 
 test("the run review lists each command and !command, and says when nothing runs", () => {

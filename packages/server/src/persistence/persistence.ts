@@ -633,6 +633,7 @@ export function loadConfig(): AppConfig {
 	const value = readJson<Record<string, unknown> | null>("config.json", null, isRecord);
 	if (!value) return structuredClone(DEFAULT_CONFIG);
 	const extensions = { ...value };
+	delete extensions.disabledPackages;
 	delete extensions.chatMessageOrder;
 	delete extensions.layout;
 	delete extensions.themeMode;
@@ -705,7 +706,6 @@ export function loadConfig(): AppConfig {
 		disabledExtensions: storedNameList(value.disabledExtensions),
 		extensionSettings: storedExtensionSettings(value.extensionSettings),
 		otherAgentSkills: typeof value.otherAgentSkills === "boolean" ? value.otherAgentSkills : true,
-		disabledPackages: storedNameList(value.disabledPackages),
 		locale: isLocalePreference(value.locale) ? value.locale : DEFAULT_CONFIG.locale,
 		onboardingDismissed: value.onboardingDismissed === true,
 		...normalizeFontSettings(value),

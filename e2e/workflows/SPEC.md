@@ -49,10 +49,14 @@ exercise a model, advanced tool registration or session recovery.
 
 ## Wrong / correct
 
-Use the isolated stage-1 browser/SDK scenario for production workflow acceptance. Do not resurrect
-`respondToTool`, `SessionManager`, pi-auth copying or a fake-success runtime adapter just to compile an
-old harness. Stage 2 must add SDK session/summary acceptance; stage 3 must add SDK Skills/Plan/questions
-and their live workflow cases before those functions become available.
+Use isolated browser/SDK scenarios for production acceptance. Do not resurrect `respondToTool`,
+`SessionManager`, pi-auth copying or a fake-success runtime adapter to compile an old harness.
+The current Stage 3 live scenario checks manual Skill invocation, workspace instructions,
+`skill_read`, Todo/Spec effects and refresh durability; separate live specs cover Skill reload and
+Plan behavior. These checks do not replace complete workflow routing, codebase importing or
+multi-round clarification followed by implementation and restored-conversation recall.
 
-Retired live scope: workflow routing/importing/smoke scenarios, Skill-search and Skill/Todo compaction
-scenarios and their shared JSONL reader. Their original implementations remain in Git history.
+The old Pi routing/importing/smoke scenarios and JSONL reader were removed. Their original
+implementations remain in Git history; equivalent business scenarios still need SDK acceptance.
+Retained Markdown workspace fixtures may support those future scenarios. No retained helper reads
+an old Pi session transcript.

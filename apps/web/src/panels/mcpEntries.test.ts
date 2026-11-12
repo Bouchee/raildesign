@@ -125,7 +125,7 @@ test("literal values are found in env, headers, oauth secrets and URL credential
 	expect(mcpUrlCredentials(remote)).toEqual(["user info", 'query "token"']);
 	expect(mcpSecretIssues(currentTranslator(), remote)).toEqual([
 		`The values of header Authorization and oauth clientSecret are not references. ${HINT}`,
-		`The URL carries a credential (user info, query "token"). pi sends the URL as written — pass the secret in a header instead, such as Authorization: Bearer \${TOKEN}.`,
+		`The URL carries a credential (user info, query "token"). Put the secret in a header instead, such as Authorization: Bearer \${TOKEN}.`,
 	]);
 	expect(
 		mcpSecretIssues(currentTranslator(), { command: "x", env: { A: `\${A}`, B: "!op read b" } }),
@@ -343,7 +343,7 @@ test("the form saves references only: a plain or empty value, or a credential in
 			[],
 		).url,
 	).toBe(
-		`The URL carries a credential (user info, query "api_key"). pi sends the URL as written — pass the secret in a header instead, such as Authorization: Bearer \${TOKEN}.`,
+		`The URL carries a credential (user info, query "api_key"). Put the secret in a header instead, such as Authorization: Bearer \${TOKEN}.`,
 	);
 });
 

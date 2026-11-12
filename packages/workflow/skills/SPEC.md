@@ -174,13 +174,11 @@ flowchart LR
 14. Verify by use — **suspended: a known limitation, not currently a done-gate**. The intended rule:
     a new or changed skill isn't done until a real request has been observed flowing through it —
     for a concept, observed being loaded through a reference (or its self-trigger) and applied.
-    **Cheap observation tooling now exists**: the headless workflow-test harness
-    ([[module-workflow-tests]]) drives a real agent through a skill per `defineScenario` and records
-    each run. What still keeps the gate suspended: runs land only in a **gitignored local log**
-    (`e2e/.workflow-runs.jsonl` — a deliberate decision, not an accident), so there is no durable,
-    shared record to bind a done-gate to. Until then: unverified skills still ship as `active`,
-    their verification debt is recorded honestly in the family table (`unverified by use`), and
-    observed runs — manual or harness — are still noted when they happen.
+    The retained workflow-test helpers ([[module-workflow-tests]]) check deterministic event and
+    artifact rules; they do not run a model. Current SDK live cases verify Skill reads, reload and
+    Plan/Spec effects, but complete routing, importing and multi-round workflow acceptance still need
+    SDK scenarios. Until then, unverified skills still ship as `active`; their verification debt is
+    recorded in the family table (`unverified by use`). Record actual observed runs separately.
 
 **Naming**
 15. Names are verb-first, active voice, kebab-case (adopted from obra/superpowers' writing-skills
@@ -191,12 +189,16 @@ flowchart LR
 
 ## Workflow family
 
+The dated observations below come from earlier workflow runs. They do not establish equivalent
+acceptance on the current SDK engine. Current coverage and the remaining scenario gaps are recorded
+in [[module-workflow-tests]].
+
 | Skill | Role — purpose | Routed from | Status |
 |---|---|---|---|
 | `brainstorming` | worker — feature, behavior change, or bug fix → interviewed design (product, then technical) → amended specs → implementation; sibling docs `fixing-a-bug.md` (bug branch) and `amending-specs.md` (shared tail) | `choosing-a-workflow` (root) | active; the default-entry route-in — a small specified change, and a bug report reaching the bug branch with no source edit — observed green by the routing suite (2026-10), as was the mid-flow round-trip; the two-phase interview and self-driven amendment are unverified by use |
 | `setting-up-a-project` | router (sub) — dispatcher: detect the workspace's state (specs present / empty / code-only) and route | `choosing-a-workflow` (root) + self-trigger + the app's `/skill:setting-up-a-project` seed | active; empty → starting and code → importing were observed green; the revised specced → review/extend offer is unverified by use |
 | `starting-a-new-project` | worker — inception interview (empty repo → goal-and-requirements) | `setting-up-a-project` + narrow self-trigger | active; route-in observed by the routing suite; the interview itself and its living-doc template (2026-09) unverified by use (rule 14 suspended — a slice-3 candidate via the user simulator) |
-| `importing-a-codebase` | worker — existing codebase → first spec graph (derive + adopt existing docs + minimal interview) | `setting-up-a-project` + narrow self-trigger | active; covered by a tagged `@agent` e2e; route-in also observed by the routing suite; the doc-adoption offer observed green by the harness's importing suite (2026-07: adoption + no-candidates regression scenarios; the pre-change skill run red against the same scenario as the before/after control); the rationale ("why") and known-limitation questions are unverified by use (the importing suite stayed green after they landed, 2026-10, but does not assert them) |
+| `importing-a-codebase` | worker — existing codebase → first spec graph (derive + adopt existing docs + minimal interview) | `setting-up-a-project` + narrow self-trigger | active; historically covered by a tagged `@agent` e2e; route-in also observed by the routing suite; the doc-adoption offer observed green by the harness's importing suite (2026-07: adoption + no-candidates regression scenarios; the pre-change skill run red against the same scenario as the before/after control); the rationale ("why") and known-limitation questions are unverified by use (the importing suite stayed green after they landed, 2026-10, but does not assert them) |
 | `asking-user-questions` | concept — multi-round interviews (design tree / frontier), question quality, options, inference confirmation, degradation | — (reached by name, rule 4) | active; the multi-round interview model unverified by use; the earlier single-round norm was observed (2026-07 manual: loaded through brainstorming's reference, a round composed + resolved) |
 | `writing-specs` | concept — the spec quality bar (short / honest / on-rails) for every spec-producing flow | — (reached by name, rule 4) | active; observed by use (2026-07 manual: self-triggered for a spec revision and applied) |
 | `choosing-a-workflow` | router (root) — classification + routing for workflow-eligible work | — (conditional pointer from the always-on rule, rule 4) | active; every classification, including the default entry for small behavior changes and bug reports, observed green by the routing suite (2026-10) |

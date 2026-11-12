@@ -1096,16 +1096,9 @@ both message orders. *Rejected:* keeping the modal for non-MCP extensions — ev
   `styles/COLOR.md`). **Compact mode**: below the chat column's `@md` container width (phones, narrow
   splits) labels and keycap hide and the send pill collapses to an icon, so the model pill keeps its room.
   Labels use `ui.action`.
-- **Anthropic extra-usage notice** (`ExtraUsageNotice.tsx`, props-driven). It warns that Claude Pro/Max
-  auth bills ThinkRail's usage per token as extra usage. Both variants link only claude.ai's usage page.
-  There is no "Details" link: no pi doc explains the billing (pi's providers.md has no Claude Pro/Max
-  section), and Anthropic's help pages cover usage limits, not the third-party rule. The notice's own
-  sentence is the explanation. The `chat` variant sits above
-  the composer while the runtime's `notice` is `anthropicExtraUsage`. It is non-blocking, ✕ dismisses it
-  for that chat, and **Don't warn again** (`ChatView`: `provider.disableWarning`, then
-  `silenceNotice`, toast on failure) turns off pi's own setting. The `signIn` variant is
-  informational, for the Connect dialog ([[submodule-web-panels]]). When the host warns, and how often,
-  is [[submodule-server-agent]]'s Billing warnings.
+- **Failure links** (`NoticeLink.tsx`) render external recovery links with the shared link style,
+  an external-link icon, and `target="_blank"` / `rel="noopener noreferrer"`. The unused Pi billing
+  notice and its retired warning-setting action are removed; failure recovery links remain available.
 - **Queued messages: the pending strip** (`QueueStrip.tsx`, props-driven). The host projects durable
   pending/staged entries by ID. A queued send does not append an optimistic transcript row; only the
   canonical user message proves admission. Rows expose admission errors and address their stable ID
@@ -1255,7 +1248,7 @@ both message orders. *Rejected:* keeping the modal for non-MCP extensions — ev
   `SlashCommandInfo` rows (`source: "prompt"`, `sourceInfo` synthesized to match pi's own prompt-template
   convention exactly: `{ path: filePath, source: "local", scope: scope === "global" ? "user" : "project",
   origin: "top-level" }`) — one merged list. The chat prepends its one **browser-native command**,
-  `/compact [instructions]`, as a display-local `builtin` row labelled `Pi/built-in`; contracts' Pi-mirrored
+  `/compact [instructions]`, as a display-local `builtin` row labelled `Built-in`; contracts' Pi-mirrored
   command source stays unchanged. Native `compact` is reserved over an exact-name extension/template
   collision (skill commands remain namespaced), and the exact Pi parser recognizes only `/compact` or
   `/compact ` plus trimmed instructions — every near-miss remains an ordinary prompt. A compact submit

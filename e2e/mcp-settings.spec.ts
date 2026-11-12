@@ -346,7 +346,7 @@ test("an unreadable user mcp.json is named in Settings with an edit hint while n
 		const notice = settings.getByTestId("mcp-config-error");
 		await expect(notice).toHaveAttribute("data-source", USER_CONFIG);
 		await expect(notice).toContainText(`Problem in ${USER_CONFIG}`);
-		await expect(notice).toContainText("Edit the file directly");
+		await expect(notice).toContainText("Edit the configuration file to correct the error.");
 		await expect(settings.getByTestId("mcp-empty")).toBeVisible();
 	} finally {
 		rmSync(USER_CONFIG, { force: true });

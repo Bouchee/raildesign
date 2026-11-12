@@ -17,7 +17,6 @@ import {
 	FONTS_PROTOCOL_VERSION,
 	LOCALES_PROTOCOL_VERSION,
 	MCP_PROTOCOL_VERSION,
-	PI_PACKAGES_PROTOCOL_VERSION,
 	PROTOCOL_VERSION,
 	SPEECH_PROTOCOL_VERSION,
 	SPEECH_SOCKET_ROUTE,
@@ -446,8 +445,6 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 						ws.subscribe(WS_CHANNELS.localesChanged);
 					if (ws.data.protocolVersion >= USER_THEMES_PROTOCOL_VERSION)
 						ws.subscribe(WS_CHANNELS.themesChanged);
-					if (ws.data.protocolVersion >= PI_PACKAGES_PROTOCOL_VERSION)
-						ws.subscribe(WS_CHANNELS.packagesChanged);
 					if (ws.data.protocolVersion >= FONTS_PROTOCOL_VERSION)
 						ws.subscribe(WS_CHANNELS.fontsChanged);
 					const speech = ws.data.protocolVersion >= SPEECH_PROTOCOL_VERSION;

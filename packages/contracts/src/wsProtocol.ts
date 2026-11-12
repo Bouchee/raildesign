@@ -8,7 +8,6 @@ import type {
 	ChangeReceipt,
 	CompletionDelivery,
 	DelegationRunStatus,
-	DetectedAccount,
 	DiffStats,
 	EditorInfo,
 	ExistingWorktreeCandidate,
@@ -37,16 +36,11 @@ import type {
 	MergePrResult,
 	OpenBranchReview,
 	OpenPrResult,
-	PiPackageResourceType,
-	PiPackageScope,
-	PiPackageSummary,
-	PiPackagesCatalog,
 	PrBodySource,
 	Project,
 	ProjectPathStatus,
 	ProjectTrustSummary,
 	ProviderStatusReport,
-	ProviderWarning,
 	PrPreview,
 	ResourceHistoryCursor,
 	ResourceHistoryPage,
@@ -133,7 +127,7 @@ export type TemplateReadLocation =
 	| { projectId: string; workspaceId?: never }
 	| { workspaceId?: never; projectId?: never };
 
-export const PROTOCOL_VERSION = 117;
+export const PROTOCOL_VERSION = 118;
 export const DURABLE_SESSION_PROTOCOL_VERSION = 116;
 export const SDK_SESSION_PROTOCOL_VERSION = 115;
 export const QUESTION_PANEL_PROTOCOL_VERSION = 114;
@@ -150,7 +144,6 @@ export const EXTENSION_SETTINGS_PROTOCOL_VERSION = 105;
 export const ASK_DISCUSS_PROTOCOL_VERSION = 105;
 export const FONTS_PROTOCOL_VERSION = 102;
 export const CUSTOM_ENDPOINTS_PROTOCOL_VERSION = 101;
-export const PI_PACKAGES_PROTOCOL_VERSION = 100;
 export const PROVIDER_WARNINGS_PROTOCOL_VERSION = 99;
 export const RESOURCE_HISTORY_PROTOCOL_VERSION = 96;
 export const PROJECT_CLONE_PROTOCOL_VERSION = 95;
@@ -460,13 +453,6 @@ export const WS_METHODS = {
 	extensionList: "extension.list",
 	webAccessStatus: "webAccess.status",
 	webAccessConfigure: "webAccess.configure",
-	packagesList: "packages.list",
-	packagesInstall: "packages.install",
-	packagesRemove: "packages.remove",
-	packagesUpdate: "packages.update",
-	packagesCheckUpdates: "packages.checkUpdates",
-	packagesSetResourceEnabled: "packages.setResourceEnabled",
-	packagesReveal: "packages.reveal",
 	localesList: "locales.list",
 	localesReveal: "locales.reveal",
 	themesList: "themes.list",
@@ -501,7 +487,6 @@ export const WS_METHODS = {
 	sessionStateList: "session.stateList",
 	sessionAcknowledgeCompletion: "session.acknowledgeCompletion",
 	sessionNudge: "session.nudge",
-	sessionActivityList: "session.activityList",
 	sessionGetMessages: "session.getMessages",
 	subagentGetTranscript: "subagent.getTranscript",
 	sessionResources: "session.resources",
@@ -523,12 +508,8 @@ export const WS_METHODS = {
 	customEndpointsRemove: "customEndpoints.remove",
 	modelClampThinking: "model.clampThinking",
 	providerStatus: "provider.status",
-	providerDetect: "provider.detect",
-	providerLoginStart: "provider.loginStart",
 	providerLoginReply: "provider.loginReply",
 	providerLoginCancel: "provider.loginCancel",
-	providerLogout: "provider.logout",
-	providerDisableWarning: "provider.disableWarning",
 	hostUpdate: "host.update",
 	settingsUpdate: "settings.update",
 	environmentGet: "environment.get",
@@ -598,7 +579,6 @@ export const WS_CHANNELS = {
 	mcpStatus: "mcp.status",
 	localesChanged: "locales.changed",
 	themesChanged: "themes.changed",
-	packagesChanged: "packages.changed",
 	fontsChanged: "fonts.changed",
 	speechChanged: "speech.changed",
 } as const;
@@ -1134,34 +1114,6 @@ export interface WsMethodMap {
 	"extension.list": { params: Record<string, never>; result: ExtensionCatalogEntry[] };
 	"webAccess.status": { params: Record<string, never>; result: WebAccessStatus };
 	"webAccess.configure": { params: { apiKey: string }; result: WebAccessStatus };
-	"packages.list": { params: { workspaceId?: string; force?: boolean }; result: PiPackagesCatalog };
-	"packages.install": {
-		params: { source: string; scope: PiPackageScope; workspaceId?: string };
-		result: PiPackageSummary;
-	};
-	"packages.remove": {
-		params: { source: string; scope: PiPackageScope; workspaceId?: string };
-		result: Ack;
-	};
-	"packages.update": {
-		params: { packages: { source: string; scope: PiPackageScope }[]; workspaceId?: string };
-		result: Ack;
-	};
-	"packages.checkUpdates": {
-		params: { workspaceId?: string; force?: boolean };
-		result: { source: string; scope: PiPackageScope }[];
-	};
-	"packages.setResourceEnabled": {
-		params: {
-			path: string;
-			type: PiPackageResourceType;
-			scope: PiPackageScope;
-			enabled: boolean;
-			workspaceId?: string;
-		};
-		result: Ack;
-	};
-	"packages.reveal": { params: { path: string; workspaceId?: string }; result: Ack };
 	"locales.list": { params: Record<string, never>; result: LocalLocalesSnapshot };
 	"locales.reveal": { params: Record<string, never>; result: Ack };
 	"themes.list": { params: Record<string, never>; result: UserThemesSnapshot };
@@ -1242,7 +1194,6 @@ export interface WsMethodMap {
 		params: { workspaceId: string; sessionId: string; text: string; images?: ImageContent[] };
 		result: { disposition: "needs_input" | "queued" | "prompted" };
 	};
-	"session.activityList": { params: Record<string, never>; result: [] };
 	"session.getMessages": {
 		params: { sessionId: string; workspaceId: string };
 		result: { summary: SessionSummary; messages: TranscriptMessage[] };
@@ -1300,15 +1251,8 @@ export interface WsMethodMap {
 	"customEndpoints.save": { params: CustomEndpointDraft; result: CustomEndpoint[] };
 	"customEndpoints.remove": { params: { id: string }; result: CustomEndpoint[] };
 	"provider.status": { params: Record<string, never>; result: ProviderStatusReport };
-	"provider.detect": { params: Record<string, never>; result: { accounts: DetectedAccount[] } };
-	"provider.loginStart": {
-		params: { providerId: string; type?: "oauth" | "api_key" };
-		result: { loginId: string };
-	};
 	"provider.loginReply": { params: LoginReply; result: Ack };
 	"provider.loginCancel": { params: { loginId: string }; result: Ack };
-	"provider.logout": { params: { providerId: string }; result: Ack };
-	"provider.disableWarning": { params: { warning: ProviderWarning }; result: Ack };
 	"host.update": { params: Record<string, never>; result: Ack };
 	"settings.update": { params: { config: AppConfigUpdate }; result: AppConfig };
 	"environment.get": { params: Record<string, never>; result: HostEnvironmentStatus };
@@ -1510,15 +1454,6 @@ export type WsErrorCode =
 	| "SURVEY_CHANGED"
 	| "SURVEY_INVALID"
 	| "SURVEY_NOT_SENT"
-	| "PACKAGE_SOURCE_INVALID"
-	| "PACKAGE_OFFLINE"
-	| "PACKAGE_UNTRUSTED"
-	| "PACKAGE_UNKNOWN"
-	| "PACKAGE_INSTALL_FAILED"
-	| "PACKAGE_INSTALLED_UNLISTED"
-	| "PACKAGE_REMOVE_FAILED"
-	| "PACKAGE_UPDATE_FAILED"
-	| "PACKAGE_SETTINGS_WRITE_FAILED"
 	| "CACHE_WARMING_WRITE_FAILED"
 	| "REQUEST_REPLAY_OVERFLOW"
 	| "INSTALLED_FONTS_UNAVAILABLE"

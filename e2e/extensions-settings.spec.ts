@@ -27,6 +27,51 @@ test.afterEach(async ({ page }) => {
 	}
 });
 
+test("SDK extension switches persist without Pi installation controls or requests", async ({
+	page,
+}) => {
+	const methods: string[] = [];
+	page.on("websocket", (socket) => {
+		socket.on("framesent", ({ payload }) => {
+			if (typeof payload !== "string") return;
+			try {
+				const request = JSON.parse(payload) as { method?: string };
+				if (request.method) methods.push(request.method);
+			} catch {}
+		});
+	});
+	await openFixtureProject(page);
+	await page.getByTestId("open-settings").click();
+	await page.getByTestId("settings-nav-extensions").click();
+	const settings = page.getByTestId("settings-extensions");
+	const toggle = settings.getByTestId("extension-toggle-visualize");
+	await expect(toggle).toHaveRole("switch");
+	await expect(toggle).toHaveAttribute("aria-checked", /true|false/);
+	await expect(settings.getByTestId("settings-bundled-extensions")).toBeVisible();
+	await expect(settings.getByTestId("web-access-key")).toBeVisible();
+	await expect(settings.getByTestId("other-agent-skills-toggle")).toBeVisible();
+	for (const testId of ["packages-install", "settings-packages", "settings-builtins"]) {
+		await expect(settings.getByTestId(testId)).toHaveCount(0);
+	}
+	const before = await toggle.getAttribute("aria-checked");
+	const after = before === "true" ? "false" : "true";
+	await toggle.click();
+	await expect(toggle).toHaveAttribute("aria-checked", after);
+	const catalogReads = methods.filter((method) => method === "extension.list").length;
+	expect(catalogReads).toBeGreaterThan(0);
+	expect(methods.filter((method) => method.startsWith("packages."))).toEqual([]);
+
+	await page.reload();
+	await page.getByTestId("open-settings").click();
+	await page.getByTestId("settings-nav-extensions").click();
+	await expect(toggle).toHaveAttribute("aria-checked", after);
+	await expect(settings.getByTestId("web-access-key")).toBeVisible();
+	await expect
+		.poll(() => methods.filter((method) => method === "extension.list").length)
+		.toBeGreaterThan(catalogReads);
+	expect(methods.filter((method) => method.startsWith("packages."))).toEqual([]);
+});
+
 test("a historical questionnaire still renders its answers while the extension is off", async ({
 	page,
 }) => {

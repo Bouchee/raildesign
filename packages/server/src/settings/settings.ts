@@ -64,7 +64,6 @@ const ACCEPTED_UPDATE_KEYS = {
 	disabledExtensions: true,
 	extensionSettings: true,
 	otherAgentSkills: true,
-	disabledPackages: true,
 	locale: true,
 	onboardingDismissed: true,
 	interfaceFont: true,
@@ -243,7 +242,6 @@ export function updateConfig(partial: AppConfigUpdate): AppConfig {
 
 		disabledExtensions,
 		extensionSettings,
-		disabledPackages,
 		...rest
 	} = runtimeUpdate;
 	const extensionSettingsUpdate =
@@ -252,10 +250,6 @@ export function updateConfig(partial: AppConfigUpdate): AppConfig {
 		disabledExtensions === undefined
 			? undefined
 			: validateNameList(disabledExtensions, "disabledExtensions", "extension names");
-	const nextDisabledPackages =
-		disabledPackages === undefined
-			? undefined
-			: validateNameList(disabledPackages, "disabledPackages", "package identities");
 	for (const [name, value] of [
 		["defaultModel", defaultModel],
 		["reviewModel", reviewModel],
@@ -341,7 +335,6 @@ export function updateConfig(partial: AppConfigUpdate): AppConfig {
 						extensionSettingsUpdate,
 					),
 				}),
-		...(nextDisabledPackages === undefined ? {} : { disabledPackages: nextDisabledPackages }),
 	};
 	if (defaultModel !== undefined) {
 		if (defaultModel === null) delete next.defaultModel;

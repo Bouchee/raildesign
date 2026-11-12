@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import type { ExtensionCatalogEntry } from "@thinkrail/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ExtensionsCatalog } from "./ExtensionsSettings";
-import { nextDisabledPackages } from "./usePiPackages";
 
 const VISUALIZE: ExtensionCatalogEntry = {
 	name: "visualize",
@@ -100,21 +99,4 @@ test("the nested switch follows the stored value and is disabled while the exten
 
 test("an older host without extension settings shows no nested switch", () => {
 	expect(renderSettings({}, [], false)).not.toContain("extension-setting-");
-});
-
-test("switching a package on clears every key that covers it; off adds only its own", () => {
-	const tools = {
-		identity: "local:/repo/tools",
-		switchKeys: ["local:/repo/tools", "local:project:tools"],
-	};
-	expect(nextDisabledPackages(["local:project:tools", "npm:other"], tools, true)).toEqual([
-		"npm:other",
-	]);
-	expect(nextDisabledPackages(["npm:other"], tools, false)).toEqual([
-		"npm:other",
-		"local:/repo/tools",
-	]);
-	expect(nextDisabledPackages(["local:project:tools"], tools, false)).toEqual([
-		"local:/repo/tools",
-	]);
 });

@@ -521,10 +521,12 @@ prompt submission, route mock, or screenshot. Extension on/off coverage (`extens
 real Settings → Extensions switch of every shipped extension (`visualize`, `ask-user-question`) through
 `settings.update`, proves it survives a reload, and seeds a historical `visualize` call that must still render
 its diagram and an answered `ask_user_question` call that must still render its record while the extension is
-off; each test restores every switch in `afterEach` because the shard shares one host. `environment-settings.spec.ts` drives Settings →
-Environment through rejected and accepted saves and a reload; the host was launched with
-`PI_CODING_AGENT_DIR`, so it also proves the launch value stays in use and is reported as set at launch. It
-clears the stored record in `afterEach` so no later restart-based spec boots with it. The provider-backed counterpart in
+off. Opening and reloading this page must not show the retired Pi package installer or built-in package
+controls, or send any `packages.*` request. Each test restores every switch in `afterEach` because the
+shard shares one host. `environment-settings.spec.ts` drives Settings → Environment through rejected
+and accepted saves and a reload. It verifies that the retired agent-directory control is absent and
+that an accepted ordinary environment variable persists with a restart notice. It clears the stored
+record in `afterEach` so no later restart-based spec boots with it. The provider-backed counterpart in
 `visualize.live.spec.ts` runs first: with the extension off the agent is never offered `visualize`, and the
 existing diagram/comparison tests that follow re-prove the restored tool in the same chat; a last test
 asks for a before/after UI proposal without naming the tool and expects mockup files under

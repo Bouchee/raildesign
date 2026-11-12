@@ -462,53 +462,19 @@ the wizard. **Provider status has one owner**: the store's `providerStatus` snap
 frame — another client's too, even while this client's own login keeps the dialog (hosts that predate a push
 still refresh); a local sign-out or Retry bumps it too. `useProviderStatus`
 re-reads whenever the snapshot is behind, single-flight per version, and `useHasProvider` (connected iff
-`reportHasModelSource`: any standard provider `configured` **or** JetBrains Central connected, so Central
-alone does not trip the warning) derives from it, so the banner, the wizard gate, the connect surfaces and
+`reportHasModelSource`: any provider `configured`) derives from it, so the banner, the wizard gate, the connect surfaces and
 Settings never disagree. `useHasProvider` also invalidates once on mount, so returning to Welcome sees a
-credential change the host never pushes (a `pi` CLI login or logout). The banner stays hidden until the first
+endpoint configuration changes made outside the current page. The banner stays hidden until the first
 answer lands, and a transport error degrades to *not* nagging (unknown or offline ≠ "no provider"). All
 provider **management** lives in Settings, not here (the always-on strip is gone).
 
-**First connection.** `ConnectProviderDialog` is an onboarding overlay over `ConnectProviderOptions` — the
-same body the onboarding wizard embeds: one bordered surface holding a **Detected** block — only when account
-detection found something (below) — above the search, then **one
-searchable list** of every other unconfigured provider in a scroll area 240px tall, capped by the viewport
-down to a 160px floor so a short window loses list height before the page scrolls (~40 providers never grow
-the overlay, and filtering never resizes it): subscription (OAuth-capable) providers, then key-only ones, each row the Settings `ProviderRow` with the same
-buttons as Settings: Sign in where the provider supports it and API key where it accepts one, so the copy's
-"or add an API key" holds for every provider. JetBrains AI is not a pi provider but the `central` CLI that configures several, so it keeps the real
-`JetBrainsAiCard` (its Central state machine is never duplicated) — placed like any other option: in **Detected**
-whenever `central` is installed (Connect, sign-in, start-proxy or update, by state), otherwise a plain
-**JetBrains AI** row at the end of the list whose **Set up** expands the card's install guidance. The unfiltered list skips detected providers; a search covers every provider,
-them included. One list rather than separate subscription / API-key buckets, because users look for a provider
-by name, not by auth method. **Detected is earned, never hardcoded.** The surface first asks the host `provider.detect`
-(`detectAccounts`; an older host or a failure counts as nothing found) — the wizard on **Get started**, the
-overlay on open — and keeps its skeleton until it answers, so nothing jumps. Every detected account whose pi
-provider is unconfigured and OAuth-capable becomes a Detected sign-in (e.g. "Sign in with Claude" when
-Claude Code is signed in, with the tool's plan as a badge) that starts that provider's ordinary OAuth flow,
-and those providers leave the list. When nothing usable is found there is no Detected block at all —
-naming a provider we know nothing about would be a guess dressed as advice. It is a suggestion, never a
-silent sign-in: the host reports which tools are signed in, and the user still authorises ThinkRail through
-pi's own flow. There is no link out to Settings — the surface already lists every connectable provider. No quota or other global
-settings appear here; the full `ProvidersSettings` stays the power-user surface. Data and login wiring are
-the shared **`useProviderAuth`** hook, which `ProvidersSettings` uses too: the store's provider status snapshot
-(above), re-read once whenever one of them opens — Central's install state and similar host-local facts change
-without a push — `startLogin` / `logout`, and the store-driven
-`LoginDialog` node. For an `anthropic` login started as `oauth` (`LoginState.method`), the node carries the sign-in
-`chat/ExtraUsageNotice` while the report's `warnings.anthropicExtraUsage` is not `false`
-(`warnsExtraUsageOnSignIn`; an older host's report has no `warnings`, so the notice shows). Exactly one surface mounts that node: Settings → Providers while Settings is open, otherwise the
-connect surface (`ownsLoginDialog`), so a login never renders two stacked dialogs. **Post-connect handoff:**
-when a provider that was not configured when the surface opened becomes configured — an OAuth / API-key
-login or a Central connect alike; the surface's first report is that baseline, even one whose re-read is still
-in flight (waiting for a current one would absorb a sign-in that lands first), unless it passes
-`configuredAtStart`, which the wizard does as empty (a cold start has no provider), so one connected through
-Settings during the intro or privacy step is still verified on reaching Connect — `ConnectProviderOptions` reports it once through `onConnected`, and only from a current, successful snapshot (never while a re-read is
-in flight or after a failed one, so a provider signed out a moment before Get started is not verified), and the host
-surface decides: `ConnectProviderDialog` clears that provider's finished login (never a newer one), closes itself, and raises one success
-toast naming the provider and the `model.list` count ("JetBrains AI connected — 23 models available"), then
-lets Welcome switch its hero to the `ConnectedLine`; the wizard neither toasts nor closes — it verifies in place
-(below). Settings keeps its own behavior (no auto-close),
-because a power user there may be adding a second provider.
+**First connection.** `ConnectProviderDialog` embeds the same `ConnectProviderOptions` body as
+onboarding. It renders `CustomEndpointsSettings`, using the SDK host's configured custom endpoints and
+`useProviderStatus`. A newly configured provider is reported once against the snapshot captured when the
+surface opened, only after a successful current read. The dialog clears that provider's settled login,
+announces the available-model count, closes and lets Welcome show the connected state. The removed Pi
+account-discovery and account-login RPCs are not invoked. MCP authorization retains its separate live
+`provider.loginReply` / `provider.loginCancel` flow.
 
 **Starting from nothing.** "Start a new project" opens **`CreateProjectDialog`** (driven by `useOpenProject`'s
 `startNewProject`, so the rail "+" and Welcome share it): a project name, its derived folder name, and a
@@ -560,10 +526,8 @@ while it is invisible; under reduced motion the swap is instant. Reaching done p
 refresh warns and offers **Check again**
 (re-runs both reads, e.g. after fixing the account elsewhere) and Back to the choices — Back alone could not
 return, since the provider is configured and so no longer listed. The wizard owns no project step of its own and shows no progress strip.
-**Skip setup** is on every screen before done except privacy, whose Continue is the only way on; skipping also cancels any
-target-less login still pending in the dialog (`cancelUnownedLogin`, shared with `ConnectProviderDialog`).
-A login is owned by the start that requested it (`startReservedLogin`): when the surface closes before
-`provider.loginStart` answers, the late `loginId` is cancelled and cleared instead of running hidden.
+**Skip setup** leaves the wizard before done. Pi account login and its late-login cancellation path
+have been retired; configured endpoints are managed by the shared custom-endpoint surface.
 The gate lives in the store (`onboardingWizard`: pending → shown | hidden) so shell can hold first-run
 prompts while it is undecided. Finishing or skipping writes `onboardingDismissed: true`, so a returning user — even one who later removes
 every project and provider — gets the regular Welcome; a failed write still closes the wizard locally.
@@ -759,9 +723,9 @@ a project picker, the prompt hero, and the reused
   (-builtin:mcp)"` "MCP is turned off in pi settings (-builtin:mcp); remove that entry to manage servers
   here." A problem with a whole `mcp.json` (`McpListResult.configErrors`: unparsable
   JSON, `mcpServers` not an object, a mistyped key) renders as one error notice per file
-  (`McpConfigFileErrors`) naming its path, pi's message and "Edit the file directly to fix it", above the
-  list or the empty state alike — so a file pi cannot read never passes for "no servers". Status details
-  (pi's report) arrive already redacted by the host.
+  (`McpConfigFileErrors`) naming its path, the host's validation message and "Edit the configuration file
+  to correct the error.", above the list or the empty state alike — so an unreadable configuration file
+  never passes for "no servers". Status details arrive already redacted by the host.
   **Enablement and exposure follow one routing rule (`mcpSettingWrite`):** a user-level server
   changes for this project only, through `mcp.setProjectOverride` (the host merges fields atomically,
   so only the changed field travels), and the global `mcp.json` is never written; a repo-defined server is
@@ -1103,93 +1067,11 @@ a project picker, the prompt hero, and the reused
   **PROMPT CACHE** (`cache-warming-group`) — the `CacheWarmingSettings` block described above.
 
   There is **no separate Review navigation section**; all review-related controls live in Models' REVIEW group.
-  **`ExtensionsSettings`** (the **Extensions** section, nav `settings-nav-extensions`, listed only at
-  `protocolVersion >= EXTENSION_CATALOG_PROTOCOL_VERSION`) is one page in up to four groups. Its description
-  carries the page's only statement about chats — "Changes apply to open chats when their current turn
-  ends." — and a primary **Install package…** button; there is no dynamic notice about which chats are
-  pending. **Built into ThinkRail** is the host-registry catalog as before: `extension.list` each time the
-  section mounts (static per host process, so section-local state), rendered by the props-driven
-  `ExtensionsCatalog` — title, description, tool-name chips and a `@thinkrail/ui/switch`
-  (`extension-toggle-<name>`) whose state is **`store.disabledExtensions`**, not the catalog's snapshot; a
-  toggle writes the whole list through `settings.update { disabledExtensions }` and converges on the
-  broadcast. Unknown names already in the list are carried through. A catalog entry's declared `settings`
-  render as nested switches under its row (`extension-setting-<name>-<key>`, copy from a static
-  `MessageKey` map — a setting without copy is not shown), valued from **`store.extensionSettings`** else the
-  declared default, disabled while the extension is off, and written one key at a time through
-  `settings.update { extensionSettings: { name: { key: value } } }` (the host merges); they appear only
-  while `supportsExtensionSettings(protocolVersion)` holds. **Skills** (only at
-  `protocolVersion >= OTHER_AGENT_SKILLS_PROTOCOL_VERSION`) is one switch, `other-agent-skills-toggle`, over
-  `store.otherAgentSkills`, writing `settings.update { otherAgentSkills }`; per-project choices made in the
-  Skills dialog still win over it. **Installed** and **pi built-in**
-  (`PiPackagesSettings.tsx`, props-driven; every `packages.*` request and the row state live in the
-  **`usePiPackages`** hook, `usePiPackages.ts`, so the page component only composes) exist only while
-  `supportsPiPackages(protocolVersion)` holds — against an older host the page is the bundled group
-  alone with its former description, no Install button and no package request — and list
-  `packages.list` for the active workspace (user scope alone without one, or for a chat without a project —
-  `selectActiveRepoWorkspaceId`) through **one** request path
-  (`listPackages`, generation-guarded so a slow older response never overwrites a newer one), re-run on
-  mount, on a workspace change and on the store's `packagesVersion` (the `packages.changed` push, which
-  the host also sends after a package switch so a re-enabled row regains its chips). The mount and
-  workspace-change reads pass `force`, so the host rebuilds its catalog: an extension file dropped into a
-  scanned folder by hand changes nothing the host watches, and a cached list would hide it for minutes. The update check
-  is guarded the same way: a check started later (a workspace switch, a manual check, the re-check
-  after an update) wins, and only the latest clears "Checking…" or re-flags rows. A **package row** (`PackageRow`) is name ·
-  kind / scope tags (`npm` / `git` / `local`, Global / Repository) · an **Update available** tag when the
-  update check flagged it · one provenance line (declared source · "<version> installed" · description) ·
-  tool and `/command` chips of its extensions as a chat's loader last recorded them (a file no chat has
-  loaded since it changed has none — the host never runs extension code to list; the install dialog
-  probes its new package once, so a fresh install shows chips at once) · the **switch** · a ⋯ menu
-  (Update, Open folder, Remove…). The group's one-line description says the switch affects ThinkRail chats only (the pi CLI
-  still loads the package — `disabledPackages` is a ThinkRail setting). The switch is the only state
-  control; it renders the host's `enabled` (closed over pi's package equivalence) and writes
-  `settings.update { disabledPackages }` — on removes every key in the row's `switchKeys`, off adds its
-  `identity` (`nextDisabledPackages`); an off row dims
-  its text and chips; a user declaration the repository shadows says so under its provenance line. There is no status column and no "installing" row. A declaration with no install
-  on disk (`installedPath` absent) is a **Not installed** row: a warning tag, the source and one hint
-  line ("pi retries when a chat starts; remove it if that keeps failing"), no switch, no expand, a menu
-  with Remove only. The one row-level problem of an installed package is an extension that failed to
-  load — one attention line, `Failed to load: <pi's error>` → **Open folder**. Expanding a row lists its
-  extensions, skills and prompts **read-only** (a resource pi's settings switch off says "off in pi
-  settings"; the package switch is the only control — in-package toggles are deferred until pi exposes
-  an API, see [[submodule-server-agent-packages]]) plus Open folder and Remove…; themes are never shown. A **loose file** row (`LooseRow`:
-  `<agentDir>/extensions/*`, `.pi/extensions/*`, explicit `extensions[]` entries) is the file name with a
-  `local file` tag, its path, chips, a switch and Open folder — no Update or Remove, since ThinkRail did
-  not install it. **pi built-in** lists the two built-ins the host runs (MCP client, Tool search) with a
-  switch each, written as `±builtin:<name>` in the **scope the catalog reports** (a repository entry
-  overrides the user file in pi, so flipping a project-decided row writes `.pi/settings.json`); the
-  group's description names the settings file that decides. Every
-  row action — switch, resource toggle, Update, Open folder, Remove — carries `{ source, scope,
-  workspaceId? }` and a `rowKey` the page keys busy and error state on (an error renders inline on the
-  row, never a toast; the bundled group's switch keeps its older toast); Remove goes through
-  `ConfirmDialog`; Update and Remove run with a ten-minute `timeoutMs`. Updates are checked once on mount
-  (`packages.checkUpdates`, cached by the host) and on **Check for updates** (`force: true`); a failed
-  check renders under the group header; **Update all** sends the flagged rows as **one**
-  `packages.update` request and marks them busy together. The empty state offers
-  Install and the pi.dev gallery link; an untrusted project shows one info notice; a failed list renders
-  `packages-failed`. The **`InstallPackageDialog`** (`InstallPackageDialog.tsx`; its `InstallPackageBody` is
-  props-driven so each step renders without a portal, `installStepHeader` supplies the Radix title per
-  step) is source (an info icon beside the label opens a tooltip listing what can be pasted — gallery
-  or npm link, `pi install` line, npm name, git URL, local folder — in place of a permanent hint; there
-  is no trust warning in the dialog, the empty state's notice and pi's own trust prompt cover it) → scope
-  (**Global** / **This repository only**; there is no per-workspace choice, a
-  package is on wherever its declaration loads) → one confirm → **Installing…** (indeterminate, no
-  progress log, no Cancel — pi has none) → **Installed** (name · version · description, chips for every
-  tool / command / skill / prompt it added, and one line: "Installed globally — new chats have it now;
-  open chats pick it up when idle"; no switch here — the row in the list is the only state control) or
-  **Failed** (the host's message,
-  "Nothing was added to your settings" only for the codes the host raises before it writes
-  (`installFailureOutcome`), "It may have been added anyway — check the list" for any other error, Back /
-  Retry; a `RequestTimeoutError` instead says to check the list, since the install may still complete). A package that installs but contributes nothing loadable
-  is a success with an empty chip list — it has a row, so it can be removed. The field is forgiving: `parsePiPackageInput`
-  ([[module-contracts]]) turns a pi.dev or npmjs.com package link, a pasted `pi install …` line and a
-  bare `@scope/name[@version]` into the `npm:` source pi accepts for the echo and the display name; a
-  pasted `-l` selects the repository scope when it is available. The request carries the raw text and
-  the host applies the same function (plus its folder-first rule for a bare name), so what the echo
-  says is what installs.
-  `describeSource` is a light client-side echo only — the host validates; **This repository only** is
-  offered only with an active workspace whose project is pi-trusted,
-  with the reason shown otherwise, and the hints show the real settings paths from the catalog. Disabling
-  never unregisters a tool renderer ([[submodule-web-extensions]]), so past transcripts still render.
+  **`ExtensionsSettings`** lists the host SDK extension catalog through `extension.list`. Bundled tool
+  switches use `disabledExtensions`; declared boolean settings use `extensionSettings` and remain disabled
+  when their extension is off. The page also keeps the separate DeepSeek key controls and the existing
+  other-agent Skills opt-in. It exposes no Pi package installation, built-in Pi switches or package RPCs.
+  Historical tool renderers remain available when an extension is disabled.
   **`EnvironmentSettings`** (the **Environment** section, nav `settings-nav-environment`, listed only at
   `protocolVersion >= HOST_ENVIRONMENT_PROTOCOL_VERSION`) edits the stored host environment
   ([[submodule-server-environment]]): the pi config folder, the folder in use (`effectiveAgentDir`), and
@@ -1618,9 +1500,8 @@ own section. The kebab menu (`plan-menu`, a
   reused by `NewWorkspaceDialog`; `ModelSelector`/`ThinkingSelector`, still mounted by
   `ModelsSettings`; `modelPicker`'s `AUTH_KIND_LABEL`, the one connection-kind vocabulary (catalog keys)
   `ProvidersSettings` shares with the picker, and its `formatContext` plus `ProviderGlyph`, reused by
-  `VisibleModelsSettings`' rows; `TemplateEditorDialog`, reused by `TemplatesSettings`; `ExtraUsageNotice`, the
-  sign-in notice `useProviderAuth` passes to `LoginDialog`), `auth` (`LoginDialog`, mounted through
-  `useProviderAuth` and by `McpSettings`), `@thinkrail/resource-renderers`, `lib`, `themes` (catalog + generic application contract),
+  `VisibleModelsSettings`' rows; `TemplateEditorDialog`, reused by `TemplatesSettings`), `auth`
+  (`LoginDialog`, mounted by `McpSettings`), `@thinkrail/resource-renderers`, `lib`, `themes` (catalog + generic application contract),
   `contracts`; `@remixicon/react`; and the heavy libs each lazy panel owns (`@xterm/*`) loaded via `import()`.
 - **Forbidden:** `server`/`shared`/`pi`; importing `shell`; reaching across unrelated panels.
 

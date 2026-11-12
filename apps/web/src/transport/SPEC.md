@@ -99,8 +99,7 @@ batches high-frequency Pi events without allowing later wire messages to overtak
   bounded push buffer restarts the complete read instead of growing without limit, while stale-generation
   outcomes discard their buffers. Pending dialog records replay their exact request, and adding/opening a
   workspace restarts the generation-guarded complete read so pre-existing disk sessions are included.
-  Unsupported hosts clear the map. The old `session.activityList` tombstone
-  is never requested by this client. Before `WsTransport` dispatches a state push, any queued Pi events flush
+  Unsupported hosts clear the map. Before `WsTransport` dispatches a state push, any queued session events flush
   synchronously, so the runtime transcript/render state precedes the host state that refers to it;
   connection-status transitions keep the same barrier.
   This dispatch barrier preserves cross-message order and the store's transcript-revision fence while still

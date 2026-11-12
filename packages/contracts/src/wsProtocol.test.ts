@@ -44,7 +44,6 @@ import {
 	normalizeSessionTitle,
 	ONBOARDING_PROTOCOL_VERSION,
 	OTHER_AGENT_SKILLS_PROTOCOL_VERSION,
-	PI_PACKAGES_PROTOCOL_VERSION,
 	PLAN_REVIEW_SUBAGENT_PROTOCOL_VERSION,
 	PLAN_SUMMARY_GENERATION_PROTOCOL_VERSION,
 	PROJECT_RENAME_PROTOCOL_VERSION,
@@ -89,8 +88,7 @@ test("durable queues use stable input identities and expose their mutations at v
 	expect(DEFAULT_CONFIG.sdkTracingEnabled).toBe(false);
 });
 
-test("retired workspace activity keeps only its empty snapshot compatibility method", () => {
-	expect(WS_METHODS.sessionActivityList).toBe("session.activityList");
+test("retired workspace activity exposes no activity channel", () => {
 	expect(Object.hasOwn(WS_CHANNELS, "sessionActivity")).toBe(false);
 });
 
@@ -330,7 +328,7 @@ test("find in files is pinned to v112", () => {
 });
 
 test("the question panel height setting is pinned to v114", () => {
-	expect(PROTOCOL_VERSION).toBe(117);
+	expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(QUESTION_PANEL_PROTOCOL_VERSION);
 	expect(QUESTION_PANEL_PROTOCOL_VERSION).toBe(114);
 	expect(DEFAULT_CONFIG.questionPanelHeight).toBe(60);
 });
@@ -375,25 +373,10 @@ test("review details and the GitHub review actions are pinned to v88", () => {
 	expect(WS_METHODS.workspaceDeleteRemoteBranch).toBe("workspace.deleteRemoteBranch");
 });
 
-test("pi package management and the package switch are pinned to v100", () => {
-	expect(PI_PACKAGES_PROTOCOL_VERSION).toBe(100);
-	expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(PI_PACKAGES_PROTOCOL_VERSION);
-	expect(WS_METHODS.packagesList).toBe("packages.list");
-	expect(WS_METHODS.packagesInstall).toBe("packages.install");
-	expect(WS_METHODS.packagesRemove).toBe("packages.remove");
-	expect(WS_METHODS.packagesUpdate).toBe("packages.update");
-	expect(WS_METHODS.packagesCheckUpdates).toBe("packages.checkUpdates");
-	expect(WS_METHODS.packagesSetResourceEnabled).toBe("packages.setResourceEnabled");
-	expect(WS_METHODS.packagesReveal).toBe("packages.reveal");
-	expect(WS_CHANNELS.packagesChanged).toBe("packages.changed");
-	expect(DEFAULT_CONFIG.disabledPackages).toEqual([]);
-});
-
 test("project create and the onboarding dismissal are pinned to v94", () => {
 	expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(ONBOARDING_PROTOCOL_VERSION);
 	expect(ONBOARDING_PROTOCOL_VERSION).toBe(94);
 	expect(WS_METHODS.projectCreate).toBe("project.create");
-	expect(WS_METHODS.providerDetect).toBe("provider.detect");
 	expect(DEFAULT_CONFIG.onboardingDismissed).toBe(false);
 });
 
@@ -627,7 +610,6 @@ describe("tool response guards", () => {
 test("provider warnings are pinned to v99", () => {
 	expect(PROVIDER_WARNINGS_PROTOCOL_VERSION).toBe(99);
 	expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(PROVIDER_WARNINGS_PROTOCOL_VERSION);
-	expect(WS_METHODS.providerDisableWarning).toBe("provider.disableWarning");
 });
 
 test("custom endpoints are pinned to v101 and own only custom-* providers", () => {
@@ -648,4 +630,21 @@ test("ask_user_question discuss answers are pinned to v105, after background wor
 	expect(ASK_DISCUSS_PROTOCOL_VERSION).toBe(105);
 	expect(ASK_DISCUSS_PROTOCOL_VERSION).toBeGreaterThan(WORKSPACE_CREATION_PROTOCOL_VERSION);
 	expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(ASK_DISCUSS_PROTOCOL_VERSION);
+});
+
+test("v118 retires Pi package management and old account RPCs without retiring MCP login", () => {
+	expect(PROTOCOL_VERSION).toBe(118);
+	const methods = Object.values(WS_METHODS);
+	expect(methods.some((method) => method.startsWith("packages."))).toBe(false);
+	for (const method of [
+		"provider.detect",
+		"provider.loginStart",
+		"provider.logout",
+		"provider.disableWarning",
+		"session.activityList",
+	])
+		expect(methods).not.toContain(method);
+	expect(methods).toContain("provider.loginReply");
+	expect(methods).toContain("provider.loginCancel");
+	expect(Object.values(WS_CHANNELS)).not.toContain("packages.changed");
 });

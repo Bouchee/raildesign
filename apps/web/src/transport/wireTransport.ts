@@ -29,7 +29,6 @@ import {
 	FONTS_PROTOCOL_VERSION,
 	HOST_UPDATE_RUN_PROTOCOL_VERSION,
 	LOCALES_PROTOCOL_VERSION,
-	PI_PACKAGES_PROTOCOL_VERSION,
 	PLAN_REVIEW_SUBAGENT_PROTOCOL_VERSION,
 	PLAN_SUMMARY_GENERATION_PROTOCOL_VERSION,
 	REVIEW_RICH_ANCHORS_PROTOCOL_VERSION,
@@ -58,10 +57,6 @@ export function supportsUserThemes(protocolVersion: number | null): boolean {
 
 export function supportsExtensionSettings(protocolVersion: number | null): boolean {
 	return protocolVersion !== null && protocolVersion >= EXTENSION_SETTINGS_PROTOCOL_VERSION;
-}
-
-export function supportsPiPackages(protocolVersion: number | null): boolean {
-	return protocolVersion !== null && protocolVersion >= PI_PACKAGES_PROTOCOL_VERSION;
 }
 
 export function supportsFonts(protocolVersion: number | null): boolean {
@@ -451,10 +446,6 @@ export function initTransport(): WsTransport {
 
 	transport.subscribe(WS_CHANNELS.themesChanged, () => {
 		refreshUserThemes(useAppStore.getState().connectionGeneration);
-	});
-
-	transport.subscribe(WS_CHANNELS.packagesChanged, () => {
-		useAppStore.getState().bumpPackagesVersion();
 	});
 
 	transport.subscribe(WS_CHANNELS.fontsChanged, () => {

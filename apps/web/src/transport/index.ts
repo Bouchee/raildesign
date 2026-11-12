@@ -24,7 +24,6 @@ export {
 	supportsExtensionSettings,
 	supportsFonts,
 	supportsHostUpdateRun,
-	supportsPiPackages,
 	supportsPlanReview,
 	supportsPlanSummaryGeneration,
 	supportsRichAnchors,

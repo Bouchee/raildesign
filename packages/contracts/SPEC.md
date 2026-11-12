@@ -28,7 +28,7 @@ the palette ranks with — kept here so host-side search can rank with the same 
 
 ## Boundary
 
-- **Owns:** the wire — entity types, the `pi` event/message types (re-exported), the WS method & channel
+- **Owns:** the wire — entity types, application-owned session event/message types, the WS method & channel
   registries, and the protocol version. Including **`WsErrorCode`** — the closed set of failures the *host
   names* (`WsResponse.errorCode`, today `UNKNOWN_COMMIT`, `PUSH_AUTH_FAILED`,
   `NOT_GIT`, `ALREADY_OPEN` and `PROJECT_BOOTSTRAPPING` (the three `project.open` refusals: a folder that is
@@ -75,7 +75,7 @@ the palette ranks with — kept here so host-side search can rank with the same 
   (below) — the composer hands that prompt back to its draft instead of losing it.
   Everything else stays a plain `error` string. Expected method-specific outcomes remain typed method
   results rather than generic WS failures; no current-layout protocol exists.
-- **Public surface (`index.ts`):** `export type *` of `piProtocol` + `domain` + `nativeClient`
+- **Public surface (`index.ts`):** `export type *` of `sessionProtocol` + `domain` + `nativeClient`
   (`NativeUpdateState` / `NativeUpdateBridge`, `NativeWindowState` / `NativeWindowControlsBridge`,
   `NativeQuitHint` / `NativeCommand` / `NativeShortcutsBridge`, and
   `NativeNotificationInput` / `NativeNotificationBridge`, and `NativeMenuBridge` (translated native menu
@@ -123,7 +123,6 @@ the palette ranks with — kept here so host-side search can rank with the same 
   `fonts.installed` from `FONTS_PROTOCOL_VERSION`, v102, with `USER_FONTS_ROUTE`, `USER_FONT_UPLOAD_HEADER` and
   `USER_FONT_EXTENSIONS` naming the host's `/fonts/` route and its upload guard,
   `THEME_MODES`, `isThemeMode`, `isSystemThemePair`, `normalizeThemePreference`,
-  `parsePiPackageInput` (§ pi packages),
   `JBCENTRAL_QUOTA_REFRESH_SECONDS`, `isJbcentralQuotaRefreshSeconds`, `isJbcentralConnected`,
   `SESSION_RENAME_PROTOCOL_VERSION`, `SESSION_TITLE_MAX_LENGTH`, `normalizeSessionTitle`,
   `FIRST_PROMPT_MAX_LENGTH` + **`firstPromptHead(text)`** + **`firstPromptOfTexts(texts)`** +
@@ -144,13 +143,12 @@ the palette ranks with — kept here so host-side search can rank with the same 
   hides their turns, the host's history indexer skips their text; both consume the index slot so jump
   anchors stay aligned) from `domain`; **`isTranscriptMessageRole(role)`**
   and **`isSessionWorking(state)`** (running or idle on background work — the one working test every
-  badge and glance uses) from `piProtocol` (`isTranscriptMessageRole` is the one definition of which roles a transcript carries: the host filters
+  badge and glance uses) from `sessionProtocol` (`isTranscriptMessageRole` is the one definition of which roles a transcript carries: the host filters
   `session.getMessages` by it *and* `history` counts `messageIndex` by it, so two copies differing by a role
   would silently shift every later jump anchor); `export *` (value) of `wsProtocol`
   (`WS_METHODS`, `WS_CHANNELS`, the typed maps, `PROTOCOL_VERSION`, `WS_MAX_FRAME_BYTES`, and
   feature-introduction versions).
-- **Allowed deps:** none at runtime. **Type-only** devDeps on `@earendil-works/pi-ai` +
-  `@earendil-works/pi-agent-core`, imported **from their package roots** (type-only → erased at build).
+- **Allowed deps:** no runtime or Pi dependencies. Session wire types are owned here and do not import engine SDK types.
 - **Deployment obligation:** wire contracts describe host behavior and compatibility, never the launcher
   or deployment that supplies it. A feature's wire shape is shared by browser, desktop, and future clients.
   Separate type-only native client capabilities describe an optional shell-local bridge, not host WS
@@ -166,10 +164,8 @@ the palette ranks with — kept here so host-side search can rank with the same 
   `HostUpdateNotice` carries a closed CLI-host update lifecycle; protocol-gated `host.update` is an empty
   request that can start only the launcher's pre-bound updater. The browser never supplies a command, path,
   channel, version, URL, restart, or feed authority.
-- **Forbidden:** any *value* import of a `pi` package; **any** import (even `type`) of
-  `@earendil-works/pi-coding-agent` (pulls `node:fs`); the pi-ai **provider / API subpaths**
-  (`/providers/*`, `/api/*`, `/bedrock-provider`, … — they statically load the Node provider SDKs); and
-  importing `server` / `shared` / `web`.
+- **Forbidden:** importing engine packages (including type-only Pi imports), Node provider SDKs, or
+  `server` / `shared` / `web`.
 
 ## Contents
 
@@ -623,8 +619,7 @@ the palette ranks with — kept here so host-side search can rank with the same 
   (`git init` + commit, then open) + **`project.create`** (`{ parentPath, name, displayName? }` → the opened
   `Project`: make the folder `name` under `parentPath`, creating missing parents, then the same bootstrap as
   init, and name the project `displayName` — what the user typed — when it differs from the folder;
-  `ONBOARDING_PROTOCOL_VERSION` pins its v94 introduction together with `AppConfig.onboardingDismissed`
-  and `provider.detect`). **`PROJECT_CLONE_PROTOCOL_VERSION`** (v95) gates
+  `ONBOARDING_PROTOCOL_VERSION` pins its v94 introduction together with `AppConfig.onboardingDismissed`). **`PROJECT_CLONE_PROTOCOL_VERSION`** (v95) gates
   **`project.cloneDestination`** (`{ parentPath, name }` → `{ path }`, resolved absolute destination
   after host validation), **`project.clone`** (`{ operationId, url, parentPath, name, depth? }` →
   opened `Project`, or `null` after cancellation and cleanup), and **`project.cancelClone`**
@@ -778,8 +773,7 @@ the palette ranks with — kept here so host-side search can rank with the same 
   frames to the workspaces whose diff base that ref is, so their git-derived reads re-converge) / **`skills.state`** (`SkillCatalogEntry[]` — full catalog +
   per-skill `decision` + `group` — for a `workspaceId`) / **`extension.list`** (`ExtensionCatalogEntry[]`,
   no params — the host registry joined with `disabledExtensions`; v82, **`EXTENSION_CATALOG_PROTOCOL_VERSION`**;
-  there is no write method — the Settings switch writes `settings.update { disabledExtensions }`) / **`packages.*`**
-  (installed pi packages; v99, § pi packages below) / **`project.skills`** (the same, project-scoped, for
+  there is no write method — the Settings switch writes `settings.update { disabledExtensions }`) / **`project.skills`** (the same, project-scoped, for
   the pre-session manager) / **`session.reloadResources`** (re-scan skills + rebuild the system prompt for one
   running session; rejected while streaming) /
   `session.*` — `create`/`prompt`/`steer`/`followUp` (each input retains its `messageId`),
@@ -1110,81 +1104,6 @@ contracts only.
   not hold), `MCP_PATH_UNSAFE` (symlinked or non-regular project config path), `MCP_HANDLED_ELSEWHERE`,
   `LOGIN_NOT_OWNER`.
 
-## pi packages
-
-`PI_PACKAGES_PROTOCOL_VERSION` (100) gates the `packages.*` methods, the `packages.changed` channel and
-the `disabledPackages` setting. The DTOs describe what the host reads through pi's `DefaultPackageManager`
-and what it loaded, never pi's own types.
-
-- **`parsePiPackageInput(raw)`** (value export from `domain`) is the one reading of the Install field,
-  shared by the web dialog (echo, display name) and the host (`installPiPackage`, which receives the raw
-  text), so both agree by construction. It returns `{ source, local, bareName? }` and never throws: a
-  pasted `pi install [flags] <source>` line yields its source with `local: true` for `-l` / `--local`
-  (the dialog then selects the repository scope when one is available); a
-  `https://pi.dev/packages/<name>` or `https://[www.]npmjs.com/package/<name>[/v/<version>]` URL
-  (percent-encoded or not; a malformed encoding falls back to the raw text) yields `npm:<name>[@version]`;
-  a pasted command is read with shell quoting and backslash escapes (`pi install -l "./my tools"`,
-  `./my\ tools`) and names nothing when it has zero or several source words;
-  a bare npm spec (`@scope/name`, `name`, either with `@version`) yields `npm:…` with `bareName` set
-  unless it ends in an extension-file suffix (`.ts`, `.js`, …), which stays a path — the host prefers a
-  folder or file of that bare name when one exists next to the workspace, as pi's CLI would read it.
-  Everything else — `npm:` / `git:` / `builtin:` / `file:` sources, git URLs, absolute, `~` and
-  relative paths — is returned trimmed, so pi's own syntax keeps working unchanged. Deliberately not
-  inferred: `owner/repo` as a git shorthand (pi reads it as a path).
-
-- **`PiPackagesCatalog`** — `agentDir` and `settingsPath` (the effective pi folder; a client never hardcodes
-  `~/.pi/agent`), `projectSettingsPath` + `projectTrusted` when read for a workspace, then three groups:
-  `packages: PiPackageSummary[]` (one per declaration, with or without loadable resources; a
-  declaration with no install on disk has no `installedPath` and is the "Not installed" row; a user
-  declaration pi leaves aside because the repository declares the same identity is a row marked
-  `shadowed`), `loose: PiLooseExtension[]` (extensions pi discovers outside
-  any package — `<agentDir>/extensions`, `.pi/extensions`, explicit `extensions[]` entries) and `builtins:
-  PiBuiltinExtension[]` (the two pi built-ins the host runs, `mcp` and `tool-search`). There is no
-  "installing" row: installing is the Install dialog's request, and a source declared but absent from
-  disk is pi's to install at a chat's next load — until then it is listed as not installed so it can be
-  removed.
-- **`PiPackageSummary`** — `identity` (the host-wide switch key: npm by name, git by repo without ref, local
-  by resolved path — except a repository declaration's local source inside the worktree, keyed by the
-  repository (its main worktree) and the worktree-relative path so every worktree of the project shares
-  the switch and unrelated repositories do not; the host closes the switch
-  over pi's own equivalence, so switching off any declaration of a package switches off its aliases too), `source` **as declared** (`npm:@scope/pkg@1.2.0`, `../pkgs/tools`), `kind`, `scope`,
-  `name` / `version` / `description` from its `package.json`, `installedPath`, `switchKeys` (every
-  `disabledPackages` key that covers the package: its own `identity` and those of pi-equivalent
-  declarations — a client switching a package on removes them all, off adds `identity`), `enabled`
-  (the host's effective state: `false` when any of `switchKeys` is in `disabledPackages`; a client
-  renders it as is, never recomputes it), `shadowed` (a user declaration pi leaves aside because the
-  repository declares the same identity outright; a repository `autoload: false` override is a delta
-  over the user install, so its resources land on the user row and nothing is shadowed), and
-  `resources: PiPackageResource[]` — every extension, skill and prompt file (themes are terminal-only and
-  never listed) with pi's `enabled` (read-only here: a resource inside a package is switched with its
-  package), pi's `pi config` display name, and for an extension some loader has recorded the `tools`
-  and `commands` it registered or its load `error`. Every row
-  action names its target as `{ source, scope, workspaceId? }`: the same npm package may be declared at
-  user and project scope, and only the switch keys on `identity`.
-- Methods: **`packages.list { workspaceId? }`** (user scope alone without a workspace; repository
-  resources only when the project is pi-trusted) / **`packages.install { source, scope, workspaceId? }`**
-  (resolves to the new row with `enabled: true` — the host clears its `disabledPackages` entry — and is a
-  plain long request: the client sends a generous `timeoutMs`; a timeout does not mean failure, the
-  install may still complete on the host) / **`packages.remove`** / **`packages.update { packages }`**
-  (pi updates every declaration of an identity at both scopes together) / **`packages.checkUpdates`**
-  (the `{ source, scope }` declarations pi reports a newer version for — pi reports no target version
-  and skips pinned npm versions; `force` bypasses the host's short cache for the manual check) / **`packages.setResourceEnabled { path, type, scope, enabled }`**
-  (top-level resources only, written in pi's own format: a `±` pattern in the scope's resource array for
-  a loose file, `±builtin:<name>` in the scope that decides a built-in — the catalog's
-  `PiBuiltinExtension.scope`, which a client must send back; a resource inside a package is refused with
-  `PACKAGE_SOURCE_INVALID`) / **`packages.reveal { path }`**
-  (opens the install folder or a loose file's folder; the path must be in the current catalog). The
-  package switch is `settings.update { disabledPackages }`, converging on `settings.changed` like the
-  extension switches. **`packages.changed`** (no payload) tells an open page to re-list after an outside
-  edit, a chat load that installed something, or an update.
-- Error codes: `PACKAGE_SOURCE_INVALID` (also an unsupported `type` / `scope`, validated at the boundary),
-  `PACKAGE_OFFLINE` (npm/git only; local installs work offline), `PACKAGE_UNTRUSTED`, `PACKAGE_UNKNOWN`,
-  `PACKAGE_INSTALL_FAILED`, `PACKAGE_REMOVE_FAILED`, `PACKAGE_UPDATE_FAILED`,
-  `PACKAGE_SETTINGS_WRITE_FAILED`, and `PACKAGE_INSTALLED_UNLISTED` — the declaration was persisted but
-  the host could not produce the row; of the install codes only `PACKAGE_SOURCE_INVALID`,
-  `PACKAGE_OFFLINE`, `PACKAGE_UNTRUSTED`, `PACKAGE_INSTALL_FAILED` and `PACKAGE_SETTINGS_WRITE_FAILED`
-  are raised before anything is written, and a client may claim "nothing was added" only for those.
-
 ## Voice input
 
 `speech.ts` (re-exported from `index.ts`) is the wire for local dictation, from **`SPEECH_PROTOCOL_VERSION`**, v107:
@@ -1241,27 +1160,33 @@ answers that `record` (or `null` when none qualifies); *read* acknowledges every
 workspace and answers the changed `records`. Both cover disk-only sessions, never touch needs-input, and
 converge other clients through `session.state` pushes. A pre-v86 host offers neither, so clients hide them.
 
-The request registry also keeps `session.activityList` returning literal `[]` for one compatibility window,
-so an already-loaded old client clears retired markers after reconnect. No activity push or type returns.
+## Retired protocol paths
+
+Protocol v118 removes the seven `packages.*` methods, `packages.changed`, package-management DTOs,
+installer failure codes, and `AppConfig.disabledPackages`. The SDK extension catalog remains available
+through `extension.list`; extension switches write `disabledExtensions` through `settings.update`.
+
+The obsolete account methods `provider.detect`, `provider.loginStart`, `provider.logout`, and
+`provider.disableWarning`, plus `session.activityList`, are removed. `provider.loginReply` and
+`provider.loginCancel` retain their existing MCP OAuth request shapes. No replacement package installer
+or compatibility methods are introduced.
 
 ## Get right
 
 - **Mirrors are not version-pinned in comments.** A shape re-declared here because its real home is
-  Node-only carries *what* it mirrors, never *which pi version it was last checked against*: those
+  Node-only carries *what* it mirrors, never a stale engine-version marker: those
   markers had to be hand-edited across several files on every bump and nothing verified them. A
   UI-relevant lifecycle member must be explicit here (especially the host-enriched `agent_settled`, and
   `entry_appended`, which the host projects to `{ entryType }` so the UI can refresh stats);
   UI-irrelevant session events may remain unmodelled and ignored. Re-audit a
   mirror when a bump's changelog touches it, not because a comment names a version.
-- **Type-only, from the package roots, always** (type-only imports are erased by
-  `verbatimModuleSyntax`, so the web bundle stays provider-free; the pi-ai provider/API subpaths
-  statically import the Node SDKs — never touch them). The `/base` entries existed only in 0.79.8–0.79.9.
+- **Application-owned wire types:** neither type nor value imports may pull an engine SDK into
+  contracts. Server adapters project SDK output into the types exported here.
 - **Path fields carry a spelling contract** (architecture Decision 22). `Project.path` and
   `Workspace.worktreePath` are the host's resolved absolute spelling. Every workspace-relative `path`
   (`FileNode`, `GitFileChange`, `ReviewAnchor`, `ReviewReadingStep`, `WorkspaceFsChangedPayload.paths`) is
-  POSIX `/` and inside the worktree. Absolute paths pi reports (tool arguments, a transcript `cwd`) may use
+  POSIX `/` and inside the worktree. Absolute paths the host reports (tool arguments, a transcript `cwd`) may use
   either separator; consumers compare them only after normalizing.
-- `Model` is generic — expose as `Model<any>`.
 - `AssistantMessageEvent` (the streaming deltas) is nested under `message_update.assistantMessageEvent`,
   never a top-level event `type`.
 - Internal relative imports are **extensionless** (`./domain`), not `./domain.ts` — `composite` emits
@@ -1271,7 +1196,7 @@ so an already-loaded old client clears retired markers after reconnect. No activ
 
 ## Consumed by
 
-`web` (types + the runtime exports listed above) and `server` (same, + mapping `session.*` to `AgentSession` methods). The
+`web` (types + the runtime exports listed above) and `server` (same, + implementing the `session.*` host routes). The
 shell panels need `domain` + `wsProtocol`; application types + `SessionEvent` are the wire for the agent session.
 
 A parent resource catalogue may include commands from its direct children in the same workspace.
