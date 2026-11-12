@@ -859,6 +859,7 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 		<div data-testid="workspace-workbench" data-layout-status="settled" className="contents">
 			<Workbench
 				workspaceId={workspaceId}
+				worktreePath={workspace?.worktreePath ?? ""}
 				document={rendered.document}
 				attention={rendered.attention}
 				maxSideGroups={layoutPreferences.maxSideGroups}
