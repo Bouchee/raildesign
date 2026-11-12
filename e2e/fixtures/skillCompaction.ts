@@ -1,131 +1,44 @@
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { join } from "node:path";
-import { expect, type Page } from "@playwright/test";
-import { defaultSessionDirFor } from "@thinkrail/server/history-test-fixtures";
-import { waitForAgentSettled } from "./app";
-import { E2E_PI_AGENT_DIR } from "./paths";
+import type { ToolCall, TranscriptMessage, WireCompactionSummary } from "@thinkrail/contracts";
 
-export interface ToolCall {
-	name: string;
-	arguments: Record<string, unknown>;
+/** Transcript evidence helpers, independent of any runtime journal or compaction driver. */
+export function toolCalls(message: TranscriptMessage): ToolCall[] {
+	return message.role === "assistant"
+		? message.content.filter((part): part is ToolCall => part.type === "toolCall")
+		: [];
 }
-
-export interface SessionEntry {
-	type: string;
-	id: string;
-	firstKeptEntryId?: string;
-	summary?: string;
-	customType?: string;
-	content?: unknown;
-	message?: { role: string; content?: unknown };
-}
-
-export function toolCalls(entry: SessionEntry): ToolCall[] {
-	if (entry.type !== "message" || entry.message?.role !== "assistant") return [];
-	const content = entry.message.content;
-	if (!Array.isArray(content)) return [];
-	return content.filter((part): part is ToolCall & { type: string } => part?.type === "toolCall");
-}
-
 function texts(content: unknown): string[] {
 	if (typeof content === "string") return [content];
 	if (!Array.isArray(content)) return [];
-	return content.map((part) => String(part?.text ?? ""));
+	return content.flatMap((part) =>
+		part?.type === "text" && typeof part.text === "string" ? [part.text] : [],
+	);
 }
-
-export function assistantText(entry: SessionEntry): string {
-	if (entry.type !== "message" || entry.message?.role !== "assistant") return "";
-	return texts(entry.message.content).join("");
+export function assistantText(message: TranscriptMessage): string {
+	return message.role === "assistant" ? texts(message.content).join("") : "";
 }
-
-export function isSkillLoad(entry: SessionEntry, skill: string): boolean {
+/** Counts explicit expansions and file-read attempts; it is not evidence that a model followed a Skill. */
+export function isSkillLoad(message: TranscriptMessage, skill: string): boolean {
 	const block = `<skill name="${skill}"`;
-	if (entry.type === "message" && entry.message?.role === "user")
-		return texts(entry.message.content).some((text) => text.startsWith(block));
-	if (entry.type === "custom_message") return texts(entry.content).some((t) => t.includes(block));
-	const path = new RegExp(`${skill}[/\\\\]SKILL\\.md$`);
-	return toolCalls(entry).some(
-		(call) => call.name === "read" && path.test(String(call.arguments.path ?? "")),
+	if (message.role === "user")
+		return texts(message.content).some((text) => text.trimStart().startsWith(block));
+	if (message.role === "custom") return texts(message.content).some((text) => text.includes(block));
+	return toolCalls(message).some(
+		(call) =>
+			call.name === "read" &&
+			typeof call.arguments.path === "string" &&
+			call.arguments.path.replaceAll("\\", "/").endsWith(`/${skill}/SKILL.md`),
 	);
 }
-
-export function readSession(worktreePath: string): SessionEntry[] {
-	const dirs = [worktreePath, realpathSync(worktreePath)].map((cwd) =>
-		defaultSessionDirFor(E2E_PI_AGENT_DIR, cwd),
-	);
-	const files = dirs
-		.filter((dir) => existsSync(dir))
-		.flatMap((dir) =>
-			readdirSync(dir)
-				.filter((name) => name.endsWith(".jsonl"))
-				.map((name) => join(dir, name)),
-		)
-		.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
-	if (files.length === 0) throw new Error(`No pi session file under ${dirs.join(" or ")}`);
-	return readFileSync(files[0] as string, "utf8")
-		.split("\n")
-		.filter(Boolean)
-		.map((line) => JSON.parse(line) as SessionEntry);
-}
-
 export interface CompactionSplit {
-	before: SessionEntry[];
-	after: SessionEntry[];
-	compaction: SessionEntry;
-	skillLoadsKept: number;
-	skillLoadsCompactedAway: number;
+	before: TranscriptMessage[];
+	after: TranscriptMessage[];
+	compaction: WireCompactionSummary;
 }
-
-export function splitAtCompaction(entries: SessionEntry[], skill: string): CompactionSplit {
-	const index = entries.findLastIndex((e) => e.type === "compaction");
-	if (index < 0) throw new Error("The session recorded no compaction");
-	const compaction = entries[index] as SessionEntry;
-	const kept = entries.findIndex((e) => e.id === compaction.firstKeptEntryId);
-	const loads = entries.flatMap((e, i) => (i < index && isSkillLoad(e, skill) ? [i] : []));
-	return {
-		before: entries.slice(0, index),
-		after: entries.slice(index + 1),
-		compaction,
-		skillLoadsKept: loads.filter((i) => i >= kept).length,
-		skillLoadsCompactedAway: loads.filter((i) => i < kept).length,
-	};
-}
-
-export async function ask(page: Page, text: string): Promise<void> {
-	await page.getByTestId("chat-input").fill(text);
-	await page.getByTestId("chat-send").click();
-	await expect(page.getByTestId("chat-scroll")).toHaveAttribute("data-streaming", "true", {
-		timeout: 60_000,
-	});
-	await waitForAgentSettled(page, 240_000);
-}
-
-export async function compact(page: Page, worktreePath: string): Promise<void> {
-	const compactions = () => readSession(worktreePath).filter((e) => e.type === "compaction").length;
-	const failed = page.locator('[data-testid="compaction-notice"][data-status="failed"]');
-	const [before, failedBefore] = [compactions(), await failed.count()];
-	await page.getByTestId("chat-input").fill("/compact");
-	await page.getByTestId("chat-send").click();
-	await expect
-		.poll(async () => compactions() > before || (await failed.count()) > failedBefore, {
-			timeout: 180_000,
-		})
-		.toBe(true);
-	if (compactions() === before)
-		throw new Error(`Compaction failed: ${await failed.last().textContent()}`);
-	await expect(page.getByTestId("chat-scroll")).toHaveAttribute("data-streaming", "false");
-}
-
-// Pi keeps the newest ~20K tokens verbatim; a reference message this large pushes every earlier skill
-// load past the next compaction cut without overriding compaction settings or relying on tool use.
-export async function pushPastCompactionTail(page: Page): Promise<void> {
-	const tag = crypto.randomUUID().slice(0, 8);
-	const lines = Array.from(
-		{ length: 2_000 },
-		(_, i) => `${tag}-${i} alpha bravo charlie delta echo foxtrot golf hotel`,
-	);
-	await ask(
-		page,
-		`Reply with only the word OK. Reference log, no action needed:\n${lines.join("\n")}`,
-	);
+/** The committed retained cut belongs to the compaction transaction, not this visible summary. */
+export function splitAtCompaction(messages: readonly TranscriptMessage[]): CompactionSplit {
+	const index = messages.findLastIndex((message) => message.role === "compactionSummary");
+	const compaction = messages[index];
+	if (compaction?.role !== "compactionSummary")
+		throw new Error("The transcript recorded no compaction summary");
+	return { before: messages.slice(0, index), after: messages.slice(index + 1), compaction };
 }

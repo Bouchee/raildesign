@@ -22,7 +22,7 @@ import {
 } from "./types.ts";
 
 // Deliberate local mirror of @thinkrail/shared's WORKSPACE_CONTEXT_DIR — core/ takes no @thinkrail/* dep (see core/SPEC.md).
-const CONTEXT_DIR = ".thinkrail/context";
+const CONTEXT_DIR = ".raildesign/context";
 
 export const STORE_DIR = `${CONTEXT_DIR}/todos`;
 

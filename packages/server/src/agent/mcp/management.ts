@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
-import { getAgentDir, type McpServerConfig } from "@earendil-works/pi-coding-agent";
 import type { McpProjectOverride, McpServerScope } from "@thinkrail/contracts";
 import { CodedError } from "@thinkrail/shared/codedError";
+import { dataDir } from "../../persistence";
 import {
 	fingerprintMcpEntry,
 	globalMcpConfigPath,
@@ -12,6 +12,7 @@ import {
 	projectMcpConfigPath,
 	validateMcpServerConfig,
 } from "./config";
+import type { McpServerConfig } from "./types";
 import {
 	addMcpServerConfig,
 	assertProjectMcpConfigWritable,
@@ -26,13 +27,13 @@ export function effectiveMcpServerConfig(options: {
 	policy: McpProjectPolicy;
 	name: string;
 }): McpServerConfig | undefined {
-	return loadHostMcpConfig({ ...options, agentDir: getAgentDir() }).servers.find(
+	return loadHostMcpConfig({ ...options, agentDir: dataDir() }).servers.find(
 		(server) => server.name === options.name,
 	)?.config;
 }
 
 function configPath(scope: McpServerScope, worktree: string): string {
-	if (scope === "user") return globalMcpConfigPath(getAgentDir());
+	if (scope === "user") return globalMcpConfigPath(dataDir());
 	const path = projectMcpConfigPath(worktree);
 	try {
 		assertProjectMcpConfigWritable(worktree, path);
@@ -103,8 +104,7 @@ export function mcpEntryFingerprint(
 	worktree: string,
 	name: string,
 ): string | undefined {
-	const path =
-		scope === "user" ? globalMcpConfigPath(getAgentDir()) : projectMcpConfigPath(worktree);
+	const path = scope === "user" ? globalMcpConfigPath(dataDir()) : projectMcpConfigPath(worktree);
 	const entry = readRawEntry(path, name);
 	return entry === undefined ? undefined : fingerprintMcpEntry(name, entry);
 }
@@ -116,7 +116,7 @@ export function shareMcpOverrideWithRepo(options: {
 	approvedFingerprint: string | undefined;
 }): string {
 	const { name } = options;
-	const userEntry = readEntry(globalMcpConfigPath(getAgentDir()), name);
+	const userEntry = readEntry(globalMcpConfigPath(dataDir()), name);
 	if (!userEntry || isOverrideEntry(userEntry)) {
 		throw invalid(`"${name}" is no longer defined in your mcp.json — nothing to share.`);
 	}
@@ -124,7 +124,7 @@ export function shareMcpOverrideWithRepo(options: {
 	const existing = readRawEntry(path, name);
 	if (existing !== undefined && (!isRecord(existing) || !isOverrideEntry(existing))) {
 		throw invalid(
-			`The repository's .pi/mcp.json already defines "${name}" — edit that entry instead.`,
+			`The repository's .raildesign/mcp.json already defines "${name}" — edit that entry instead.`,
 		);
 	}
 	if (

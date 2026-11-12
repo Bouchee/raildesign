@@ -38,7 +38,7 @@ export const PIERRE_BASE_SYNTAX: Syntax = {
 };
 
 export const THINKRAIL_PIERRE_THEME: Theme = {
-	name: "thinkrail-css-variables",
+	name: "raildesign-css-variables",
 	appearance: "dark",
 	cssVariables: {
 		prefix: "--code-",

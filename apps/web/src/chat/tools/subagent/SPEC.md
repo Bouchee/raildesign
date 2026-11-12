@@ -11,6 +11,8 @@ tags: [chat, subagents]
 
 ## Responsibility
 
+Transcript navigation is optional. A renderer exposes its transcript button only when its `ChatActions` supplies `openSubagentTranscript`; the stage 1 chat composition supplies no subagent execution or transcript reader.
+
 Presentational renderers for the **`pi-subagents`** capability, joined by tool name: `AgentCard` (the
 `Agent` tool — also registered for `get_subagent_result`, whose result carries the same
 `DelegationRunDetails`), and the pure `runDetails` module (defensive `DelegationRunDetails` readers,

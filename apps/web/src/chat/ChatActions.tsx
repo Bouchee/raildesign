@@ -27,9 +27,9 @@ export interface WorkspaceChatTarget {
 export interface ChatActions {
 	cancelAutomaticReveal: () => void;
 	focusComposer: () => void;
-	openSubagentTranscript: (childSessionId: string) => void;
+	openSubagentTranscript?: ((childSessionId: string) => void) | undefined;
 	respondToTool: (toolCallId: string, response: unknown) => Promise<void>;
-	resultOpener: (target: ResultTarget) => (() => void) | undefined;
+	resultOpener?: ((target: ResultTarget) => (() => void) | undefined) | undefined;
 	markResultSeen?: ((target: ResultTarget) => void) | undefined;
 	revealChatElement: (element: HTMLElement, options: ChatRevealOptions) => void;
 	readMcpOutput?: ((toolCallId: string) => Promise<McpReadOutputResult>) | undefined;

@@ -1,7 +1,4 @@
-import { randomUUID } from "node:crypto";
-import { realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { realpathSync } from "node:fs";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import type { ToolCall } from "@thinkrail/contracts";
 import {
@@ -76,114 +73,96 @@ function truncatedPreview(path: string): string {
 	return `Warning: truncated output (original token count: 7500)\nTotal output lines: 2001\n\nline of output\nline of output\n…29970 chars truncated…line of output\nEND OF FULL OUTPUT\n\n[Full output: ${path} (read it with offset/limit)]`;
 }
 
-test("MCP results render as cards with structured content, Full output and a sign-in action", async ({
+test("historical MCP cards preserve structured content without unavailable execution actions", async ({
 	page,
 }) => {
-	const fullOutput = join(tmpdir(), `thinkrail-e2e-mcp-${randomUUID()}.txt`);
-	const expiredOutput = join(tmpdir(), `thinkrail-e2e-mcp-gone-${randomUUID()}.txt`);
-	writeFileSync(fullOutput, `${"line of output\n".repeat(2_000)}END OF FULL OUTPUT\n`);
-	try {
-		await openSeededCalls(page, "MCP cards", [
-			{
-				id: "mcp-rich",
-				name: "mcp__fixture__rich",
-				args: { verbose: true },
-				content: [
-					{ type: "text", text: "rich result" },
-					{ type: "image", data: PIXEL, mimeType: "image/png" },
-					{ type: "text", text: '[Resource file:///notes/a.md "a.md" (text/markdown)]' },
-				],
-				details: {
-					server: "fixture",
-					tool: "rich",
-					thinkrail: {
-						blocks: [
-							{ kind: "text", chars: 11 },
-							{ kind: "image", mimeType: "image/png" },
-							{
-								kind: "resource_link",
-								uri: "file:///notes/a.md",
-								name: "a.md",
-								mimeType: "text/markdown",
-							},
-						],
-						structuredContent: { rows: [{ id: 1, title: "first" }] },
-					},
+	const fullOutput = "/tmp/historical-mcp-output.txt";
+	const expiredOutput = "/tmp/historical-mcp-expired-output.txt";
+	await openSeededCalls(page, "MCP cards", [
+		{
+			id: "mcp-rich",
+			name: "mcp__fixture__rich",
+			args: { verbose: true },
+			content: [
+				{ type: "text", text: "rich result" },
+				{ type: "image", data: PIXEL, mimeType: "image/png" },
+				{ type: "text", text: '[Resource file:///notes/a.md "a.md" (text/markdown)]' },
+			],
+			details: {
+				server: "fixture",
+				tool: "rich",
+				thinkrail: {
+					blocks: [
+						{ kind: "text", chars: 11 },
+						{ kind: "image", mimeType: "image/png" },
+						{
+							kind: "resource_link",
+							uri: "file:///notes/a.md",
+							name: "a.md",
+							mimeType: "text/markdown",
+						},
+					],
+					structuredContent: { rows: [{ id: 1, title: "first" }] },
 				},
 			},
-			{
-				id: "mcp-big",
-				name: "mcp__fixture__big",
-				args: {},
-				content: [{ type: "text", text: truncatedPreview(fullOutput) }],
-				details: {
-					server: "fixture",
-					tool: "big",
-					fullOutputPath: fullOutput,
-					thinkrail: { blocks: [{ kind: "text", chars: 30_018 }] },
-				},
+		},
+		{
+			id: "mcp-big",
+			name: "mcp__fixture__big",
+			args: {},
+			content: [{ type: "text", text: truncatedPreview(fullOutput) }],
+			details: {
+				server: "fixture",
+				tool: "big",
+				fullOutputPath: fullOutput,
+				thinkrail: { blocks: [{ kind: "text", chars: 30_018 }] },
 			},
-			{
-				id: "mcp-big-expired",
-				name: "mcp__fixture__big",
-				args: {},
-				content: [{ type: "text", text: truncatedPreview(expiredOutput) }],
-				details: { server: "fixture", tool: "big", fullOutputPath: expiredOutput },
-			},
-			{
-				id: "mcp-sign-in",
-				name: "mcp__linear__search_issues",
-				args: { query: "login bug", limit: 5 },
-				content: [{ type: "text", text: SIGN_IN_TEXT }],
-				details: {},
-				isError: true,
-			},
-		]);
+		},
+		{
+			id: "mcp-big-expired",
+			name: "mcp__fixture__big",
+			args: {},
+			content: [{ type: "text", text: truncatedPreview(expiredOutput) }],
+			details: { server: "fixture", tool: "big", fullOutputPath: expiredOutput },
+		},
+		{
+			id: "mcp-sign-in",
+			name: "mcp__linear__search_issues",
+			args: { query: "login bug", limit: 5 },
+			content: [{ type: "text", text: SIGN_IN_TEXT }],
+			details: {},
+			isError: true,
+		},
+	]);
 
-		const rich = await expandStep(page, "mcp-rich");
-		const richCard = rich.getByTestId("tool-mcp");
-		await expect(richCard).toHaveAttribute("data-server", "fixture");
-		await expect(richCard).toHaveAttribute("data-mcp-tool", "rich");
-		await expect(richCard.getByTestId("mcp-output")).toContainText("rich result");
-		await expect(rich.getByTestId("tool-result-image-thumbnail")).toHaveCount(1);
-		await expect(richCard.locator("img")).toHaveCount(0);
-		await richCard.getByTestId("mcp-structured-toggle").click();
-		await expect(richCard.getByTestId("mcp-json-tree")).toContainText('"first"');
-		await shot(rich, "mcp-tool-cards", "rich-structured");
+	const rich = await expandStep(page, "mcp-rich");
+	const richCard = rich.getByTestId("tool-mcp");
+	await expect(richCard).toHaveAttribute("data-server", "fixture");
+	await expect(richCard).toHaveAttribute("data-mcp-tool", "rich");
+	await expect(richCard.getByTestId("mcp-output")).toContainText("rich result");
+	await expect(rich.getByTestId("tool-result-image-thumbnail")).toHaveCount(1);
+	await expect(richCard.locator("img")).toHaveCount(0);
+	await richCard.getByTestId("mcp-structured-toggle").click();
+	await expect(richCard.getByTestId("mcp-json-tree")).toContainText('"first"');
+	await shot(rich, "mcp-tool-cards", "rich-structured");
 
-		const big = await expandStep(page, "mcp-big");
-		await big.getByTestId("mcp-full-output").click();
-		const dialog = page.getByTestId("mcp-full-output-dialog");
-		await expect(dialog.getByTestId("mcp-full-output-text")).toContainText("END OF FULL OUTPUT");
-		await expect(dialog.getByTestId("mcp-full-output-truncated")).toHaveCount(0);
-		await shot(dialog, "mcp-tool-cards", "full-output");
-		await page.keyboard.press("Escape");
-		await expect(dialog).toBeHidden();
-		await expect(big.getByTestId("mcp-full-output")).toBeFocused();
-		await shot(big, "mcp-tool-cards", "truncated-result");
+	const big = await expandStep(page, "mcp-big");
+	await expect(big.getByTestId("mcp-output")).toContainText("29970 chars truncated");
+	await expect(big.getByTestId("mcp-output")).toContainText("END OF FULL OUTPUT");
+	await expect(big.getByTestId("mcp-full-output")).toHaveCount(0);
+	await shot(big, "mcp-tool-cards", "truncated-result");
 
-		const expired = await expandStep(page, "mcp-big-expired");
-		await expired.getByTestId("mcp-full-output").click();
-		await expect(dialog.getByTestId("mcp-full-output-unavailable")).toHaveAttribute(
-			"data-reason",
-			"expired",
-		);
-		await shot(dialog, "mcp-tool-cards", "full-output-expired");
-		await page.keyboard.press("Escape");
-		await expect(dialog).toBeHidden();
+	const expired = await expandStep(page, "mcp-big-expired");
+	await expect(expired.getByTestId("mcp-output")).toContainText("29970 chars truncated");
+	await expect(expired.getByTestId("mcp-full-output")).toHaveCount(0);
 
-		const signIn = await expandStep(page, "mcp-sign-in");
-		await expect(signIn).toHaveAttribute("data-status", "error");
-		await expect(signIn.getByTestId("tool-mcp")).toHaveAttribute("data-server", "linear");
-		await expect(signIn.getByTestId("mcp-output")).toHaveAttribute("data-failed", "true");
-		await shot(signIn, "mcp-tool-cards", "sign-in");
-		await signIn.getByTestId("mcp-cli-action").click();
-		await expect(page.getByTestId("settings-dialog")).toBeVisible();
-		await expect(page.getByTestId("settings-mcp")).toBeVisible();
-		await expect(page.getByTestId("settings-nav-mcp")).toHaveAttribute("data-active", "true");
-	} finally {
-		rmSync(fullOutput, { force: true });
-	}
+	const signIn = await expandStep(page, "mcp-sign-in");
+	await expect(signIn).toHaveAttribute("data-status", "error");
+	await expect(signIn.getByTestId("tool-mcp")).toHaveAttribute("data-server", "linear");
+	await expect(signIn.getByTestId("mcp-output")).toHaveAttribute("data-failed", "true");
+	await shot(signIn, "mcp-tool-cards", "sign-in");
+	await expect(signIn.getByTestId("mcp-output")).toContainText("requires sign-in");
+	await expect(signIn.getByTestId("mcp-cli-action")).toHaveCount(0);
 });
 
 test("provider-backed MCP failures open Providers rather than MCP OAuth", async ({ page }) => {
@@ -291,9 +270,8 @@ test("resource listings, resource reads and tool_search render as their own card
 	await expect(all.getByTestId("mcp-card-header")).toContainText("All servers");
 	await expect(all.getByTestId("mcp-listed-item")).toHaveCount(2);
 	await expect(all.getByTestId("mcp-listed-server")).toHaveText(["docs", "wiki"]);
-	await expect(all.getByTestId("mcp-listing-error").getByTestId("mcp-cli-action")).toHaveText(
-		"Sign in",
-	);
+	await expect(all.getByTestId("mcp-listing-error")).toContainText("requires sign-in");
+	await expect(all.getByTestId("mcp-listing-error").getByTestId("mcp-cli-action")).toHaveCount(0);
 	await shot(all, "mcp-tool-cards", "list-resources");
 
 	const truncated = await expandStep(page, "list-templates-truncated");

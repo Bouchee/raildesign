@@ -4,19 +4,19 @@ import type { ElectrobunConfig } from "electrobun";
 // Hutch reads `build.bun.version` like the other toolchain versions, but ElectrobunConfig does not type
 // it, so the literal is kept out of the excess-property check. It must match the root packageManager pin.
 const bun = { entrypoint: "src/index.ts", version: "1.4.4" };
-const MICROPHONE_USAGE = "ThinkRail uses the microphone only while you dictate with voice input.";
+const MICROPHONE_USAGE = "RailDesign uses the microphone only while you dictate with voice input.";
 
 export default {
 	app: {
-		name: "ThinkRail",
-		identifier: "ai.thinkrail.app",
+		name: "RailDesign",
+		identifier: "io.github.bouchee.raildesign",
 		version,
 	},
 	runtime: {
 		exitOnLastWindowClosed: true,
 	},
 	release: {
-		baseUrl: "https://github.com/JetBrains/thinkrail/releases/download/desktop-updates",
+		baseUrl: "https://github.com/Bouchee/thinkrail/releases/download/desktop-updates",
 		generatePatch: false,
 	},
 	build: {

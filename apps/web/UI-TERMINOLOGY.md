@@ -262,7 +262,7 @@ Row / message renderers (all in `chat/turns.tsx` unless noted):
 | Retry Indicator | `RetryIndicator` | `retry-indicator` | `retry` | Retry countdown (turn / summarization) |
 | Tool Card | `chat/ToolCard.tsx` → `ToolCard` | `tool-card` (`-toggle`) | `tool` | A primary tool call (collapsible frame) |
 | Activity Group | `chat/ActivityGroup.tsx` → `ActivityGroup` | — | `activity` | Folded run of routine steps ("N steps · …") |
-| Ext-UI Prompt | `chat/ExtUiPrompt.tsx` → `ExtUiPrompt` | `ext-ui-prompt` | — | An extension's in-chat question (`pi.extensionUi` dialog): on its tool's card, else docked above the composer |
+| Ext-UI Prompt | `chat/ExtUiPrompt.tsx` → `ExtUiPrompt` | `ext-ui-prompt` | — | An extension's in-chat question (`session.interaction` dialog): on its tool's card, else docked above the composer |
 | Turn Divider | `TurnDivider` | `turn-divider` / `turn-divider-<id>` | `divider` | Round-end summary + artifact chips |
 | — Artifact Chip | `ArtifactChip` | `turn-divider-specs` / `turn-divider-files` | — | "N specs" / "N files changed" deep-link/disclosure; with a host turn receipt the files chip reads `N files changed · +a −r` |
 | — Artifact List | `ArtifactList` | `<testid>-list` / `-list-item` | — | Expanded per-path list (per-file `+/−` from the receipt) |

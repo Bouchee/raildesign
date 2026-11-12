@@ -125,7 +125,7 @@ test("system appearance observation defaults light and cleans up its listener", 
 });
 
 test("theme hints migrate legacy ids and use the native stable adapter", () => {
-	const HINT_KEY = "thinkrail-theme";
+	const HINT_KEY = "raildesign-theme";
 	const stored = new Map<string, string>([[HINT_KEY, "light"]]);
 	Reflect.set(globalThis, "__THINKRAIL_STABLE_PREFERENCES__", {
 		getItem: (key: string) => stored.get(key) ?? null,
@@ -231,7 +231,7 @@ test("only the user themes the hint needs are cached and reinstalled before the 
 		expect(ids).not.toContain("user.forest");
 		expect(getUserThemeIssues()).toEqual([]);
 		writeThemeHint({ theme: "dark", themeMode: "fixed" });
-		expect(stored.has("thinkrail-user-themes")).toBe(false);
+		expect(stored.has("raildesign-user-themes")).toBe(false);
 	} finally {
 		Reflect.deleteProperty(globalThis, "__THINKRAIL_STABLE_PREFERENCES__");
 	}
@@ -266,7 +266,7 @@ test("an unsupported host clears user themes, and an oversized cache is dropped,
 			},
 		]);
 		writeThemeHint({ theme: "user.huge", themeMode: "fixed" });
-		expect(stored.has("thinkrail-user-themes")).toBe(false);
+		expect(stored.has("raildesign-user-themes")).toBe(false);
 		expect(getThemes().map((theme) => theme.id)).toContain("user.huge");
 		clearUserThemes();
 		expect(getThemes().map((theme) => theme.id)).not.toContain("user.huge");

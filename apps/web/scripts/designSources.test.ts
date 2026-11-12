@@ -5,7 +5,7 @@ import { dirname, join, relative } from "node:path";
 import { designSourceFiles, designSourceLabel } from "./designSources";
 
 test("token adoption scans app, shared UI, and every extension web half only", () => {
-	const root = mkdtempSync(join(tmpdir(), "thinkrail-design-sources-"));
+	const root = mkdtempSync(join(tmpdir(), "raildesign-design-sources-"));
 	const included = [
 		"apps/web/src/index.css",
 		"apps/web/src/chat/Markdown.tsx",

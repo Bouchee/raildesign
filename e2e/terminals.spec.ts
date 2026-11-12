@@ -44,7 +44,7 @@ test("a workspace opens a terminal automatically, rooted in the worktree, with w
 
 test("a shell start failure explains recovery and retries the same tab", async ({ page }) => {
 	const failure =
-		"Couldn’t start PowerShell 7 (pwsh.exe). Make sure it is installed and available to ThinkRail.";
+		"Couldn’t start PowerShell 7 (pwsh.exe). Make sure it is installed and available to RailDesign.";
 	let attachFailuresRemaining = 0;
 	let holdNextSuccess = false;
 	let heldSuccessId: string | undefined;

@@ -19,7 +19,7 @@ import {
 	inspectCloneDestination,
 	startProjectClone,
 } from "./clone";
-import { getProjects, setPiTrustSeed, setProjectPublisher } from "./projects";
+import { getProjects, setProjectPathGuard, setProjectPublisher } from "./projects";
 
 let root: string;
 let source: string;
@@ -55,7 +55,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	setProjectPublisher(null);
-	setPiTrustSeed(null);
+	setProjectPathGuard(null);
 	for (const [key, value] of Object.entries({
 		THINKRAIL_DATA_DIR: savedData,
 		GIT_CONFIG_GLOBAL: savedGlobal,
@@ -75,7 +75,7 @@ test("clones a complete repository and opens it exactly once without granting tr
 	const project = await cloneProject({ url, parentPath: root, name: "copy" });
 	if (!project) throw new Error("Clone unexpectedly cancelled");
 	expect(project.path).toBe(path);
-	expect(project?.piResourceTrust).toBe("untrusted");
+	expect(project?.resourceTrust).toBe("untrusted");
 	expect(published).toEqual([project]);
 	expect(getProjects()).toEqual([project]);
 	expect(git(path, "remote", "get-url", "origin")).toBe(url);
@@ -235,8 +235,8 @@ test("concurrent requests cannot overwrite the same destination", async () => {
 });
 
 test("a project-opening failure preserves the successful checkout", async () => {
-	setPiTrustSeed(() => {
-		throw new Error("registration failed");
+	setProjectPathGuard((path) => {
+		if (existsSync(join(path, ".git"))) throw new Error("registration failed");
 	});
 	await expect(cloneProject({ url, parentPath: root, name: "preserved" })).rejects.toThrow(
 		"registration failed",

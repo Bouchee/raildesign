@@ -200,7 +200,7 @@ export function WelcomePanel() {
 							hasProvider={hasProvider}
 							onConnected={(p) =>
 								setJustConnected({
-									provider: connectedProviderName(p, t),
+									provider: connectedProviderName(p),
 									models: null,
 									defaultModel: null,
 								})

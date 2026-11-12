@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { type GeneratedFile, isStale } from "./generatedFiles";
 
 const committed = (content: string): GeneratedFile => {
-	const path = join(mkdtempSync(join(tmpdir(), "thinkrail-generated-")), "generated.css");
+	const path = join(mkdtempSync(join(tmpdir(), "raildesign-generated-")), "generated.css");
 	writeFileSync(path, content);
 	return { path, content };
 };

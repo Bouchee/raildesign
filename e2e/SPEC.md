@@ -11,17 +11,22 @@ tags: [testing, playwright, e2e]
 
 ## Responsibility
 
-The real-browser system gate for ThinkRail's host/UI integration: build the shipped web client, boot an
+The real-browser system gate for RailDesign's host/UI integration: build the shipped web client, boot an
 isolated host, seed real git and persistence fixtures, drive Chromium (and WebKit for the questionnaire
 specs) through the wire, and clean up every machine-global resource it used. The default suite excludes provider-backed `@agent` tests; those remain
 explicit, authenticated, on-demand runs.
 
 ## Execution model
 
+Synthetic `session.event` replays allocate sequence numbers in the same order as their emitted steps. Sequence numbers increase across successive replays of one session; each session has its own counter. Start events precede deltas and the matching final message retains its stable ID. Sampling assertions retain their geometry and minimum-observation thresholds rather than compensating for replay events discarded by the client's sequence watermark.
+
+Dialog containment retries the complete bounds/text/overflow measurement for at most two seconds after resize. This lets the dictation overlay's resize observer run its scheduled animation frame; containment tolerances and all geometric assertions remain unchanged. Persistent overflow still fails.
+
 Per-test isolation is `resetState()` in `fixtures/app.ts`: it clears the host's `projects.json`,
-`workspaces.json`, every chat in `chats.json` and the `chats/` folders, turns, reviews, worktrees and pi
+`workspaces.json`, every chat in `chats.json` and the `chats/` folders, turns, reviews, worktrees and application JSON
 sessions, and resets the fixture repository, so a chat without a project created by one test never
-reaches the next. The Chats container the host ensured at boot is kept (an empty `chats/` root and the
+reaches the next. Cleanup first disposes owned session IDs through the real wire without parsing historical fixture
+content. Normal session reads stay strict. The Chats container the host ensured at boot is kept (an empty `chats/` root and the
 record), because a fresh install always has it: a cold start in a test is the cold start a user gets.
 
 `bun run e2e` is the complete no-agent gate. It builds the web bundle once and runs machine-adaptive,
@@ -56,12 +61,12 @@ available and abrupt owner exit releases it. A private inherited owner marker ma
 reuse the parent's assertion rather than multiplying helper processes. Other operating systems are a no-op,
 and a macOS host that cannot establish the assertion fails before spending test time.
 Direct no-agent use of the Playwright config remains self-contained and builds the web app when the shard
-runner has not already done so. Real-Central execution enters through the public `e2e:agent` or `e2e:full`
-runner; direct Central-mode test execution is rejected (while `--list` remains available), because the public
+runner has not already done so. Real SDK execution enters through the public `e2e:agent` or `e2e:full`
+runner; direct live-mode test execution is rejected (while `--list` remains available), because the public
 runner must own the build before giving Playwright its credential-stripped environment. Standalone agent
 runs always build outside `--list`; ambient skip-build cannot suppress that phase. Only the full runner's
 post-build internal readiness marker may select the already-built agent plan. The plan then adds both
-skip-build and a dedicated Central-runner authorization marker to the Playwright environment; Central
+skip-build and a dedicated live-runner authorization marker to the Playwright environment; live
 execution requires both, so skip-build alone cannot bypass the public runner. A focused `e2e:full` invocation
 lists the selection independently in no-agent and agent mode, runs only phases with selected tests, and fails
 when neither mode selected anything; the argument-free full gate and its two-phase `--list` behavior stay
@@ -82,18 +87,13 @@ chords read the page's browser-reported platform through one fixture helper and 
 Control elsewhere; hard-coding the runner host's modifier would exercise the wrong product branch under
 browser/platform emulation.
 
-Provider-backed browser tests (`e2e:agent`) use a dedicated serial real-Central mode; the separate
-headless workflow suite keeps its local PI-auth mode. Concurrent provider turns would alter rate limits,
-cost, and determinism, so neither is sharded. The agent runner builds the web artifact under the caller's
-normal environment, then removes PI's complete ambient provider/cloud credential environment surface before
-starting Playwright or any host. The hosts also receive the same complete hermetic `PATH` as the default
-suite. This split is load-bearing: build
-tooling may need developer-installed executables and caller environment, while exact-model preflight must
-prove Central without an API key, token, Google ADC/project/location, or AWS profile/key/token/container/
-web-identity/config source making another provider available. A drift canary derives every uppercase
-environment literal from pi-ai's pinned credential-discovery distribution and requires it in the denylist;
-defensive cloud-source extras remain even when that distribution does not currently name them. No host may
-discover a real `central`, `pi`, or editor executable. The compiled-binary and
+Provider-backed browser tests (`e2e:agent`) use one serial SDK host and the accepted OpenCode Go /
+`deepseek-v4.1-flash` model. The public runner builds first, strips ambient model credentials, then
+loads its explicitly supplied owner-readable temporary configuration and injects that one live key.
+No Central extension, pi credential reader or fake OAuth provider is initialized. The host uses the
+same hermetic executable path as the default suite. The separate `test:workflow-helpers` lane runs
+pure helpers without browser global setup/teardown or model calls; it is not live workflow acceptance.
+The compiled-binary and
 packaged-desktop suites remain distinct artifact gates. Each has one lane-free, non-overlapping namespace
 per machine; any artifact run and `e2e:serial` still run sequentially in the same worktree. Artifact
 runners take the same `THINKRAIL_E2E_JOB_SHARD=k/N` and deal their slice the same way across CI machines,
@@ -102,11 +102,10 @@ Playwright `--shard` still works for local use. A future launcher or
 deployment adds another host adapter for this same suite, never copied feature specs; shared behavior is
 therefore proven through every composition root.
 
-The focused `compaction.live` probe exercises manual compaction, continuation and restored context
-through a real provider. It lowers only the disposable lane's `keepRecentTokens` and disables automatic
-compaction to keep the request small and deterministic, restoring the settings bytes in `finally`.
-It neither changes the provider/effort selection nor proves removal of a fixed output cap; the focused
-SDK reserve-independence canary owns that assertion.
+Stage 1's live acceptance checks the actual selected-worktree edit, bounded test command, real Diff,
+approval/reload and Stop behavior. MCP configuration, SDK management connections and OAuth, Skills catalog/trust CRUD, and preserved subagent configuration are Stage 1 surfaces. Compaction/continuation belongs to Stage 2; model-visible Skills/MCP tools, Plan automation, background commands and child execution belong to Stage 3. Their retired execution assertions do not
+become successful empty responses or alternate old-provider paths. Historical cards, template
+composition and valid workspace/editor/Git/PTY rendering remain current browser checks.
 
 ## Repository cloning
 
@@ -119,43 +118,22 @@ credentials or remote repositories are used.
 
 ## Chat resource controls
 
-Resource wire coverage opens persisted chat fixtures through the real UI and checks the authoritative
-catalog's session/workspace scope, missing-output result, unavailable controls and empty stop-all.
-Its wire connection uses the launched page's port, not the source host's fixed port: binary and
-packaged-desktop adapters launch different endpoints for the same test.
-Historical fixtures are seeded before entering their workspace, so discovery does not race a just-created
-placement's persistence during browser reload. It never seeds a running resource or turns transcript
-text into execution authority. The empty-catalog UI probes cover the inspector's keyboard focus and
-focus return, the absent dock, narrow layouts, welcome/reconnect hydration and old-host capability hiding
-using real responses; the old-host probe changes only the advertised protocol version. The
-retirement focus probe supplies a completed child and persisted-form transcript at the wire seam, selects
-it in the inspector, then downgrades the next welcome; the UI, reconnect, capability retirement and Radix
-focus teardown remain real. This terminal-only fixture is not evidence of
-agent resource execution. The history probe writes a chat's resource archive (finished commands with one
-log tail, subagents, and runs a dead host left in flight) to the lane's data dir at the wire seam, just
-before the host's first resource read of that chat, so the real host loads it the way it would after a
-restart; it proves the dock's finished total, the inspector's per-kind fold, a real `session.resourceHistory`
-page, the archived log and an interrupted run's missing log. An archived in-flight record carries no
-authority — the host reads it as interrupted — so this is not a seeded running resource. `resetApp` clears
-the archive with the rest of the lane's state. Tagged provider-backed probes launch real commands and
-children through agent tools, inspect bounded plain-text logs/transcripts in the inspector, verify chat
-isolation, reload and closed-inspector completion, and exercise individual Stop and confirmed Stop all. They never
-select a model or seed a running-resource catalog. SDK faux-provider unit tests are not evidence of
-browser agent execution. `attention-background-work.live` pins the background-work unread hold end to end:
-while a real background command or detached subagent runs after the parent settled, the host never
-publishes an unread completion and the worktree row shows running, not a dot; with the window unfocused
-(a seen result is read at once), the dot lights only after the woken turn and the running badge clears.
+Stage 1 has no live background/subagent/MCP resource catalog. `chat-resources-wire.spec.ts` checks
+explicit rejection of the removed execution methods; `chat-resources.spec.ts` checks hidden entries,
+no catalog requests, reload and usable phone composer focus. Historical process text carries no
+execution authority. The isolated wire advertises the current protocol and retains real server error
+text. No old protocol or successful resource-RPC shim reactivates an unavailable product entry.
 
-**MCP servers** coverage (`mcp-settings.spec.ts`) runs the server package's stdio fixture through the
-absolute path of the runner's `bun`, since the host's hermetic `PATH` has none. It adds a user server
-through the Settings form while the workspace's persisted chat is open (entering a workspace auto-opens
-its latest chat, so the test waits for that tab first instead of racing it), sees it Connected · 4 tools
-once that chat reloads, and disabled for that chat from the Resources inspector, then removes it; it opens a chat from a not-running
-server's row, reconnects that server per chat once it fails and shows its masked log, and names an
-unreadable user `mcp.json` with an edit hint; and it proves a repository-defined server flags the chat's
-attention marker, waits for Review & approve, and starts once approved. Each test removes the `mcp.json`
-it wrote (the lane's agent dir or the fixture repository's `.pi/`) in `finally`, so no later scenario
-starts servers.
+Props-only inspector/dock/detail rendering remains covered by `resources/resources.test.tsx` and
+projection ownership, failures and controls by `useChatResources.test.ts`. Those unit checks cover
+markup, selected state and bounded data behavior; they do not establish native popup focus return or
+phone popup geometry. Resource-only browser focus/layout, archive/history reads and actual process
+execution need a Stage 3 gate when that product entry exists. `mcp-settings.spec.ts` retains real configuration/approval/connection/error/secret-masking coverage through Settings and the actual management routes. It does not require the Stage 3 resource dock. `skills-switches.spec.ts` and `other-agent-skills.spec.ts` preserve catalog, trust and switch behavior. `subagent-settings.spec.ts` reads real global/workspace persistence and authoritative pushes while verifying disabled execution controls, inheritance, limit validation and geometry. Read-only historical MCP tool cards remain separate.
+
+The browser fixtures write complete application-owned JSON transcripts, never append pi JSONL to a
+session JSON file. Optional pending state is explicit fixture data for rendering, not evidence of a
+live run. Renderer tests preserve tool details and stable identities, and keep model execution claims
+separate from layout/keyboard/historical transcript claims.
 
 Native wheel probes target the actual transcript viewport again after clicking a floating Latest
 button; a pointer left at a removed overlay is not evidence of a gesture delivered to the scroller.
@@ -187,6 +165,8 @@ attention coverage therefore closes and reopens the chat after arranging the wor
 Showing a side or the bottom focuses its selected tab (its edge-rail control when no tab renders) one
 animation frame after the region renders; a probe that then focuses inside the shown region first waits
 for that endpoint, or a late frame moves focus away from the probe's target.
+A context-menu reveal then restores the opener when Radix's focus scope unmounts; the next programmatic
+focus waits for that final return rather than the revealed tool's transient focus.
 Monaco wheel probes reach the editor through an actionability-checked `hover()`, never a measured box:
 a box read before the editor's layout settles can be a stale one whose centre lies under the left panel's
 resize separator. Each CDP wheel event scrolls Monaco 50 px whatever its delta (one synthetic tick), so a
@@ -255,80 +235,6 @@ webview, requires DOM-ready plus host health, and quits through the real Electro
 that smoke under Xvfb with software rendering enabled only in the test environment. The split proves both
 the native-window path and broad browser behavior without introducing two competing clients.
 
-JetBrains Central coverage uses a stateful, independently authored fake executable implementing only the
-argv/exit/postcondition surface ThinkRail invokes (`--version`, `status`, `quota --json`, `add pi`,
-`remove pi`, `login`, `update --install`). Its control file holds **space-separated tokens**, because the version a probe reports,
-whether credentials exist, and how an action fails are independent facts about a host: a single-valued control
-made real combinations unrepresentable, and a state that cannot be reached is a failure mode nothing asserts
-(`update --install` refusing while the host is below the minimum needs both at once). It
-materializes a test-owned synthetic PI extension written solely against PI's public API; no Central artifact,
-source fragment, output string, route, constant, binary, or secret is copied. Like the real artifact it both
-introduces a novel provider (never a row) and re-registers the built-in `anthropic` (a configured row
-labelled JetBrains AI with no Sign-out, gone again once the artifact is removed). Browser scenarios cover
-absent/outdated/malformed probes plus an above-minimum version staying ready, update, sign-in/retry, native
-add/remove, synchronous-action
-serialization, watched external add/change/remove, successful current-generation cutover for new chats, old
-live-chat coexistence after Disconnect, and boot/runtime retention after a closed synthetic-extension load
-failure. External replacement waits for the settled configured verdict and verifies that the replacement
-model is visible while the old model is gone. A fast candidate may finish before a browser poll observes
-`configuring`; that pending-work state is checked with a held candidate in the server unit fixture, not a
-minimum-visible-duration assumption in the browser. Unit coverage owns action single-flight, watcher
-debounce/coalescing, stale-candidate rejection, boot with and without the opaque extension, and exact-model
-no-fallback for new or reattached chats after Central is removed. There is no legacy migration, busy-turn drain, reattachment of live chats, compensation,
-affected-chat blocking, or recovery seal to test. Sentinel values in synthetic child output, extension
-diagnostics, and provider routing fields
-are asserted absent from the closed results and rendered settings surface; structural DTO allowlists and
-generic host mapping keep those classes out of WS frames, analytics, logs, and persistence.
-
-Quota coverage adds test-owned structured recurring values and closed failure tokens—never real Central
-output. It proves the top-bar readout appears only for healthy + enabled Central, polls at the synchronized
-whole-second interval only while visible, deduplicates host reads, retains stale values with Retry, hides on
-disable/disconnect, and degrades at mobile width; the Providers card pins default/on-off/interval validation
-and persistence. The reviewed-argv assertion rejects any presentation-text quota fallback, while sentinels in
-ignored quota fields prove account/plan/used/top-up/refill/diagnostics never cross the wire or render.
-
-The Central specs share one fixture module for panel navigation, lifecycle-state waits, the argv log, and
-the out-of-band host mutations — installing/uninstalling the fake by moving it in and out of the lane's PATH
-directory, and running it directly as a user's own shell would. A host-side invocation deliberately inherits
-none of the host's PATH, so a spec can never reach a real `central`. Because that same log records both
-sides, a spec that injects a host invocation asserts *counts* rather than mere presence — that is what
-distinguishes "the app reacted to an external change" from "the app re-ran the action".
-
-A second spec covers the lifecycle a user actually walks, one test per situation: Central absent, installed
-but signed out, uninstalled while connected, PI disconnected in-app and again on the host, and a host-side
-logout. Its load-bearing assertions are the ones a state name cannot express — that an uninstall withdraws
-Central's models from new chats while the global artifact survives, so reinstalling repairs by re-probing
-instead of a second `add pi`; that a signed-out host is offered Sign in and **no Connect at all**, with the
-ready claim replaced rather than annotated; and that a logout leaves the connection intact underneath while the
-card renders one state only: the signed-out line without the contradicting "Connected" one, a single Sign in
-with Disconnect withheld as well, and both restored once the user signs back in. The reactive guidance keeps
-its own spec, driven by the case the probe cannot see: credentials present, `add pi` refused anyway.
-
-The fake models the `Auth` row's shape only — a styled indicator, a padded label, a styled value — and prints
-a sentinel line beside it that must never surface in the UI, since the real command prints the user's licence
-and server. The cached verdict shapes the suite twice, and both accommodations are deliberately the same
-thing a *user* does rather than a reach into the host. A spec that flips the host's credential state waits
-the TTL out and refreshes, so the assertion belongs to the card's copy and not to the cache. And because
-Connect is withheld while the verdict says signed out, every connect-driven scenario refreshes until the
-button appears instead of assuming it — a verdict left behind by an earlier scenario would otherwise hide it,
-exactly as it would for someone returning to the panel inside the window. Each state is also captured as a
-review PNG under `e2e/screenshots/<group>/`
-(gitignored, stable path, one element shot per state, retina, CSS animations fast-forwarded so a
-spring mid-flight never ends up in the picture). Screenshots are evidence, never the assertion — a state that only a picture would catch is a missing `data-testid`. Identical files across
-scenarios are a finding, not a defect: they are how the suite shows two distinct host situations rendering
-one indistinguishable card.
-
-The real-Central agent mode is explicit and read-only. Its setup takes the already-authorized global Central
-extension as an opaque source and stages one permission-restricted copy under the lane's isolated HOME; the
-host still resolves only the test-owned Central executable, and that executable refuses every mutating
-action in this mode. The isolated PI agent directory receives `settings.json` only — never the developer's
-`auth.json` or `models.json` — so Central is the sole provider source and unrelated local models cannot enter
-the picker. Setup waits for the watched runtime generation to report configured over the public wire, then
-requires `model.default` to equal the exact `THINKRAIL_E2E_MODEL` pair (the deterministic suite default is
-used when the variable is absent). A missing artifact, failed generation, or unavailable exact pair aborts
-before any provider turn; PI's ordinary first-available fallback is never accepted as test configuration.
-The same copy and hermetic environment seed the private restart host.
-
 **Session state** coverage seeds complete transcript states and drives normalized host blockers/runs to pin
 Projects rail presentation: both needs-input and owner-globally unread results render the same static green
 attention dot (“Needs attention”), while genuinely running sessions swap the workspace/project identity
@@ -379,33 +285,19 @@ focus endpoints, and rail/header geometry that matches the workbench across a wo
 
 ## Isolation contract
 
-The no-agent setup seeds a test-owned empty `models.json` and never reads or copies developer
-`auth.json` or `models.json`; provider scenarios use synthetic fixtures, and the separately authorized
-real-Central mode keeps its opaque-artifact-only credential contract above. Ambient credential environment
-variables still reach the no-agent host, so a check that depends on whether any provider is connected reads
-the host's `provider.status` over the wire first, never a one-shot snapshot of UI still loading it. Model-context
-coverage exercises the Default / 1M / Custom selector through the real host: shared and per-provider saves,
-retained live-chat limits versus new-chat metadata, Custom validation and Apply focus, cross-client
-convergence with draft invalidation, sanitized read/write failures with Retry, mobile keyboard use,
-and pre-v76 hiding.
+The no-agent setup seeds one test-owned accepted Go model configuration with no key, and never reads
+or copies developer credential/model files. The separately authorized live mode uses only the explicit
+protected temporary configuration described above. Runner credential stripping applies before hosts
+start. Missing credentials cannot fall back to a different provider. Model UI checks keep unknown
+context/pricing/reasoning metadata unavailable instead of inventing an advertised capability.
 
-General and private-restart fixtures seed additional analytics off with consent already confirmed, so
-unrelated scenarios stay unblocked. The shared fixture (`global-setup.ts`) also seeds the automatic survey
-invitation as permanently dismissed and the one-time GitHub star ask as already sent: the serial agent lane intentionally accumulates
-accepted prompts across scenarios, while dedicated feedback and `github-star-prompt.spec.ts` coverage injects and
-asserts the addressed channels directly. The cold-start onboarding
-wizard is likewise seeded dismissed (`onboardingDismissed: true`, in the config file and again over the
-settings wire, since the host may have loaded its config first), and only `onboarding.spec.ts` re-arms it
-over the settings wire, restoring it afterwards. The wizard gate decides once per page load, so that spec's
-cold starts settle the host before the first load: after the reset they wait out a provider-runtime
-replacement still in flight (`jbcentral` `configuring` keeps reporting the previous runtime's providers),
-sign out every stored credential, and fail unless at most ambient env providers remain (those skip). Its
-teardown attempts every cleanup step even when one fails. Before any fixture reset
-deletes transcript storage, it lists and disposes every live session through the public wire; disposal aborts
-and settles an unfinished provider turn first, so a test ending mid-turn cannot recreate a headerless JSONL
-behind the next scenario. Consent tests reset the choice over the real settings wire and cover on-by-default preference priming,
-Done/ordinary-close acceptance, immediate off refusal, persistence failures and retries, confirmed reloads,
-cross-client convergence, prompt priority, and pre-v65 fallback.
+The cold-start onboarding state is seeded dismissed in the config file and again over the settings
+wire, since the host may have loaded config first. The dedicated onboarding scenario restores its
+changes. Telemetry, survey, Central and GitHub-star prompting have been removed; no fixture writes
+consent, invitation or quota state for those deleted services. Before a fixture reset deletes session
+storage, it disposes each owned session ID through the public wire so unfinished execution settles.
+Cleanup does not parse a transcript just to release it, and cannot turn a malformed renderer fixture
+into a failure cascade for otherwise independent tests.
 
 Each scenario's app reset also removes the lane fixture repository's `origin` remote: the topbar's Remote /
 Pull request segments read the shared repo config, so an origin a push scenario added must never reshape a
@@ -471,13 +363,13 @@ Playwright starts the host (`webServer`) before `globalSetup`, so global setup c
 while a live host writes its logs there; it removes the dir with `removeTree`, which retries the resulting
 `ENOTEMPTY` instead of failing the lane.
 
-Every concurrent lane derives a distinct data dir, HOME, pi-agent dir, fixture repository, binary cache,
+Every concurrent lane derives a distinct data dir, HOME, fixture repository, binary cache,
 desktop cache/state plus ready/control files, Playwright transform cache, restart artifacts,
-picker/editor/provider control files, host/restart/binary/desktop ports, and Central fixture artifacts. The
+picker/editor control files and host/restart/binary/desktop ports. The
 transform cache is lane-local because Playwright's shared cache assumes a single runner process; sharing it
 lets a cold shard consume another shard's partially written transform. Every host (source, binary, desktop,
 and the restart spec's own) receives `SHELL` pointing at the lane's fixture `login-shell` next to the
-Central/editor stubs: `resolveShellEnv()` always probes the login shell at boot and merges its PATH in, so the
+editor stubs. When a launcher explicitly opts into `resolveShellEnv()`, its login-shell probe merges PATH, so the
 fixture answers the probe (recognized by shared's `LOGIN_ENV_MARKER`) with that marker and the same hermetic
 PATH the host was given, and otherwise execs the runner's real shell, keeping terminal specs on a genuine
 shell. Without it the probe would merge developer-machine directories into the hermetic PATH (and import the
@@ -501,9 +393,9 @@ none, a silent no-op.
 
 Different worktrees may run concurrently. Two complete E2E invocations in one worktree remain sequential;
 the lane ids are deliberately stable across runs so interrupted state is reclaimed rather than leaked.
-No path may fall back to `~/.thinkrail`, the developer's HOME/config trees, or the real pi agent dir. The
-explicit agent-mode setup is the narrow exception: it reads one known global Central artifact into the
-lane-owned copy, never runs from or writes to the source, and removes the copy on setup failure or teardown.
+No path may fall back to `~/.raildesign`, the developer's HOME/config trees or a real pi agent directory.
+The live runner reads only its explicitly authorized protected temporary SDK configuration, never a
+global Central artifact or a developer model/credential catalog.
 A sandboxed home is handed to every host as **both `HOME` and `USERPROFILE`**: `homedir()` — pi's own home
 resolution — reads `USERPROFILE` on Windows and ignores `HOME`, so `HOME` alone would silently leak a
 Windows lane into the real profile (see `module-shared`). Every spawner — the Playwright web server, the
@@ -516,8 +408,10 @@ lands in the sandbox and a new detection source is pinned everywhere at once.
 - **Owns:** browser scenarios and fixtures under `e2e/`, their Playwright configuration/runner entrypoints,
   isolation and port-allocation rules, report orchestration, and the public `e2e*` package commands.
   `e2e/fixtures/git.ts` is the one place specs shell out to `git` (`git`, `gitQuiet`, `gitText`, `gitAs`,
-  `commitFile`); `gitAs`/`commitFile` pin a throwaway e2e identity so a seeded commit's authorship never
-  depends on the developer machine's real git config. `e2e/fixtures/pierre.ts` is the one place specs
+  `gitBare`, `commitFile`); `gitAs`/`commitFile` pin a throwaway e2e identity so a seeded commit's authorship never
+  depends on the developer machine's real git config. Known bare fixtures use `gitBare`, which selects
+  their explicit `--git-dir` without weakening `safe.bareRepository` or guessing repository type.
+  `e2e/fixtures/pierre.ts` is the one place specs
   touch `@pierre/diffs`' DOM and worker (`pierreLines`, `pierreLineNumber`, `selectPierreLine`,
   `pierreCollapsedContext`, `pierreDeletionsSide`, `holdPierreWorkers`): a Pierre release that renames
   `data-line`, `data-column-number`, `data-unmodified-lines` or `data-deletions` is a one-file repair, and no spec
@@ -536,7 +430,7 @@ lands in the sandbox and a new detection source is pinned everywhere at once.
   artifact probes are owned by that test workspace, outside Playwright discovery.
 - **Forbidden:** fake application backends, provider fakes in production boot paths, browser imports into
   product modules, default/no-agent tests depending on developer state, agent tests reading anything beyond
-  the explicitly authorized Central artifact, or parallel workers sharing one mutable host.
+  the explicitly authorized protected SDK configuration, or parallel workers sharing one mutable host.
 
 ## Verification policy
 
@@ -629,21 +523,15 @@ Linux WebKit may not reproduce the macOS Tab rule,
 so the card's markup guard (every control an explicit tab stop) is the platform-independent net. All of this
 runs without provider variability; desktop package tests separately pin the stable
 backend-profile/window adapter required across dynamic-port restarts. Streaming-band coverage remains
-`@agent` because only Pi's real row growth exercises that lifecycle. Stream-mount coverage injects
-synthetic `pi.event` frames into the page wire (`fixtures/streamReplay.ts`) under CPU throttling to prove
+`@agent` because only actual provider row growth exercises that lifecycle. Stream-mount coverage injects
+synthetic `session.event` frames into the page wire (`fixtures/streamReplay.ts`) under CPU throttling to prove
 a working chat stays shown when it mounts; it is not evidence of provider behavior. Stream-pin coverage
 replays a long markdown answer the same way and samples geometry in a `ResizeObserver` registered after the
 app's, so it reads what paints: once the edge reaches the pin line at the viewport bottom, every sample keeps it within 2 px and
 `scrollTop` never moves back by more than 1 px (a sub-pixel content shrink can clamp it by one).
 Before handoff, every app-affecting change runs the complete `bun run e2e` no-agent gate. Artifact-only
-regressions remain covered by `e2e:binary`, `e2e:desktop`, and their shared host probe: a synthetic
-opaque external extension loads with no `pi` executable on `PATH` for default and custom
-`PI_CODING_AGENT_DIR`; desktop additionally proves its staged `.ts` PI runtime and physical resources.
-Real Central acceptance remains explicitly authorized and isolated: the dedicated `@agent` suite stages
-the opaque artifact, validates the exact model, and proves a real turn rather than accepting another
-provider or a fake agent.
-
-A file the host rewrites in place (pi's `settings.json`) is read once, after the UI state that the host's
-reply settles: a read overlapping the rewrite returns the old bytes followed by the new file's tail, and
-`expect.poll` rethrows that parse error instead of polling again. When no UI state marks the write, the poll
-parses through a helper that treats a torn read as "not yet".
+regressions remain separate `e2e:binary`, `e2e:desktop` and native artifact gates; passing source UI
+checks does not establish packaging or installer acceptance. The Stage 1 SDK live gate uses the exact
+accepted Go model and real tool execution, approval and Stop; it cannot substitute another model or a
+fake agent. Complete removal of remaining standalone pi packages and release artifacts belongs to the
+later release stage.

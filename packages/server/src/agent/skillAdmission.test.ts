@@ -8,7 +8,7 @@ import {
 
 const EMPTY: SkillAdmissionContext = {
 	trusted: false,
-	piResourceTrusted: false,
+	resourceTrusted: false,
 	acknowledged: [],
 	disabled: [],
 	disabledGroups: [],
@@ -45,7 +45,7 @@ describe("decideSkill — trust gate (project-scoped aliases)", () => {
 		).toBe("load");
 	});
 
-	it("never gates personal/bundled/pi-native skills on trust", () => {
+	it("never gates personal/bundled/application skills on trust", () => {
 		expect(decideSkill(own("brainstorming"), EMPTY)).toBe("load");
 	});
 });
@@ -88,7 +88,7 @@ describe("decideSkill — the trust gate is checked before the toggle layer (saf
 		expect(
 			decideSkill(alias("deploy"), {
 				trusted: true,
-				piResourceTrusted: true,
+				resourceTrusted: true,
 				acknowledged: ["deploy"],
 				disabled: [],
 				disabledGroups: [],
@@ -149,9 +149,9 @@ describe("decideSkill — other agents' skills are opt-in", () => {
 		expect(decideSkill(pluginSkill("y", "superpowers"), OFF)).toBe("disabled");
 	});
 
-	it("keeps ThinkRail's, pi's and the project's own skills on", () => {
+	it("keeps ThinkRail's, the application's and the project's own skills on", () => {
 		expect(decideSkill(own("a", "bundled"), OFF)).toBe("load");
-		expect(decideSkill(own("b", "pi"), OFF)).toBe("load");
+		expect(decideSkill(own("b", "application"), OFF)).toBe("load");
 		expect(decideSkill(alias("c"), { ...OFF, trusted: true, acknowledged: ["c"] })).toBe("load");
 	});
 
@@ -170,7 +170,7 @@ describe("decideSkill — other agents' skills are opt-in", () => {
 	});
 });
 
-describe("sourceMayLoad — a root admission can load nothing from stays out of pi's name resolution", () => {
+describe("sourceMayLoad — a root admission can load nothing from stays out of the application's name resolution", () => {
 	const OFF = { ...EMPTY, otherAgentSkills: false };
 	it("drops personal and plugin roots while their groups are off", () => {
 		expect(sourceMayLoad({ group: "personal", isPlugin: false }, OFF)).toBe(false);

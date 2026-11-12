@@ -188,6 +188,7 @@ export function ChatSettings() {
 			</SettingsGroup>
 
 			<SubagentSettings
+				disabled
 				protocolVersion={protocolVersion}
 				globalEnabled={subagentsEnabled}
 				globalLimit={subagentMaxConcurrent}

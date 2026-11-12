@@ -1,143 +1,194 @@
-import {
-	createMcpExtension,
-	createToolSearchExtension,
-	type ExtensionAPI,
-	type ExtensionContext,
-	type ExtensionEvent,
-	type ExtensionHandler,
-	type InlineExtension,
-	type LoadedMcpConfig,
-	type RegisteredCommand,
-	type SessionShutdownEvent,
-} from "@earendil-works/pi-coding-agent";
-import { acquireMcpSignInLock } from "./signInLock";
+import { resolve } from "node:path";
+import { type MCPServer, MCPServerStreamableHttp } from "@openai/agents";
+import type { McpServerStatus } from "@thinkrail/contracts";
+import { modelKeyEnvironmentNames } from "../modelConfiguration";
+import { toolEnvironment } from "../sdkTools";
+import { appendMcpLog } from "./log";
+import { McpSignInRequiredError, OwnedMcpOAuthProvider } from "./oauth";
+import { redactMcpText } from "./redact";
+import { LoggedStdioMcpServer } from "./stdio";
+import type { McpServerEntry } from "./types";
 
-const TOOL_SEARCH = "tool_search";
-
-type ShutdownHandler = ExtensionHandler<SessionShutdownEvent>;
-
-export interface McpEngine {
-	extensions: InlineExtension[];
-	shutdown(event: SessionShutdownEvent, ctx: ExtensionContext): Promise<void>;
+let authorization: ((provider: string) => Promise<string>) | undefined;
+export function setMcpAuthorizationResolver(resolveAuthorization: typeof authorization): void {
+	authorization = resolveAuthorization;
 }
 
-function activateToolSearchForRegisteredServers(pi: ExtensionAPI): void {
-	if (pi.getMcpServers().length === 0) return;
-	const active = pi.getActiveTools();
-	if (active.includes(TOOL_SEARCH)) return;
-	if (!pi.getAllTools().some((tool) => tool.name === TOOL_SEARCH)) return;
-	pi.setActiveTools([...active, TOOL_SEARCH]);
-}
-
-function observingCommands(
-	handler: RegisteredCommand["handler"],
-	lockSignIns: boolean,
-	onCommandSettled?: (sessionId: string) => void,
-): RegisteredCommand["handler"] {
-	return async (args, ctx) => {
-		const [action, name, ...extra] = args.trim().split(/\s+/).filter(Boolean);
-		const mutates =
-			(action === "login" || action === "logout" || action === "reconnect") && extra.length === 0;
-		if (!mutates) return handler(args, ctx);
-		const sessionId = onCommandSettled ? ctx.sessionManager.getSessionId() : undefined;
-		const lock =
-			lockSignIns && name && (action === "login" || action === "logout")
-				? acquireMcpSignInLock(name, "chat")
-				: undefined;
-		if (lock && "heldBy" in lock) {
-			const where = lock.heldBy === "settings" ? "in Settings" : "in a chat";
-			ctx.ui.notify(`A sign-in for "${name}" is already running ${where}.`, "warning");
-			return;
-		}
-		try {
-			await handler(args, ctx);
-		} finally {
-			lock?.release();
-			if (sessionId !== undefined) onCommandSettled?.(sessionId);
-		}
-	};
-}
-
-function engineApi(
-	pi: ExtensionAPI,
-	lockSignIns: boolean,
-	onCommandSettled?: (sessionId: string) => void,
-): { api: ExtensionAPI; shutdown: McpEngine["shutdown"] } {
-	const shutdownHandlers: ShutdownHandler[] = [];
-	let closed = false;
-	let cleanup: Promise<void> | undefined;
-	const shutdown: McpEngine["shutdown"] = (event, ctx) => {
-		closed = true;
-		cleanup ??= (async () => {
-			for (const handler of shutdownHandlers) await handler(event, ctx);
-		})();
-		return cleanup;
-	};
-	const registerCommand: ExtensionAPI["registerCommand"] = (name, options) =>
-		pi.registerCommand(
-			name,
-			name === "mcp"
-				? { ...options, handler: observingCommands(options.handler, lockSignIns, onCommandSettled) }
-				: options,
-		);
-	const on = (event: string, handler: ExtensionHandler<ExtensionEvent>): (() => void) => {
-		if (event === "session_shutdown") {
-			shutdownHandlers.push(handler);
-			return pi.on("session_shutdown", shutdown);
-		}
-		const guarded: typeof handler = (event, ctx) => {
-			if (!closed) return handler(event, ctx);
-		};
-		return Reflect.apply(pi.on, pi, [
-			event,
-			event === "session_start" || event === "mcp_servers_change" ? guarded : handler,
-		]);
-	};
-	return {
-		api: new Proxy(pi, {
-			get: (target, key) =>
-				key === "registerCommand" ? registerCommand : key === "on" ? on : Reflect.get(target, key),
-		}),
-		shutdown,
-	};
-}
-
-/** The pi built-in extensions the host supplies as its own replaceable inline factories. */
-export const HOST_BUILTIN_EXTENSION_NAMES = ["mcp", "tool-search"] as const;
-
-export function createMcpEngine(options: {
-	loadConfig: (ctx: ExtensionContext) => LoadedMcpConfig;
-	lockSignIns?: boolean;
-	openUrl?: (url: string) => void;
-	onCommandSettled?: (sessionId: string) => void;
-}): McpEngine {
-	const mcp = createMcpExtension({
-		loadConfig: options.loadConfig,
-		openUrl: options.openUrl ?? (() => {}),
+function expand(value: string): string {
+	return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name: string) => {
+		const result = process.env[name];
+		if (result === undefined) throw new Error(`MCP environment variable ${name} is not set.`);
+		return result;
 	});
-	const lockSignIns = options.lockSignIns ?? true;
-	let shutdown: McpEngine["shutdown"] = async () => {};
+}
+
+export function mcpChildEnvironment(explicit: Record<string, string> = {}): Record<string, string> {
+	const inherited = toolEnvironment(
+		new Set(modelKeyEnvironmentNames().map((name) => name.toUpperCase())),
+	);
 	return {
-		extensions: [
-			{
-				name: HOST_BUILTIN_EXTENSION_NAMES[0],
-				replaceable: true,
-				builtin: true,
-				factory: (pi) => {
-					const load = engineApi(pi, lockSignIns, options.onCommandSettled);
-					shutdown = load.shutdown;
-					load.api.on("session_start", () => activateToolSearchForRegisteredServers(pi));
-					load.api.on("mcp_servers_change", () => activateToolSearchForRegisteredServers(pi));
-					return mcp(load.api);
-				},
-			},
-			{
-				name: HOST_BUILTIN_EXTENSION_NAMES[1],
-				replaceable: true,
-				builtin: true,
-				factory: createToolSearchExtension(),
-			},
-		],
-		shutdown: (event, ctx) => shutdown(event, ctx),
+		...Object.fromEntries(
+			Object.entries(inherited).filter(
+				(entry): entry is [string, string] => typeof entry[1] === "string",
+			),
+		),
+		...Object.fromEntries(Object.entries(explicit).map(([name, value]) => [name, expand(value)])),
+	};
+}
+
+export interface McpConnection {
+	readonly server: MCPServer;
+	readonly entry: McpServerEntry;
+	status(): McpServerStatus;
+	connect(): ReturnType<MCPServer["listTools"]>;
+	close(): Promise<void>;
+}
+
+/** One owned transport. No agent, model call or extension runtime is created for management. */
+export async function createMcpConnection(options: {
+	entry: McpServerEntry;
+	cwd: string;
+	signal?: AbortSignal;
+	oauthProvider?: OwnedMcpOAuthProvider;
+	onStatus?: (status: McpServerStatus) => void;
+}): Promise<McpConnection> {
+	const { entry } = options;
+	const controller = new AbortController();
+	const signal = options.signal
+		? AbortSignal.any([controller.signal, options.signal])
+		: controller.signal;
+	signal.throwIfAborted();
+	let status: McpServerStatus = {
+		name: entry.name,
+		state: entry.config.enabled === false ? "disabled" : "disconnected",
+		updatedAt: Date.now(),
+	};
+	const report = (change: Omit<McpServerStatus, "name" | "updatedAt">) => {
+		status = {
+			...change,
+			...(change.detail ? { detail: redactMcpText(change.detail) } : {}),
+			name: entry.name,
+			updatedAt: Date.now(),
+		};
+		options.onStatus?.(status);
+	};
+	const write = (message: string, ...args: unknown[]) =>
+		appendMcpLog(
+			entry.name,
+			[message, ...args.map((arg) => (arg instanceof Error ? arg.message : String(arg)))].join(" "),
+		);
+	const logger = {
+		namespace: `mcp:${entry.name}`,
+		debug: write,
+		warn: write,
+		error: write,
+		dontLogModelData: true,
+		dontLogToolData: true,
+	};
+	const config = entry.config;
+	const timeout = (config.timeout ?? 30) * 1000;
+	let server: MCPServer;
+	if ("command" in config) {
+		server = new LoggedStdioMcpServer({
+			name: entry.name,
+			command: expand(config.command),
+			args: config.args?.map(expand) ?? [],
+			env: mcpChildEnvironment(config.env),
+			cwd: config.cwd ? resolve(options.cwd, expand(config.cwd)) : options.cwd,
+			timeout,
+			signal,
+		});
+	} else {
+		const headers = Object.fromEntries(
+			Object.entries(config.headers ?? {}).map(([name, value]) => [name, expand(value)]),
+		);
+		if (config.auth) {
+			if (!authorization)
+				throw new Error(
+					`MCP auth provider "${config.auth.provider}" is not configured in this host.`,
+				);
+			headers.Authorization = await authorization(config.auth.provider);
+			signal.throwIfAborted();
+		}
+		const provider =
+			options.oauthProvider ??
+			new OwnedMcpOAuthProvider({
+				name: entry.name,
+				config,
+				redirectUrl:
+					config.oauth?.callbackUrl ??
+					`http://127.0.0.1:${config.oauth?.callbackPort ?? 23891}/callback`,
+				signal,
+			});
+		server = new MCPServerStreamableHttp({
+			name: entry.name,
+			url: config.url,
+			requestInit: { headers, signal },
+			authProvider: provider,
+			fetch: provider.fetch,
+			timeout,
+			logger,
+			errorFunction: null,
+		});
+	}
+	let closed = false;
+	let closing: Promise<void> | undefined;
+	let connecting: ReturnType<MCPServer["listTools"]> | undefined;
+	const close = (): Promise<void> => {
+		if (closing) return closing;
+		closed = true;
+		controller.abort(new Error("MCP connection closed."));
+		closing = server.close().finally(() => {
+			signal.removeEventListener("abort", onAbort);
+			report({ state: config.enabled === false ? "disabled" : "disconnected" });
+		});
+		return closing;
+	};
+	const onAbort = () => {
+		if (!closed) void close().catch(() => {});
+	};
+	signal.addEventListener("abort", onAbort, { once: true });
+	return {
+		entry,
+		server,
+		status: () => ({ ...status }),
+		close,
+		connect() {
+			if (closed || signal.aborted) return Promise.reject(new Error("MCP connection is closed."));
+			if (config.enabled === false)
+				return Promise.reject(new Error("This MCP server is disabled."));
+			if (connecting) return connecting;
+			report({ state: "starting" });
+			connecting = (async () => {
+				try {
+					await server.connect();
+					if (closed || signal.aborted) {
+						await server.close();
+						signal.throwIfAborted();
+						throw new Error("MCP connection is closed.");
+					}
+					const tools = await server.listTools();
+					signal.throwIfAborted();
+					report({ state: "connected", toolCount: tools.length });
+					return tools;
+				} catch (error) {
+					if (!closed) {
+						const detail = error instanceof Error ? error.message : String(error);
+						report({
+							state:
+								error instanceof McpSignInRequiredError ||
+								/unauthorized|needs sign-in/i.test(detail)
+									? "needs-sign-in"
+									: "failed",
+							detail,
+						});
+						write(detail);
+					}
+					await server.close().catch(() => {});
+					throw error;
+				}
+			})();
+			return connecting;
+		},
 	};
 }

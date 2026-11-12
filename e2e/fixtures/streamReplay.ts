@@ -1,13 +1,14 @@
 import type { Page, WebSocketRoute } from "@playwright/test";
 import {
 	type AssistantMessage,
-	type PiEvent,
+	type SessionEvent,
 	WS_CHANNELS,
 	type WsPush,
 } from "@thinkrail/contracts";
 
 const DELTA_CHARS = 40;
 const WORDS = ["stream", "row", "measure", "scroll", "virtual", "anchor", "layout", "delta"];
+const sequenceBySession = new Map<string, number>();
 
 export interface StreamReplay {
 	steps: string[][];
@@ -63,9 +64,27 @@ export const textStreamReplay = (
 	text: string,
 	timestamp: number,
 ): StreamReplay => {
-	const push = (event: PiEvent) =>
-		JSON.stringify({ channel: WS_CHANNELS.piEvent, data: { sessionId, event } } satisfies WsPush);
-	const message = assistantShell(timestamp);
+	let seq = sequenceBySession.get(sessionId) ?? 0;
+	const runId = `replay-${timestamp}-${seq + 1}`;
+	const push = (event: SessionEvent) => {
+		seq += 1;
+		sequenceBySession.set(sessionId, seq);
+		return JSON.stringify({
+			channel: WS_CHANNELS.sessionEvent,
+			data: { sessionId, runId, seq, event },
+		} satisfies WsPush);
+	};
+	const message = { ...assistantShell(timestamp), id: `message-${runId}` };
+	const start = [
+		push({ type: "agent_start" }),
+		push({ type: "turn_start" }),
+		push({ type: "message_start", message }),
+		push({
+			type: "message_update",
+			message,
+			assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: message },
+		}),
+	];
 	const deltas = Array.from({ length: Math.ceil(text.length / DELTA_CHARS) }, (_, index) => {
 		const end = (index + 1) * DELTA_CHARS;
 		const partial: AssistantMessage = {
@@ -88,16 +107,7 @@ export const textStreamReplay = (
 	const final: AssistantMessage = { ...message, content: [{ type: "text", text }] };
 	return {
 		steps: [
-			[
-				push({ type: "agent_start" }),
-				push({ type: "turn_start" }),
-				push({ type: "message_start", message }),
-				push({
-					type: "message_update",
-					message,
-					assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: message },
-				}),
-			],
+			start,
 			...deltas,
 			[
 				push({

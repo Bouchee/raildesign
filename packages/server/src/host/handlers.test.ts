@@ -11,9 +11,12 @@ import {
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
-import { createFauxCore, fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
-import { ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
+import {
+	assistantMessage,
+	modelResponder,
+	modelResponse,
+	ScriptedModel,
+} from "@openai/agents/testing";
 import type {
 	AppConfig,
 	Project,
@@ -28,27 +31,11 @@ import type {
 import {
 	BRANCH_STATUS_PROTOCOL_VERSION,
 	WORKSPACE_SETTLE_PROTOCOL_VERSION,
-	WS_METHODS,
 } from "@thinkrail/contracts";
-import { TodoStore } from "pi-todos/core";
-import {
-	type CreateSessionResult,
-	configurePiRuntime,
-	disposeAllSessions,
-	setSessionManagerFactory,
-} from "../agent";
-import { initializeAnalytics, resetAnalyticsForTests, shutdownAnalytics } from "../analytics";
-import {
-	configureSurveySource,
-	recordAcceptedMessage,
-	resetFeedbackForTests,
-	resetSurveyForTests,
-	setFeedbackPublisher,
-} from "../feedback";
-import { defaultSessionDirFor, writeFixtureSession } from "../history/testFixtures";
+import { type CreateSessionResult, configureAgentModelFactory, disposeAllSessions } from "../agent";
+import { sessionDirFor, writeFixtureSession } from "../history/testFixtures";
 import { addComment, getReviewSnapshot } from "../reviews";
 import { resetConfigCache } from "../settings";
-import { todoReviewRecord } from "../todos";
 import { stopAllWatches } from "../watch";
 import {
 	awaitWorkspaceCreation,
@@ -64,6 +51,7 @@ import {
 	shouldRefreshOpenReview,
 	workspaceCreationHandoff,
 } from "./handlers";
+import { seedSdkTestModel, useSdkTestModel } from "./sdkTestFixture";
 
 const CTX = { clientKey: "test-client" };
 
@@ -72,43 +60,10 @@ let repo: string;
 const savedDataDir = process.env.THINKRAIL_DATA_DIR;
 const savedTestAgentDir = process.env.PI_CODING_AGENT_DIR;
 
-let handlerFaux: ReturnType<typeof createFauxCore> | null = null;
-
-async function setupDefaultModelRuntime(): Promise<() => void> {
-	const savedAgentDir = process.env.PI_CODING_AGENT_DIR;
-	const agentDir = join(dataDir, "agent");
-	mkdirSync(agentDir);
-	process.env.PI_CODING_AGENT_DIR = agentDir;
-	const runtime = await ModelRuntime.create({
-		credentials: new InMemoryCredentialStore(),
-		modelsPath: null,
-		allowModelNetwork: false,
-	});
-	const model = {
-		id: "handler-model",
-		name: "Handler model",
-		api: "faux",
-		reasoning: false,
-		input: ["text"] as ("text" | "image")[],
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		contextWindow: 100_000,
-		maxTokens: 4_096,
-	};
-	const faux = createFauxCore({ provider: "handler", api: "faux", models: [model] });
-	handlerFaux = faux;
-	runtime.registerProvider("handler", {
-		api: "faux",
-		baseUrl: "http://faux.local",
-		apiKey: "faux",
-		streamSimple: faux.streamSimple,
-		models: [model],
-	});
-	configurePiRuntime(runtime);
-	return () => {
-		configurePiRuntime(null);
-		if (savedAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = savedAgentDir;
-	};
+async function setupDefaultModel(): Promise<() => void> {
+	seedSdkTestModel(dataDir, "handler");
+	configureAgentModelFactory(() => new ScriptedModel([modelResponse([assistantMessage("done")])]));
+	return () => configureAgentModelFactory();
 }
 
 function git(cwd: string, ...args: string[]): void {
@@ -127,8 +82,6 @@ beforeEach(() => {
 	process.env.THINKRAIL_DATA_DIR = dataDir;
 	process.env.PI_CODING_AGENT_DIR = join(dataDir, "pi");
 	resetConfigCache();
-	resetFeedbackForTests();
-	resetSurveyForTests();
 	repo = join(dataDir, "repo");
 	mkdirSync(repo);
 	git(repo, "init", "-b", "main");
@@ -147,9 +100,6 @@ beforeEach(() => {
 afterEach(() => {
 	stopAllWatches();
 	resetConfigCache();
-	resetFeedbackForTests();
-	resetSurveyForTests();
-	resetAnalyticsForTests();
 	rmSync(dataDir, { recursive: true, force: true });
 	if (savedDataDir === undefined) delete process.env.THINKRAIL_DATA_DIR;
 	else process.env.THINKRAIL_DATA_DIR = savedDataDir;
@@ -157,11 +107,28 @@ afterEach(() => {
 	else process.env.PI_CODING_AGENT_DIR = savedTestAgentDir;
 });
 
-test("every contract method has a registered handler", () => {
-	const unregistered = Object.values(WS_METHODS).filter((m) => requestMethodDiagnostic(m) !== m);
-	expect(unregistered).toEqual([]);
+test("the current workspace and SDK methods are registered, and retired engine methods are unavailable", async () => {
+	for (const method of [
+		"project.open",
+		"workspace.create",
+		"session.create",
+		"session.prompt",
+		"session.abort",
+		"session.extUiReply",
+		"git.diffFile",
+		"terminal.attach",
+	])
+		expect(requestMethodDiagnostic(method)).toBe(method);
+	for (const method of [
+		"packages.install",
+		"provider.jbcentralConnect",
+		"session.respondToTool",
+		"session.activityList",
+	]) {
+		expect(requestMethodDiagnostic(method)).toBe("unknown method");
+		await expect(handleRequest(method, {}, CTX)).rejects.toThrow("Unknown method");
+	}
 });
-
 test("clone handlers resolve the destination and return an opened local project", async () => {
 	const input = {
 		operationId: "clone-handler",
@@ -505,34 +472,13 @@ test("host.update invokes only the context-injected parameterless operation", as
 	);
 });
 
-test("retired session activity returns the empty compatibility snapshot", async () => {
-	expect(await handleRequest("session.activityList", {}, CTX)).toEqual([]);
-});
-
-test("the retired ask answer method and respondToTool both refuse an unknown session the same way", async () => {
-	await expect(
-		handleRequest(
-			"session.answerQuestion",
-			{ sessionId: "nope", toolCallId: "tc", result: {} },
-			CTX,
-		),
-	).rejects.toThrow("Unknown session: nope");
-	await expect(
-		handleRequest(
-			"session.respondToTool",
-			{ sessionId: "nope", toolCallId: "tc", response: {} },
-			CTX,
-		),
-	).rejects.toThrow("Unknown session: nope");
-});
-
 test("template reads resolve a project's current checkout and reject ambiguous locations", async () => {
 	const savedAgentDir = process.env.PI_CODING_AGENT_DIR;
-	const agentDir = join(dataDir, "agent");
-	process.env.PI_CODING_AGENT_DIR = agentDir;
+	const templateRoot = dataDir;
+
 	try {
-		const globalDir = join(agentDir, "prompts");
-		const projectDir = join(repo, ".pi", "prompts");
+		const globalDir = join(templateRoot, "prompts");
+		const projectDir = join(repo, ".raildesign", "prompts");
 		mkdirSync(globalDir, { recursive: true });
 		mkdirSync(projectDir, { recursive: true });
 		writeFileSync(join(globalDir, "kickoff.md"), "global body");
@@ -562,8 +508,7 @@ test("template reads resolve a project's current checkout and reject ambiguous l
 });
 
 test("a background create hands the finished workspace a terminal and the held chat", async () => {
-	const cleanup = await setupDefaultModelRuntime();
-	setSessionManagerFactory((cwd) => SessionManager.inMemory(cwd, { id: "kickoff-chat" }));
+	const cleanup = await setupDefaultModel();
 	const removed: WorkspaceCreationRemoved[] = [];
 	setWorkspaceCreationPublisher((event) => {
 		if (event.kind === "removed") removed.push(event.removed);
@@ -573,11 +518,11 @@ test("a background create hands the finished workspace a terminal and the held c
 		const models = (await handleRequest("model.list", {}, CTX)) as WireModel[];
 		const selected = models.find((model) => model.provider === "handler");
 		if (!selected) throw new Error("handler test model was not available");
-		handlerFaux?.setResponses([
-			async () => {
-				await Bun.sleep(4_000);
-				return fauxAssistantMessage("done");
-			},
+		useSdkTestModel([
+			modelResponder(async () => {
+				await Bun.sleep(4000);
+				return [assistantMessage("done")];
+			}),
 		]);
 		const started = Date.now();
 		const creation = (await handleRequest(
@@ -598,15 +543,12 @@ test("a background create hands the finished workspace a terminal and the held c
 		setWorkspaceCreationHandoff(null);
 		setWorkspaceCreationPublisher(null);
 		disposeAllSessions();
-		configurePiRuntime(null);
-		setSessionManagerFactory((cwd) => SessionManager.create(cwd));
 		cleanup();
 	}
 });
 
 test("model.default and new session creation share the AppConfig default resolution", async () => {
-	const cleanup = await setupDefaultModelRuntime();
-	setSessionManagerFactory((cwd) => SessionManager.inMemory(cwd, { id: "default-resolution" }));
+	const cleanup = await setupDefaultModel();
 	try {
 		const models = (await handleRequest("model.list", {}, CTX)) as WireModel[];
 		const selected = models.find((model) => model.provider === "handler");
@@ -635,8 +577,6 @@ test("model.default and new session creation share the AppConfig default resolut
 		expect(created).toMatchObject({ model: selected, thinkingLevel: "off" });
 	} finally {
 		disposeAllSessions();
-		configurePiRuntime(null);
-		setSessionManagerFactory((cwd) => SessionManager.create(cwd));
 		cleanup();
 	}
 });
@@ -711,290 +651,6 @@ test("extension.list reflects disabledExtensions written through settings.update
 	]);
 });
 
-test("disabled JetBrains quota returns hidden through its handler", async () => {
-	await handleRequest("settings.update", { config: { jbcentralQuotaEnabled: false } }, CTX);
-	expect(await handleRequest("provider.jbcentralQuota", { force: true }, CTX)).toEqual({
-		state: "hidden",
-	});
-});
-
-test("feedback.respond persists a popup action through the handler", async () => {
-	setFeedbackPublisher(() => true);
-	for (let count = 0; count < 10; count += 1) recordAcceptedMessage(CTX.clientKey);
-
-	expect(await handleRequest("feedback.respond", { action: "postpone" }, CTX)).toEqual({
-		ok: true,
-	});
-	expect(JSON.parse(readFileSync(join(dataDir, "feedback.json"), "utf8"))).toEqual({
-		acceptedMessages: 10,
-		nextInvitationAt: 20,
-		dismissed: false,
-		submittedSurveyId: null,
-		submittedIteration: null,
-		lastInvitedAt: null,
-		githubStarAsked: false,
-	});
-});
-
-const SURVEY_SUBMISSION_ID = "00000000-0000-4000-8000-000000000001";
-
-const remoteSurvey: { iteration: number | null; status: number } = { iteration: 0, status: 200 };
-
-function launchSurvey(iteration = 0): void {
-	remoteSurvey.iteration = iteration;
-	remoteSurvey.status = 200;
-	configureSurveySource({
-		apiKey: "phc_test",
-		fetchImpl: (() => {
-			if (remoteSurvey.status !== 200) {
-				return Promise.resolve(new Response("down", { status: remoteSurvey.status }));
-			}
-			const surveys =
-				remoteSurvey.iteration === null
-					? []
-					: [
-							{
-								id: "survey-1",
-								name: "in-app-feedback",
-								start_date: "2026-10-28T00:00:00.000Z",
-								current_iteration: remoteSurvey.iteration,
-								questions: [{ id: "q1", type: "open", question: "How is it?" }],
-							},
-						];
-			return Promise.resolve(new Response(JSON.stringify({ surveys }), { status: 200 }));
-		}) as unknown as typeof fetch,
-	});
-}
-
-function bootSurveyAnalytics(sent: string[], overrides: { mute?: boolean } = {}): void {
-	initializeAnalytics({
-		posthogApiKey: "phc_test",
-		appVersion: "0.0.0-dev",
-		channel: "dev",
-		build: "source",
-		additionalEnabled: false,
-		env: {},
-		...overrides,
-		fetchImpl: ((_url: string, init?: RequestInit) => {
-			if (typeof init?.body === "string") sent.push(init.body);
-			return Promise.resolve(new Response("{}", { status: 200 }));
-		}) as unknown as typeof fetch,
-	});
-}
-
-function submitSurvey(overrides: Record<string, unknown> = {}) {
-	return handleRequest(
-		"feedback.survey.submit",
-		{
-			submissionId: SURVEY_SUBMISSION_ID,
-			surveyId: "survey-1",
-			iteration: 0,
-			answers: { q1: "Good" },
-			...overrides,
-		},
-		CTX,
-	);
-}
-
-function storedFeedback(): Record<string, unknown> {
-	return JSON.parse(readFileSync(join(dataDir, "feedback.json"), "utf8")) as Record<
-		string,
-		unknown
-	>;
-}
-
-test("feedback.survey stays hidden until a launched survey exists and a sent answer hides it", async () => {
-	expect(await handleRequest("feedback.survey", {}, CTX)).toEqual({ survey: null });
-	await expect(submitSurvey()).rejects.toMatchObject({ code: "SURVEY_UNAVAILABLE" });
-
-	const sent: string[] = [];
-	bootSurveyAnalytics(sent, { mute: true });
-	launchSurvey();
-	expect(await handleRequest("feedback.survey", {}, CTX)).toMatchObject({
-		survey: { id: "survey-1", iteration: 0 },
-	});
-	expect(await submitSurvey()).toEqual({ ok: true });
-	expect(await handleRequest("feedback.survey", {}, CTX)).toEqual({ survey: null });
-	expect(storedFeedback()).toMatchObject({ submittedSurveyId: "survey-1", submittedIteration: 0 });
-	await shutdownAnalytics();
-	expect(sent.some((body) => body.includes('"survey sent"') && body.includes('"Good"'))).toBe(true);
-});
-
-test("feedback.survey.submit refuses a different survey version without completing either", async () => {
-	const sent: string[] = [];
-	bootSurveyAnalytics(sent);
-	launchSurvey(1);
-	await expect(submitSurvey({ iteration: 0 })).rejects.toMatchObject({ code: "SURVEY_CHANGED" });
-	await expect(submitSurvey({ iteration: 1, surveyId: "survey-0" })).rejects.toMatchObject({
-		code: "SURVEY_CHANGED",
-	});
-	await expect(submitSurvey({ iteration: 1, answers: {} })).rejects.toMatchObject({
-		code: "SURVEY_INVALID",
-	});
-	await expect(submitSurvey({ submissionId: "nope" })).rejects.toMatchObject({
-		code: "SURVEY_INVALID",
-	});
-	expect(await handleRequest("feedback.survey", {}, CTX)).toMatchObject({
-		survey: { id: "survey-1", iteration: 1 },
-	});
-	await shutdownAnalytics();
-	expect(sent.some((body) => body.includes('"survey sent"'))).toBe(false);
-});
-
-test("feedback.survey.submit re-reads PostHog instead of trusting the displayed copy", async () => {
-	const sent: string[] = [];
-	bootSurveyAnalytics(sent);
-	launchSurvey(0);
-	expect(await handleRequest("feedback.survey", {}, CTX)).toMatchObject({
-		survey: { iteration: 0 },
-	});
-
-	remoteSurvey.iteration = 1;
-	await expect(submitSurvey()).rejects.toMatchObject({ code: "SURVEY_CHANGED" });
-	remoteSurvey.iteration = null;
-	await expect(submitSurvey({ iteration: 1 })).rejects.toMatchObject({
-		code: "SURVEY_UNAVAILABLE",
-	});
-	remoteSurvey.iteration = 0;
-	remoteSurvey.status = 503;
-	await expect(submitSurvey()).rejects.toMatchObject({ code: "SURVEY_NOT_SENT" });
-	await shutdownAnalytics();
-	expect(sent.some((body) => body.includes('"survey sent"'))).toBe(false);
-	expect(existsSync(join(dataDir, "feedback.json"))).toBe(false);
-});
-
-test("a completion that cannot be saved still counts as sent and never sends the answers twice", async () => {
-	const sent: string[] = [];
-	bootSurveyAnalytics(sent);
-	launchSurvey();
-	expect(await handleRequest("feedback.survey", {}, CTX)).toMatchObject({
-		survey: { id: "survey-1" },
-	});
-	const blocked = join(dataDir, "blocked");
-	writeFileSync(blocked, "not a directory");
-	process.env.THINKRAIL_DATA_DIR = blocked;
-	try {
-		expect(await submitSurvey()).toEqual({ ok: true });
-		await expect(submitSurvey()).rejects.toMatchObject({ code: "SURVEY_UNAVAILABLE" });
-		expect(await handleRequest("feedback.survey", {}, CTX)).toEqual({ survey: null });
-	} finally {
-		process.env.THINKRAIL_DATA_DIR = dataDir;
-	}
-	await shutdownAnalytics();
-	expect(sent.filter((body) => body.includes('"survey sent"'))).toHaveLength(1);
-});
-
-test("feedback.survey speaks the app language and a vanished translation restarts the survey", async () => {
-	const sent: string[] = [];
-	bootSurveyAnalytics(sent);
-	let translations: Record<string, unknown> = { es: { question: "¿Qué tal?" } };
-	configureSurveySource({
-		apiKey: "phc_test",
-		fetchImpl: (() =>
-			Promise.resolve(
-				new Response(
-					JSON.stringify({
-						surveys: [
-							{
-								id: "survey-1",
-								name: "in-app-feedback",
-								start_date: "2026-10-28T00:00:00.000Z",
-								questions: [{ id: "q1", type: "open", question: "How is it?", translations }],
-							},
-						],
-					}),
-				),
-			)) as unknown as typeof fetch,
-	});
-	expect(await handleRequest("feedback.survey", { language: "es-MX" }, CTX)).toMatchObject({
-		survey: { language: "es", questions: [{ question: "¿Qué tal?" }] },
-	});
-	expect(await handleRequest("feedback.survey", {}, CTX)).not.toMatchObject({
-		survey: { language: "es" },
-	});
-
-	translations = {};
-	await expect(submitSurvey({ language: "es" })).rejects.toMatchObject({ code: "SURVEY_CHANGED" });
-	translations = { es: { question: "¿Qué tal?" } };
-	expect(await submitSurvey({ language: "es" })).toEqual({ ok: true });
-	await shutdownAnalytics();
-	expect(sent.some((body) => body.includes('"$survey_language":"es"'))).toBe(true);
-});
-
-test("feedback.survey.submit does not complete a survey whose answers were not sent", async () => {
-	launchSurvey();
-	await expect(submitSurvey()).rejects.toMatchObject({ code: "SURVEY_NOT_SENT" });
-	expect(await handleRequest("feedback.survey", {}, CTX)).toMatchObject({
-		survey: { id: "survey-1" },
-	});
-});
-
-test("feedback.respond rejects an action outside the wire union", async () => {
-	for (const action of ["later", "book"]) {
-		await expect(handleRequest("feedback.respond", { action }, CTX)).rejects.toThrow(
-			"Invalid invitation response",
-		);
-	}
-});
-
-test("project.setTrust grants pi-level resource trust only when the request asks for resources", async () => {
-	writeFileSync(
-		join(dataDir, "projects.json"),
-		JSON.stringify([
-			{
-				id: "p1",
-				name: "repo",
-				path: repo,
-				slug: "repo",
-				lastOpened: 1,
-				piResourceTrust: "untrusted",
-			},
-		]),
-	);
-	const setTrust = async (params: { trusted: boolean; resources?: boolean }) =>
-		(await handleRequest("project.setTrust", { id: "p1", ...params }, CTX)) as Project;
-
-	expect(await setTrust({ trusted: true })).toMatchObject({
-		trusted: true,
-		piResourceTrust: "untrusted",
-	});
-	expect(await setTrust({ trusted: true, resources: true })).toMatchObject({
-		trusted: true,
-		piResourceTrust: "granted",
-	});
-	expect(await setTrust({ trusted: false })).toMatchObject({
-		trusted: false,
-		piResourceTrust: "untrusted",
-	});
-});
-
-test("project.setTrust acknowledges the present aliases only when it grants alias trust", async () => {
-	const writeAlias = (name: string) => {
-		const directory = join(repo, ".claude", "skills", name);
-		mkdirSync(directory, { recursive: true });
-		writeFileSync(
-			join(directory, "SKILL.md"),
-			`---\nname: ${name}\ndescription: ${name} alias\n---\n\n# ${name}\n`,
-		);
-	};
-	const setTrust = async (params: { trusted: boolean; resources?: boolean }) =>
-		(await handleRequest("project.setTrust", { id: "p1", ...params }, CTX)) as Project;
-	writeAlias("first-alias");
-	expect((await setTrust({ trusted: true })).acknowledgedSkills).toEqual(["first-alias"]);
-
-	writeAlias("late-alias");
-	expect(await setTrust({ trusted: true, resources: true })).toMatchObject({
-		piResourceTrust: "granted",
-		acknowledgedSkills: ["first-alias"],
-	});
-
-	await setTrust({ trusted: false });
-	expect((await setTrust({ trusted: true })).acknowledgedSkills?.sort()).toEqual([
-		"first-alias",
-		"late-alias",
-	]);
-});
-
 test("workspace.rename locks the display name without changing Git or the worktree path", async () => {
 	const created = (await handleRequest("workspace.create", { projectId: "p1" }, CTX)) as Workspace;
 
@@ -1016,7 +672,7 @@ test("workspace.rename locks the display name without changing Git or the worktr
 	expect(listed.find((workspace) => workspace.id === created.id)).toMatchObject(renamed);
 });
 
-test("session.rename persists a bounded title into a closed Pi transcript", async () => {
+test("session.rename persists a bounded title into a closed application transcript", async () => {
 	const savedAgentDir = process.env.PI_CODING_AGENT_DIR;
 	const agentDir = join(dataDir, "rename-agent");
 	process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -1024,8 +680,9 @@ test("session.rename persists a bounded title into a closed Pi transcript", asyn
 		const rows = (await handleRequest("workspace.list", { projectId: "p1" }, CTX)) as Workspace[];
 		const workspace = rows[0];
 		if (!workspace) throw new Error("expected a workspace");
-		const fixture = writeFixtureSession(defaultSessionDirFor(agentDir, workspace.worktreePath), {
+		const fixture = writeFixtureSession(sessionDirFor(dataDir), {
 			cwd: workspace.worktreePath,
+			workspaceId: workspace.id,
 			name: "Before rename",
 			messages: [{ role: "user", text: "hello", timestamp: Date.now() }],
 		});
@@ -1037,7 +694,7 @@ test("session.rename persists a bounded title into a closed Pi transcript", asyn
 				CTX,
 			),
 		).toEqual({ ok: true });
-		expect(SessionManager.open(fixture.path).getSessionName()).toBe("After rename");
+		expect(JSON.parse(readFileSync(fixture.path, "utf8")).title).toBe("After rename");
 		await expect(
 			handleRequest(
 				"session.rename",
@@ -1056,50 +713,6 @@ test("session.rename persists a bounded title into a closed Pi transcript", asyn
 		if (savedAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = savedAgentDir;
 	}
-});
-
-test("workspace.setSubagentsOverride persists on/off and null restores the global default", async () => {
-	const created = (await handleRequest("workspace.create", { projectId: "p1" }, CTX)) as Workspace;
-
-	const enabled = (await handleRequest(
-		"workspace.setSubagentsOverride",
-		{ id: created.id, override: "on" },
-		CTX,
-	)) as Workspace;
-	expect(enabled.subagentsOverride).toBe("on");
-
-	const disabled = (await handleRequest(
-		"workspace.setSubagentsOverride",
-		{ id: created.id, override: "off" },
-		CTX,
-	)) as Workspace;
-	expect(disabled.subagentsOverride).toBe("off");
-
-	const inherited = (await handleRequest(
-		"workspace.setSubagentsOverride",
-		{ id: created.id, override: null },
-		CTX,
-	)) as Workspace;
-	expect(inherited.subagentsOverride).toBeUndefined();
-});
-
-test("workspace.setSubagentMaxConcurrent persists a limit and null restores the global one", async () => {
-	const created = (await handleRequest("workspace.create", { projectId: "p1" }, CTX)) as Workspace;
-	const limited = (await handleRequest(
-		"workspace.setSubagentMaxConcurrent",
-		{ id: created.id, value: 2 },
-		CTX,
-	)) as Workspace;
-	expect(limited.subagentMaxConcurrentOverride).toBe(2);
-	const inherited = (await handleRequest(
-		"workspace.setSubagentMaxConcurrent",
-		{ id: created.id, value: null },
-		CTX,
-	)) as Workspace;
-	expect(inherited.subagentMaxConcurrentOverride).toBeUndefined();
-	await expect(
-		handleRequest("workspace.setSubagentMaxConcurrent", { id: created.id, value: 0 }, CTX),
-	).rejects.toThrow("Subagent limit must be a whole number from 1 to 16");
 });
 
 test("workspace.watchReady waits for startup once, then reports an already-ready watcher", async () => {
@@ -1121,50 +734,8 @@ test("workspace.watchReady waits for startup once, then reports an already-ready
 	expect(second).toEqual({ startupNudge: false });
 });
 
-test("todo.requestFix on a chat that isn't on disk rolls the record back and never marks findings sent", async () => {
-	const rows = (await handleRequest("workspace.list", { projectId: "p1" }, CTX)) as Workspace[];
-	const workspace = rows[0];
-	if (!workspace) throw new Error("expected a workspace");
-	const sessionId = "sess-fix";
-	const todo = new TodoStore(workspace.worktreePath, sessionId).add({
-		title: "t",
-		artifacts: [{ kind: "commit", sha: "sha1", label: "a" }],
-	});
-	const finding = await addComment({
-		workspaceId: workspace.id,
-		kind: "inline",
-		author: "agent",
-		anchor: {
-			path: "README.md",
-			side: "worktree",
-			contentHash: "",
-			selectors: [{ kind: "lineRange", startLine: 1, endLine: 1 }],
-		},
-		body: "finding",
-		origin: { todoId: todo.id, sessionId, reviewedSha: "sha1" },
-	});
-
-	await expect(
-		handleRequest(
-			"todo.requestFix",
-			{ workspaceId: workspace.id, sessionId, id: todo.id, feedback: "please fix" },
-			CTX,
-		),
-	).rejects.toThrow("no longer on disk");
-
-	expect(todoReviewRecord({ workspaceId: workspace.id, sessionId, id: todo.id })).toBeUndefined();
-	const after = (await getReviewSnapshot(workspace.id)).comments.find((c) => c.id === finding.id);
-	expect(after?.status).toBe("draft");
-	expect(after?.sessionId).toBeUndefined();
-});
-
 test("a review send that names its chat lands every file's drafts there as one package", async () => {
-	const cleanup = await setupDefaultModelRuntime();
-	let sessions = 0;
-	setSessionManagerFactory((cwd) => {
-		sessions += 1;
-		return SessionManager.inMemory(cwd, { id: `review-send-${sessions}` });
-	});
+	const cleanup = await setupDefaultModel();
 	try {
 		const rows = (await handleRequest("workspace.list", { projectId: "p1" }, CTX)) as Workspace[];
 		const workspace = rows[0];
@@ -1205,8 +776,6 @@ test("a review send that names its chat lands every file's drafts there as one p
 		]);
 	} finally {
 		disposeAllSessions();
-		configurePiRuntime(null);
-		setSessionManagerFactory((cwd) => SessionManager.create(cwd));
 		cleanup();
 	}
 });
@@ -1227,121 +796,4 @@ test("workspace mutation handlers reject the Default before any side effect", as
 	const after = (await handleRequest("workspace.list", { projectId: "p1" }, CTX)) as Workspace[];
 	expect(after.filter((w) => w.kind === "default")).toHaveLength(1);
 	expect(after[0]?.id).toBe(def.id);
-});
-
-test("resource handlers scope every read/control to a registered workspace and actual parent", async () => {
-	const priorAgentDir = process.env.PI_CODING_AGENT_DIR;
-	const priorOffline = process.env.PI_OFFLINE;
-	process.env.PI_CODING_AGENT_DIR = join(dataDir, "agent");
-	process.env.PI_OFFLINE = "1";
-	configurePiRuntime(
-		await ModelRuntime.create({
-			credentials: new InMemoryCredentialStore(),
-			modelsPath: null,
-			allowModelNetwork: false,
-		}),
-	);
-	setSessionManagerFactory((cwd) => SessionManager.inMemory(cwd, { id: "release.1" }));
-	try {
-		const workspace = (await handleRequest(
-			"workspace.create",
-			{ projectId: "p1" },
-			CTX,
-		)) as Workspace;
-		const other = (await handleRequest("workspace.create", { projectId: "p1" }, CTX)) as Workspace;
-		const parent = (await handleRequest(
-			"session.create",
-			{ workspaceId: workspace.id },
-			CTX,
-		)) as CreateSessionResult;
-		const scope = { workspaceId: workspace.id, sessionId: parent.sessionId };
-		const none = { done: 0, failed: 0, stopped: 0, interrupted: 0 };
-		expect(await handleRequest("session.resources", scope, CTX)).toEqual({
-			...scope,
-			commands: [],
-			subagents: [],
-			mcpServers: [],
-			history: { commands: none, subagents: none },
-		});
-		expect(
-			await handleRequest(
-				"session.resourceHistory",
-				{ ...scope, kind: "command", before: { at: 1, id: "older" }, limit: 5 },
-				CTX,
-			),
-		).toEqual({ kind: "command", items: [], hasMore: false });
-		expect(
-			await handleRequest("backgroundCommand.output", { ...scope, commandId: "missing" }, CTX),
-		).toEqual({ available: false });
-		await expect(
-			handleRequest("backgroundCommand.stop", { ...scope, commandId: "missing" }, CTX),
-		).rejects.toMatchObject({ code: "RESOURCE_UNAVAILABLE" });
-		const children = { workspaceId: workspace.id, parentSessionId: parent.sessionId };
-		expect(await handleRequest("subagent.stopAll", children, CTX)).toEqual({
-			ok: true,
-			targeted: 0,
-		});
-		await expect(
-			handleRequest("subagent.stop", { ...children, childSessionId: "missing" }, CTX),
-		).rejects.toMatchObject({ code: "RESOURCE_UNAVAILABLE" });
-		for (const workspaceId of [other.id, "missing-workspace"]) {
-			const calls = [
-				["session.resources", { ...scope, workspaceId }],
-				["session.resourceHistory", { ...scope, workspaceId, kind: "subagent" }],
-				["backgroundCommand.output", { ...scope, workspaceId, commandId: "missing" }],
-				["backgroundCommand.stop", { ...scope, workspaceId, commandId: "missing" }],
-				["subagent.stop", { ...children, workspaceId, childSessionId: "missing" }],
-				["subagent.stopAll", { ...children, workspaceId }],
-			] as const;
-			for (const [method, params] of calls)
-				await expect(handleRequest(method, params, CTX)).rejects.toMatchObject({
-					code: "RESOURCE_UNAVAILABLE",
-				});
-		}
-		await expect(
-			handleRequest("session.resources", { ...scope, sessionId: "unknown-parent" }, CTX),
-		).rejects.toMatchObject({ code: "RESOURCE_UNAVAILABLE" });
-		for (const params of [
-			undefined,
-			null,
-			{},
-			{ ...scope, sessionId: "../secret" },
-			{ ...scope, sessionId: 123 },
-			{ ...scope, path: "/tmp/secret" },
-			{ ...scope, pid: 123 },
-		]) {
-			await expect(handleRequest("session.resources", params, CTX)).rejects.toThrow(
-				"Invalid resource ids",
-			);
-		}
-		for (const params of [
-			{ ...scope, kind: "terminal" },
-			{ ...scope, kind: "command", limit: 0 },
-			{ ...scope, kind: "command", limit: 1.5 },
-			{ ...scope, kind: "command", before: { at: 1, id: "../secret" } },
-			{ ...scope, kind: "command", before: { at: "1", id: "older" } },
-			{ ...scope, kind: "command", before: { at: 1, id: "older", path: "/tmp" } },
-			{ ...scope, kind: "subagent", path: "/tmp/secret" },
-		]) {
-			await expect(handleRequest("session.resourceHistory", params, CTX)).rejects.toThrow(
-				/Invalid resource (?:history|ids)/,
-			);
-		}
-		for (const commandId of ["/tmp/output", "..", "C:\\output", "bad\u0000id"]) {
-			await expect(
-				handleRequest("backgroundCommand.output", { ...scope, commandId }, CTX),
-			).rejects.toThrow("Invalid resource ids");
-			await expect(
-				handleRequest("backgroundCommand.stop", { ...scope, commandId }, CTX),
-			).rejects.toThrow("Invalid resource ids");
-		}
-	} finally {
-		disposeAllSessions();
-		configurePiRuntime(null);
-		setSessionManagerFactory((cwd) => SessionManager.create(cwd));
-		if (priorAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = priorAgentDir;
-		if (priorOffline === undefined) delete process.env.PI_OFFLINE;
-		else process.env.PI_OFFLINE = priorOffline;
-	}
 });

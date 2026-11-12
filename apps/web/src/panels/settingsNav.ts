@@ -14,14 +14,11 @@ import {
 	RiNotification3Line,
 	RiPaletteLine,
 	RiPlugLine,
-	RiPuzzle2Line,
-	RiShieldCheckLine,
 	RiTerminalBoxLine,
 	RiTranslate2,
 } from "@remixicon/react";
 import {
 	DEFAULT_MODEL_PROTOCOL_VERSION,
-	EXTENSION_CATALOG_PROTOCOL_VERSION,
 	HOST_ENVIRONMENT_PROTOCOL_VERSION,
 	LOCALES_PROTOCOL_VERSION,
 	MCP_PROTOCOL_VERSION,
@@ -103,17 +100,10 @@ const NAV_GROUPS: SettingsNavGroup[] = [
 			},
 			{ id: SettingsSection.Github, label: "settings.nav.github", icon: RiApps2Line },
 			{
-				id: SettingsSection.Extensions,
-				label: "settings.nav.extensions",
-				icon: RiPuzzle2Line,
-				requiresProtocolVersion: EXTENSION_CATALOG_PROTOCOL_VERSION,
-			},
-			{
 				id: SettingsSection.Notifications,
 				label: "settings.nav.notifications",
 				icon: RiNotification3Line,
 			},
-			{ id: SettingsSection.Privacy, label: "settings.nav.privacy", icon: RiShieldCheckLine },
 			{
 				id: SettingsSection.Updates,
 				label: "settings.nav.updates",
@@ -161,7 +151,7 @@ export function resolveSettingsSection(
 	groups: SettingsNavGroup[],
 ): SettingsSection {
 	const available = groups.flatMap((g) => g.sections);
-	if (section === SettingsSection.Feedback || available.some((s) => s.id === section)) {
+	if (available.some((s) => s.id === section)) {
 		return section;
 	}
 	if (available.some((s) => s.id === SettingsSection.Appearance)) {

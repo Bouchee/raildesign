@@ -1,8 +1,8 @@
-import { stripAmbientPiCredentials } from "./ambientCredentials";
-import { isRealCentralE2e, REAL_CENTRAL_E2E_ENV } from "./fixtures/centralAgent";
+import { stripAmbientModelCredentials } from "./ambientCredentials";
+import { isLiveAgentE2e, LIVE_AGENT_E2E_ENV } from "./fixtures/sdkAgent";
 import { PLAYWRIGHT_CONFIG } from "./processRunner";
 
-export const CENTRAL_PLAYWRIGHT_RUNNER_AUTH_ENV = "THINKRAIL_E2E_CENTRAL_RUNNER_AUTHORIZED";
+export const LIVE_PLAYWRIGHT_RUNNER_AUTH_ENV = "RAILDESIGN_E2E_LIVE_RUNNER_AUTHORIZED";
 export const WEB_BUILD_READY_ENV = "THINKRAIL_E2E_WEB_BUILD_READY";
 
 export interface AgentRunPlan {
@@ -11,15 +11,12 @@ export interface AgentRunPlan {
 	env: NodeJS.ProcessEnv;
 }
 
-export function assertCentralPlaywrightRunner(
-	env: NodeJS.ProcessEnv,
-	args: readonly string[],
-): void {
+export function assertLivePlaywrightRunner(env: NodeJS.ProcessEnv, args: readonly string[]): void {
 	const authorized =
-		env.THINKRAIL_E2E_SKIP_BUILD === "1" && env[CENTRAL_PLAYWRIGHT_RUNNER_AUTH_ENV] === "1";
-	if (isRealCentralE2e(env) && !authorized && !args.includes("--list")) {
+		env.THINKRAIL_E2E_SKIP_BUILD === "1" && env[LIVE_PLAYWRIGHT_RUNNER_AUTH_ENV] === "1";
+	if (isLiveAgentE2e(env) && !authorized && !args.includes("--list")) {
 		throw new Error(
-			"Real-Central Playwright execution must use `bun run e2e:agent` or `bun run e2e:full`",
+			"Live SDK Playwright execution must use `bun run e2e:agent` or `bun run e2e:full`",
 		);
 	}
 }
@@ -33,12 +30,12 @@ export function createAgentRunPlan(
 	const listOnly = playwrightArgs.includes("--list");
 	const buildCommand =
 		listOnly || options.webBuildReady === true ? null : [bun, "run", "build:web"];
-	const childEnv = stripAmbientPiCredentials({
+	const childEnv = stripAmbientModelCredentials({
 		...env,
 		THINKRAIL_E2E_SKIP_BUILD: "1",
-		[REAL_CENTRAL_E2E_ENV]: "1",
+		[LIVE_AGENT_E2E_ENV]: "1",
 	});
-	childEnv[CENTRAL_PLAYWRIGHT_RUNNER_AUTH_ENV] = "1";
+	childEnv[LIVE_PLAYWRIGHT_RUNNER_AUTH_ENV] = "1";
 	delete childEnv[WEB_BUILD_READY_ENV];
 	delete childEnv.THINKRAIL_E2E_LANE;
 	delete childEnv.PLAYWRIGHT_BLOB_OUTPUT_FILE;

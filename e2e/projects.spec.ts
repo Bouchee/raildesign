@@ -63,7 +63,7 @@ async function holdNextPickerReply(page: Page, pickerPath: string) {
 						? (frame.params as Record<string, unknown>)
 						: null;
 				if (frame?.method === "project.open" && params?.path === pickerPath) staleOpenSent = true;
-				if (frame?.method === "provider.status") barrier.send();
+				if (frame?.method === "customEndpoints.list") barrier.send();
 			}
 			serverSocket.send(message);
 		});
@@ -132,7 +132,7 @@ test("opens a project from an explicit host path", async ({ page }) => {
 
 	const dialog = page.getByTestId("open-project-path-dialog");
 	await expect(dialog).toBeVisible();
-	await expect(dialog).toContainText("computer running ThinkRail");
+	await expect(dialog).toContainText("computer running RailDesign");
 	await expect(dialog.getByTestId("open-project-picker-error")).toHaveCount(0);
 	const input = dialog.getByTestId("open-project-path-input");
 	await expect(input).toBeFocused();
@@ -191,6 +191,7 @@ test("manual path from the rail supersedes a picker started from Welcome", async
 	await pickerReply.acknowledged;
 	pickerReply.armBarrier();
 	await page.getByTestId("open-settings").click();
+	await page.getByTestId("settings-nav-providers").click();
 	await pickerReply.barrier;
 	expect(pickerReply.staleOpenWasSent()).toBe(false);
 	await page.keyboard.press("Escape");
@@ -504,8 +505,8 @@ test("project context actions stay compact and close/reopen is lossless across c
 	await page.getByTestId("confirm-close-project").click();
 	await expect(page.getByTestId("project-item")).toHaveCount(0);
 	await expect(observer.getByTestId("project-item")).toHaveCount(0);
-	await expect(page.getByTestId("welcome-title")).toHaveText("ThinkRail");
-	await expect(observer.getByTestId("welcome-title")).toHaveText("ThinkRail");
+	await expect(page.getByTestId("welcome-title")).toHaveText("RailDesign");
+	await expect(observer.getByTestId("welcome-title")).toHaveText("RailDesign");
 	await expect(page.getByTestId("add-project-menu")).toBeFocused();
 
 	await page.getByTestId("add-project-menu").click();

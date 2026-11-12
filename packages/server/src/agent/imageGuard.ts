@@ -1,9 +1,8 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	ACCEPTED_IMAGE_TYPES,
-	type AgentMessage,
 	IMAGE_MAX_BASE64_BYTES,
 	REQUEST_IMAGE_BASE64_BUDGET,
+	type TranscriptMessage,
 } from "@thinkrail/contracts";
 
 export const SINGLE_IMAGE_EDGE_LIMIT = 8000;
@@ -98,8 +97,11 @@ const REMOVAL_HINT = "ask the user to re-attach a smaller version if it is still
 const mb = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 const mbLimit = (bytes: number) => `${bytes / (1024 * 1024)}MB`;
 
-export function guardOversizedImages(messages: AgentMessage[]): AgentMessage[] | undefined {
-	const blocksOf = (m: AgentMessage): ContentBlock[] | undefined => {
+/** Preserved image policy; the current text-only SDK target does not invoke it. */
+export function guardOversizedImages(
+	messages: TranscriptMessage[],
+): TranscriptMessage[] | undefined {
+	const blocksOf = (m: TranscriptMessage): ContentBlock[] | undefined => {
 		const content = (m as { content?: unknown }).content;
 		return Array.isArray(content) ? (content as ContentBlock[]) : undefined;
 	};
@@ -195,12 +197,4 @@ export function isAnthropicFamilyModel(
 	if (!model) return false;
 	if (model.provider === "anthropic" || model.api === "anthropic-messages") return true;
 	return /claude/i.test(model.id ?? "");
-}
-
-export function oversizedImageGuard(pi: ExtensionAPI): void {
-	pi.on("context", (event, ctx) => {
-		if (!isAnthropicFamilyModel(ctx.model)) return undefined;
-		const messages = guardOversizedImages(event.messages);
-		return messages ? { messages } : undefined;
-	});
 }

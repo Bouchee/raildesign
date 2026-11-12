@@ -9,52 +9,39 @@ tags: [host]
 references: [module-artifact-tests]
 ---
 
+## RailDesign identity and execution
+
+RailDesign uses `io.github.bouchee.raildesign`, new state under `~/.raildesign`, the `raildesign`
+CLI, and updates from `https://github.com/Bouchee/thinkrail/releases/download/desktop-updates`.
+The SDK execution path belongs to the shared host. Launchers contain native startup and packaging only.
+No JetBrains service, PostHog key, attribution or survey integration ships in development builds.
+The fork does not import the official application's records or configuration.
+
 ## Responsibility
 
-The retained browser launcher and standalone rollback artifact: the `thinkrail` bin. It boots the engine
+The retained browser launcher and standalone rollback artifact: the `raildesign` bin. It boots the engine
 host in-process and opens the browser UI at its URL. It is a thin sibling of `apps/desktop`; all engine
 and process-boot logic lives in `packages/server`.
 
-## Flow
+## Flow and interface
 
-1. Parse argv + env into options (`src/args.ts`, a pure function); `--help` prints usage and exits.
-2. Resolve the static dir (`THINKRAIL_STATIC_DIR`, else the built web app shipped beside the bin) and
-   warn if it is missing.
-3. Await `bootHost({ portMode: "free", resolveShellEnv: true, … })`. The shared boot path installs crash
-   logging, repairs the login-shell environment, initializes the current PI runtime/Central watcher,
-   resolves a free serving port at or above the requested one, and embeds the host in this Bun process. Another CLI or desktop
-   host using the same data directory does not block startup; each process serves its own endpoint.
-4. On interactive stdout render the shared recursive ThinkRail startup mark with honest `host ready`
-   status + the resolved endpoint, retain the parse-stable `thinkrail → <url>` line, and open the browser
-   there (cross-platform: `open` / `start` / `xdg-open`, best-effort), unless `--no-open`. Exit-only
-   commands and redirected output omit the mark.
-5. SIGINT / SIGTERM await the shared idempotent `server.shutdown()` before exit; they do not duplicate
-   agent, analytics, or resource teardown.
+Parse flags and environment, resolve web assets, then call the shared `bootHost`. Normal launch opens
+that host URL unless `--no-open`. Only interactive output prints the RailDesign startup mark; every
+launch retains `raildesign → <url>`. Shutdown belongs to the host. A second writer to the same data
+directory is rejected by the host's ownership policy.
 
-## Interface
+The executable is `raildesign`; internal workspace package names stay `@thinkrail/*`.
+Options are `--port`, `--host`, `--no-open`, `--verbose`, `--version`, `--help` and one optional project
+directory. `THINKRAIL_PORT`, `THINKRAIL_HOST`, `THINKRAIL_STATIC_DIR` and `THINKRAIL_LOG_LEVEL` retain
+the developer configuration namespace. Telemetry flags and callbacks are removed.
 
-`bin` = `./src/index.ts` (bun runs the TS source directly). A leading `update` or `uninstall` positional
-is a **subcommand** (`thinkrail update [--channel stable|nightly]
-[--version X.Y.Z|X.Y.Z-nightly.N|latest]`,
-`thinkrail uninstall [--remove-data|--keep-data] [-y]`) intercepted before the launch flags — see
-*Self-update* / *Uninstall* below. The set lives in `args.ts` (`parseSubcommand`) because the compiled
-entry needs it too: a subcommand never boots the host, so it must not pay for (or, in `uninstall`'s case,
-re-create) the staged asset cache. Otherwise the launch args: `--port` (stable default 24242,
-scans upward to the next free port on collision), `--host` (default `localhost`), `--no-open`,
-`--no-analytics` (**per-run suppression of additional analytics only** — basic events remain on;
-the durable additional-data choice is Settings → Privacy, see [[submodule-server-analytics]]),
-`--verbose` (debug-level logging — threaded to `bootHost` as `verbose: true`; the log files under
-`<dataDir>/logs` and their env switch `THINKRAIL_LOG_LEVEL` belong to `submodule-server-log`, whose
-module is that variable's single reader — same pattern as `THINKRAIL_NO_ANALYTICS`, so `dev.ts` honors
-it too),
-`-v`/`--version` (print the baked version and exit), `-h`/`--help`, and one positional `project-dir` (a
-git repo to open as a project on boot, best-effort). Env defaults: `THINKRAIL_PORT` / `THINKRAIL_HOST` /
-`THINKRAIL_STATIC_DIR` (flag > env > default). `THINKRAIL_NO_ANALYTICS` is documented in `--help` but
-deliberately **not** parsed here — the host's analytics module is its single reader (see below). Ports must be plain decimals 0-65535: an empty or non-decimal `--port`, or an empty `--host`, throws; an empty or invalid `THINKRAIL_PORT` / `THINKRAIL_HOST` is ignored and the default is used.
+`update` and `uninstall` are exit-only subcommands; neither boots the host or re-creates staged assets.
+CLI install records are under `~/.config/raildesign`, caches under the OS cache root's `raildesign`,
+and user application state under `~/.raildesign`. They never touch official ThinkRail installations.
 
 ## Update advisory
 
-A compiled `stable`/`nightly` binary in the supported `<prefix>/bin/thinkrail[.exe]` layout supplies `bootHost`
+A compiled `stable`/`nightly` binary in the supported `<prefix>/bin/raildesign[.exe]` layout supplies `bootHost`
 with one optional periodic update-notice producer; source and `dev` identities and manually placed binaries do
 not expose the capability. After the host is ready it performs a bounded lookup
 immediately and every six hours on the baked channel with the same GitHub rules as the installers: stable reads
@@ -63,21 +50,21 @@ strictly newer version produces `{ currentVersion, availableVersion, channel }` 
 no-update are silent. A different newer release may replace available or failed state, but successful execution
 latches until host restart so the still-running old process can neither rediscover nor install another release.
 
-The shared update surface offers **Run Update** for a compiled host and retains fixed `thinkrail update`
+The shared update surface offers **Run Update** for a compiled host and retains fixed `raildesign update`
 guidance for older clients/hosts or a failed run. The action invokes this same installed binary's parameterless
 update subcommand asynchronously; the browser cannot select a command, path, channel, version, or URL. Bounded
 running/succeeded/failed state converges every client, and success requires the user to restart the unsupervised
 host manually rather than aborting active work. Discovery and execution remain absent from
 `update`/`uninstall`/help/version exits and all source/dev launches.
 
-## Self-update (`thinkrail update`)
+## Self-update (`raildesign update`)
 
-`src/update.ts` ports the old repo's `thinkrail upgrade` (renamed): it re-invokes the **published
+`src/update.ts` ports the old repo's `raildesign upgrade` (renamed): it re-invokes the **published
 installer** for the binary's channel — `install.sh` on macOS/Linux, `install.ps1` on Windows — so the
 installer stays the single source of the download → checksum → replace → PATH logic. For an installed binary,
 the running `<prefix>/bin` layout is authoritative; an explicit channel flag wins, then metadata from that same
 installation, then its baked channel. A source invocation without a running binary layout may use
-`~/.config/thinkrail/install.json` and falls back to `stable` / `~/.local`.
+`~/.config/raildesign/install.json` and falls back to `stable` / `~/.local`.
 
 - **Unix:** `curl` the script, feed it to `bash -s -- --channel … --prefix … [--version …]`.
 - **Windows:** fetch `install.ps1`, write it to a temp `.ps1`, and run it through the first available
@@ -87,25 +74,25 @@ installation, then its baked channel. A source invocation without a running bina
   minefield) hands the installer's own params through argv. All three params are passed **always**,
   including `-Version latest`: install.ps1's params *default from the `THINKRAIL_*` env vars*, which the
   child would inherit, so being explicit is what makes an update deterministic for a user who has one
-  set. Replacing the *running* exe works because install.ps1's `Install-ThinkRailBinary` renames a locked
-  `thinkrail.exe` aside to `thinkrail.exe.<rand>.old` (Windows refuses to *delete* a running image but
+  set. Replacing the *running* exe works because install.ps1's `Install-RailDesignBinary` renames a locked
+  `raildesign.exe` aside to `raildesign.exe.<rand>.old` (Windows refuses to *delete* a running image but
   permits *renaming* it) and drops the fresh one in; the next install sweeps the leftover.
 
 Any Windows failure (fetch, no PowerShell host, installer non-zero) falls back to *printing* the manual
 per-shell command (`windowsManualUpdateMessage`) with the releases page under it: cmd's `set "X=v" &&`
 and PowerShell's `$env:X='v';` are not interchangeable. Update planning binds metadata to the running
-`<prefix>/bin/thinkrail[.exe]` before trusting its prefix or channel; stale/unrelated metadata cannot update a
+`<prefix>/bin/raildesign[.exe]` before trusting its prefix or channel; stale/unrelated metadata cannot update a
 different copy. Missing metadata falls back to that running layout, including normalized legacy Git-Bash
 `/c/...` and `/cygdrive/c/...` prefixes. Prefix representability follows [[module-ci-release]] rather than an
 ASCII-only path policy: Unicode and benign punctuation remain valid. A manual binary outside the representable
-layout—including a directly run release asset such as `thinkrail-linux-x64`—fails closed with manual guidance
+layout—including a directly run release asset such as `raildesign-linux-x64`—fails closed with manual guidance
 rather than installing under `.local`; that preflight also withholds the host update capability. Version/channel
 combinations are validated after resolution. The planning functions remain pure and unit-tested; only installer
 fetch and execution touch IO.
 `THINKRAIL_INSTALL_SCRIPT_URL` / `THINKRAIL_INSTALL_PS1_URL` override the installer URLs (testing /
 forks). See `module-ci-release` for the installers themselves.
 
-## Uninstall (`thinkrail uninstall`)
+## Uninstall (`raildesign uninstall`)
 
 `src/uninstall.ts` is the inverse of the installers, and only of them: it removes **the executable, the
 PATH edit the installer made, `install.json`, and the binary's staging cache** — then *asks* about the
@@ -119,11 +106,11 @@ worktrees and any uncommitted work in them. pi's own state (`~/.pi`) is never to
 - **Prompts** (`node:readline/promises`): the data-dir question (default *keep*), then a final confirm.
   `-y`/`--yes` skips both and `--keep-data`/`--remove-data` answers the first one non-interactively; with
   no TTY and no `--yes` the command refuses rather than guessing.
-- **Which executables:** `<prefix>/bin/thinkrail[.exe]` from the install metadata (else the installers'
-  `~/.local` default) **plus `process.execPath` when it is itself a `thinkrail` binary** — that covers a
+- **Which executables:** `<prefix>/bin/raildesign[.exe]` from the install metadata (else the installers'
+  `~/.local` default) **plus `process.execPath` when it is itself a `raildesign` binary** — that covers a
   custom prefix whose `install.json` is gone. Nothing else is ever deleted, whatever the metadata says.
 - **The PATH edit, per platform seam:** on Unix the installer's block is *self-identifying*
-  (`# >>> thinkrail PATH >>>` … `# <<< thinkrail PATH <<<`), so `stripRcPathBlock` removes it from every
+  (`# >>> raildesign PATH >>>` … `# <<< raildesign PATH <<<`), so `stripRcPathBlock` removes it from every
   candidate rc file that carries it (bash/zsh/`$ZDOTDIR`/`.profile`, and the fish `conf.d` file is
   deleted when nothing but the block was in it) — and refuses to touch a file whose block has no end
   marker rather than truncating it. On Windows the registry entry is *opaque* (nothing marks it as ours),
@@ -137,12 +124,12 @@ worktrees and any uncommitted work in them. pi's own state (`~/.pi`) is never to
   user's own `C:/…/bin` entry counts as already present: install never appends a duplicate it would then
   record as its own, which the uninstaller would remove together with the user's entry. The edit itself runs
   as an embedded PowerShell script —
-  the exact inverse of install.ps1's `Add-ThinkRailToUserPath` (same `HKCU\Environment` handling,
+  the exact inverse of install.ps1's `Add-RailDesignToUserPath` (same `HKCU\Environment` handling,
   preserving the value's `REG_EXPAND_SZ` kind, comparing entries raw *and* `%VAR%`-expanded, then
   broadcasting `WM_SETTINGCHANGE`) — because round-tripping a raw PATH value through a pipe would risk
   mangling non-ASCII entries in the console code page.
 - **Deleting the running program:** Unix unlinks a running binary happily. Windows cannot, so the exe is
-  renamed to the same `thinkrail.exe.<rand>.old` name install.ps1's cleanup already recognizes, and a
+  renamed to the same `raildesign.exe.<rand>.old` name install.ps1's cleanup already recognizes, and a
   detached PowerShell retries the delete for a few seconds after we exit; the report says which happened.
   Stale `.old`/`.new` leftovers in the bin dir are swept too.
 - `src/powershell.ts` is the shared seam for both Windows paths (find a host, run a script text through
@@ -150,184 +137,21 @@ worktrees and any uncommitted work in them. pi's own state (`~/.pi`) is never to
   `install.json` (read by `update` + `uninstall`) and the staging cache root (written by
   `compiled-entry`, deleted by `uninstall`) — so those three agree by construction.
 
-## Version stamping (release seam)
+## Version stamping
 
-`@thinkrail/shared/version` exports `{ version, channel, commit, posthogProjectKey }` with a permanent
-from-source default (`0.0.0-dev`, empty key). The release pipeline overwrites that one module in the
-throwaway CI checkout before building CLI and desktop, so both report identical identity and only
-release builds carry an analytics key. `bootstrap.ts` prints the shared version for `--version`, passes
-it into `bootHost` for `server.welcome.appVersion`, and threads the key, channel, `build: "binary" | "source"`, and the per-run additional-data suppression into analytics. When normal opening is enabled it also supplies the existing `openBrowser` launcher callback for the packaged binary's one-shot attribution claim, opens the local UI first, then explicitly signals `server.startAttributionClaim()`. `--no-open` omits that capability and never signals readiness, so it does not consume an attempt. Source runs remain ineligible.
+`@thinkrail/shared/version` exports `{ version, channel, commit }`, with `0.0.0-dev` as source default.
+CLI `--version`, desktop metadata and `server.welcome.appVersion` use this shared identity. No analytics
+key or attribution flow is part of launcher startup.
 
-## Launch entries + build provenance
+## Single-file binary
 
-`src/bootstrap.ts` owns the launch sequence (argv → subcommand or host boot → open browser) and exports
-`launch(build: BuildKind)`, which carries the single error-exit path. The two entries differ *only* in the
-provenance they declare, and each knows its own by construction rather than by inspecting the runtime:
-
-- `src/index.ts` — the `bin`, i.e. run **from source**: `launch("source")`.
-- `src/compiled-entry.ts` — the **compiled binary**'s entry (staging + pi registrations first):
-  `launch("binary")`.
-
-`build` rides analytics as a plain property, so `channel = dev` runs are still separable into a locally
-compiled binary vs a source run (see `submodule-server-analytics`). Deliberately *not* sniffed from Bun's
-`/$bunfs/` module paths: that's an implementation detail a Bun bump can change, and it would mislabel
-silently. `src/args.ts` parses `--no-analytics` into `CliOptions.noAnalytics` but does **not** read
-`THINKRAIL_NO_ANALYTICS` — the host's analytics module is that variable's single reader, so every
-entrypoint honors it for additional data (including `packages/server/src/dev.ts`, which parses no argv).
-Neither spelling suppresses basic events; both help entries disclose that scope rather than promising
-zero analytics traffic. CI/test suppression remains host-owned and covers both tiers.
-
-## Single-file binary (`build:binary`)
-
-The binary embeds its source map (`--sourcemap`, ~+17 MB on top of the bytecode build; Bun's `--compile`
-embeds a map whenever it emits one, so no upload path avoids the size) so Bun resolves error stacks
-on-device, bytecode included; the build deletes the external `.map` it also writes, refuses to embed web
-`.map` files, and compiles from `BINARY_SOURCE_MAP_BASE` (`apps/cli`), which the launcher passes as
-analytics `remapBase` for binary builds because remapped frames are relative to that directory.
-
-`bun run build:binary` produces a **standalone `thinkrail` executable** — one self-contained file per
-platform — via `bun build --compile`. Bun bundles the host *and* transparently embeds the `bun-pty` native
-lib; the extra steps are the **web UI** (a directory the host normally serves), the **bundled pi
-extensions** (which the server path-loads out of `node_modules` in dev — impossible inside a binary),
-and `trash`'s **native helper sidecars** (which macOS/Windows must execute from real filesystem paths):
-
-- `scripts/build-binary.ts` consumes `@thinkrail/server/build-support`, writes three **transient** generated modules, runs
-  `bun build --compile --no-compile-autoload-bunfig --bytecode --format=esm --sourcemap --target=<host|--target>` on
-  `src/compiled-entry.ts`, then deletes them (so the artifact cannot execute a project-local
-  `bunfig.toml` preload before ThinkRail boots, and the working tree + `tsc` stay clean); each generated
-  module has a committed `.d.ts` type contract `tsc` resolves against
-  when the `.ts` is absent:
-  - `src/web-assets.generated.ts` — enumerates `apps/web/dist`: a Bun file-attribute import per asset +
-    a `{ route, data }[]` manifest + a content-hash version.
-  - `src/bundled-extensions.generated.ts` — **value-imports the three bundled pi-package entries**
-    (`pi-spec-graph`, `pi-thinkrail-workflow`, `pi-todos`), resolved from the
-    *server package's* module context (absolute paths — they aren't deps of `cli`), so Bun compiles the
-    raw `.ts` and their real deps (`yaml`, …) into the binary. ThinkRail extensions listed in the server
-    registry ([[submodule-server-extensions]]) get no generated entry — `@thinkrail/server` imports them
-    statically, so `bun build --compile` carries them (and their deps such as `linkedom`, or
-    `pi-web-access` with `unpdf`) through the normal server graph. Plus every `BuildRuntimeSources.skillRoots`
-    entry (`pi-spec-graph`/`pi-thinkrail-workflow`/`pi-todos` `skills/` and the server's own host skills in
-    `packages/server/skills` under the `host/` route; each registry extension's `skillPackages` roots under
-    `extensions/<name>/`, so a switched-off extension's folder can be left out of pi's skill inputs) embedded like web assets
-    (matching what dev wires via `additionalSkillPaths` — parity, not a superset). Its `.d.ts` types the
-    factories via the server's exported `BundledExtensionFactory`, so `cli` still never imports
-    `@earendil-works/pi-coding-agent`.
-  - `src/runtime-assets.generated.ts` — embeds `trash`'s `macos-trash` and `windows-trash.exe` helper
-    binaries, resolved from the server package's dependency context, as a content-hashed manifest.
-- `src/compiled-entry.ts` is the binary's entry: on startup it stages the embedded web + skills +
-  runtime-helper files to per-build cache dirs (`$XDG_CACHE_HOME`/`~/.cache`/temp; files written straight into the versioned dir,
-  then a sibling `<dir>.complete` marker written **last** — readiness is gated on the marker, so a killed
-  first run leaves an incomplete cache that's re-extracted next launch. **No stage-then-rename**: Bun's
-  `renameSync` of a fresh non-empty dir `EPERM`s on Windows, so the marker replaces the directory-rename
-  publish), makes the macOS helper executable, sets `THINKRAIL_STATIC_DIR`, then **awaits** the server's
-  **`registerBundledRuntime`** seam — which injects the factories + staged skills dir + real trash-helper
-  paths **and** performs pi's binary-only registrations (the
-  statically-bundled OAuth flows + the Bedrock provider module, replacing pi's binary-hostile dynamic
-  imports — see the server agent SPEC) — then hands off to `index.ts`. (`bun-pty` self-extracts
-  automatically; **no photon wasm** — the agent's read tool is set to send images raw, server-side.
-  Skills must be staged to the *real* filesystem: pi reads `SKILL.md` via plain fs and embeds the path in
-  the system prompt.)
-- **Bytecode.** `--bytecode` embeds JSC bytecode next to the bundle, so a launch skips parsing the
-  ~25MB host graph: `/health` is ready about 0.3s sooner on darwin-arm64 and about 0.7s sooner on
-  linux-x64. `--format=esm` is required because `compiled-entry.ts` uses top-level `await`; without it
-  `--bytecode` emits CJS, which rejects it. The cost is size: about +41MB on linux-x64 and about +42MB
-  on darwin-arm64. This relies on the root Bun pin being 1.4.1+: Bun 1.4.0 embedded about +109MB on
-  linux-x64 and crashed cross-target bytecode builds at launch (oven-sh/bun#18416). The runtime that reads
-  the bytecode is the Bun that wrote it, so a version mismatch cannot silently disable it. Bun 1.4.3
-  also optimizes bytecode at build time; if a build aborts there (oven-sh/bun#44926), add
-  `--no-optimize-bytecode`. Minification is not applied: it renames identifiers that stack frames and
-  `constructor.name` checks read.
-- Cross-compile with `--target=bun-darwin-arm64|bun-linux-x64|bun-windows-x64|…`; each bundles that
-  platform's matching `bun-pty` lib. The binary is platform-specific and self-extracts a few MB on first run.
-- **Windows identity.** A compiled exe otherwise inherits everything from `bun.exe`: Bun's icon and
-  its VERSIONINFO ("Bun"/"Oven", Bun's version). So Explorer, Task Manager, Properties and the firewall
-  prompt would all name Bun. For a Windows target the build therefore passes Bun's `--windows-icon`,
-  `-title`, `-description`, `-publisher`, `-copyright` and `-version` flags.
-  - The strings come from [[module-shared]]'s `windowsFileIdentity`. Task Manager shows the description,
-    so it equals the product name.
-  - The icon is [[module-shared]]'s `windowsIconPath`, from the native icon set both launchers ship.
-  - Bun applies these flags only on a Windows host. The release and CI Windows builds run on Windows; a
-    cross-compile from macOS/Linux skips them with a warning and keeps Bun's identity.
-  - Bun keeps its own named `IDI_MYICON` group, which the shell picks before numbered groups, and maps
-    it to icon #1 only (oven-sh/bun#32428). The ICO must therefore list its 256 frame first; the shell
-    downsamples it for smaller sizes.
-  - The output file is deleted before compiling, because writing metadata into an existing exe can fail
-    (oven-sh/bun#24079).
-  - Post-editing the exe is not an option: `pe-library`/`resedit` refuse the `.bun` section Bun places
-    after `.rsrc`.
-- **Verify by booting the artifact** (not just building it): extension wiring regressions surface only at
-  runtime — e.g. path-loading broke silently for every extension added after the binary build first landed.
-  [[module-artifact-tests]]'s CLI smoke (root: `bun run smoke:binary`, after `build:binary`) boots the built binary
-  against throwaway data/agent/cache dirs. Its CLI adapter runs the shared
-  test workspace's shared host assertions also used by desktop; CLI-only assertions additionally
-  prove the staged-cache and command-line shape. Together they assert: a project-local `bunfig.toml` preload does **not**
-  execute, `/health` answers, `/` serves the staged UI, the bundled skills staged to the cache dir,
-  **an external synthetic PI extension loads by absolute path** through the compiled artifact's public PI
-  loader with no `pi` executable on `PATH`, under both the default and a custom `PI_CODING_AGENT_DIR`
-  (test-owned source only; no Central-generated artifact is committed, copied, read, or snapshotted),
-  **an OAuth sign-in reaches its auth URL** (a WS
-  `provider.loginStart` for the Codex provider must answer the method select and push an `authUrl`
-  frame — offline and credential-free, since pi's flow only does PKCE + a local callback server before
-  notifying the URL; this pins the statically-registered OAuth flows, which can only break inside the
-  artifact — the frames are hand-rolled JSON, keeping `contracts` out of the cli), **moves a seeded pi
-  transcript through `session.delete` into the OS trash** (pinning the static `processMountinfo` parser
-  inclusion that `trash`'s Linux implementation otherwise reaches through a binary-opaque CommonJS
-  require; the fixture is seeded at the **host-reported `worktreePath`**, never the smoke's own temp path,
-  because the host stores git's symlink-resolved root — macOS `/var` → `/private/var`, Windows' 8.3 `TEMP`
-  — so a fixture written at an unresolved path lands in an encoded session dir the host never scans, and
-  the delete then truthfully no-ops while the file stays put; its header cwd is `resolve(worktreePath)`, as
-  pi writes one, so a stored directory spelled unlike pi's header, #766, fails the probe instead of matching
-  itself), creates an offline session so every bundled
-  factory is evaluated, verifies both macOS/Windows helpers were staged from the artifact, and SIGTERM
-  exits 0. CI builds + smokes the binary on **ubuntu and windows** (each its host target): windows on every PR that
-  touches the app, ubuntu with `e2e:binary` on every merge group and on PRs whose change can affect artifacts (see
-  `module-ci-release`); macOS binary coverage stays release-matrix-only. The Windows leg is not optional
-  polish: the host reaches that extension only when its Central inspection says *installed and supported*,
-  so the whole assertion is Windows-executable-shaped, and an ubuntu-only smoke let #255 ship a release
-  matrix that failed for two days while publishing nothing (see `module-ci-release`). It does not prompt a
-  provider; real turn behavior stays in `e2e:agent`. The smoke's **broad-net sibling** is `bun run e2e:binary` (root
-  `e2e/playwright.binary.config.ts`): the whole no-agent e2e suite executed against this binary — in CI on
-  those same runs. And `bun run check:seams` (root `scripts/check-binary-seams.ts`) is the build-time canary
-  for the seam class: it fails when a pi bump introduces a new bundler-opaque dynamic import the server's
-  `registerBundledRuntime` doesn't statically register. The scan **excludes `pi-coding-agent/dist/bundle/`**
-  (recorded as a skipped dir in the script, stale-checked like the allowlist): pi ≥ 0.84.3 ships a bundled
-  runtime there for its own CLI `bin` and `./rpc-entry` export — the only two ways to reach it — while the
-  in-process library import (`.` → `dist/index.js`) stays on the modular runtime, so the bundle's opaque
-  imports (content-hashed chunk duplicates of the allowlisted modular seams) are dead code in ThinkRail and
-  allowlisting them by chunk name would churn on every pi release.
-- **The smoke's fixtures are host-OS-shaped, not POSIX-shaped.** Every one of them was a Windows failure
-  in a green-on-Linux suite:
-  - The **fake Central CLI is compiled** (`bun build --compile` into `central`/`central.exe`), not written
-    as a `#!/bin/sh` script: the host only feeds the synthetic extension to PI when `inspectJbcentral`
-    resolves *and spawns* a `central` reporting a supported version, and Windows can neither resolve an
-    extensionless file as an executable nor `CreateProcess` a shell script. A `.cmd` shim was rejected —
-    `Bun.spawn` cannot launch a batch file without a `cmd.exe` wrapper, and it splits the fixture per shell
-    dialect. Its argv surface stays the reviewed one: `--version` prints a synthetic `central <semver>`,
-    everything else exits non-zero (so the background `status` probe stays an `unknown` observation).
-  - The **pi-free `PATH` is derived from the live `PATH`** by dropping the entries that hold a `pi`
-    executable, then prepending the fake bin dir — never a hardcoded `/usr/bin:/bin` skeleton, which on
-    Windows leaves the host without `git.exe` or System32 (`project.open` shells out to bare `git`). The
-    smoke still asserts no `pi` is reachable, and additionally that `git` survived the filter.
-  - **`HOME` *and* `USERPROFILE` point at the smoke's temp home** in every spawned host, because
-    `homedir()` — which pi's `getAgentDir()` uses — reads `USERPROFILE` on Windows and ignores `HOME`.
-    Without it the default-agent-dir probe writes into the runner's (or a Windows developer's) real
-    `%USERPROFILE%\.pi\agent` instead of the sandbox.
-  - **Every spawned host's env is built by `hostEnv`, which drops the inherited case-variants of the keys
-    it overrides.** Windows env names are case-insensitive and the runner's is spelled `Path`, so the
-    familiar `{...process.env, PATH: x}` ships *both* keys and the child reads the inherited one — the host
-    then ran with the machine's real PATH, saw no fake `central`, reported `absent`, and never loaded the
-    extension while the fixture itself was provably fine.
-  - **Both legs require `provider.status`'s `jbcentral` to be `configured`**, not just the model to be
-    present: the artifact sits inside the *default* agent dir, so a leg that only checks `model.list` could
-    in principle pass through pi's own agent-dir discovery instead of the Central-fed absolute path this
-    gate exists to pin. The status read waits out a transient `configuring` (a boot-time watcher event).
-  - **The two hosts run one at a time**: the default-agent probe boots, asserts and exits before the
-    custom-agent host is spawned. They load the *same* on-disk extension, and a concurrent initial load
-    races on the loader's transpile cache — harmless on POSIX, an EPERM-class failure on Windows, where the
-    loser silently falls back to a runtime without the extension (`prepareInitialRuntime`'s plain-runtime
-    path). A failed *rebuild* keeps the loaded generation, so only the boot load can lose the provider this
-    way — which is why the assertion reports `provider.status`'s `jbcentral` state on failure: `load-failed`
-    names that cause, `absent` names a fixture that never ran.
+The binary embeds the built web artifact and physical host resources from the server build-support
+manifest. Skill content is embedded by `skill-assets.generated`, staged under its content hash, and
+passed to `setBundledSkillPaths` before host startup without any extension factories. Native PTY
+libraries and trash helpers remain staged assets. The launcher does not implement
+an agent loop. SDK and tool assets replace legacy pi assets as their owning integration is removed.
+Source-build correctness does not establish compiled-binary or installer acceptance; those have separate
+stage 4 smoke gates.
 
 ## Boundary
 
@@ -339,13 +163,12 @@ and `trash`'s **native helper sidecars** (which macOS/Windows must execute from 
   smoke's default input cannot disagree the way they did on Windows. It also holds the Windows-target
   rule. The release action re-derives the same name in bash because it is also the published-asset
   contract, see `module-ci-release`),
-  `src/compiled-entry.ts`, `src/web-assets.generated.*`, `src/bundled-extensions.generated.*`,
+  `src/compiled-entry.ts`, `src/web-assets.generated.*`, `src/skill-assets.generated.*`,
   `src/runtime-assets.generated.*`),
   `src/update.ts` (the `update`
   subcommand plus same-channel GitHub release discovery for the host advisory), `src/uninstall.ts` (the
   `uninstall` subcommand), `src/paths.ts` (the installed layout:
-  `install.json` + the staging cache root), and `src/powershell.ts` (the Windows PowerShell seam). Central
-  integration remains a server/auth feature; the launcher has no Central subcommand or protocol implementation.
+  `install.json` + the staging cache root), and `src/powershell.ts` (the Windows PowerShell seam). Model configuration belongs to the shared host.
 - **Allowed deps:** `@thinkrail/server` (`bootHost`, `registerBundledRuntime`, build-support, `dataDir` — the
   uninstaller has to name the app state dir, and must name the *same* one the host uses),
   `@thinkrail/shared/startupMark` (the shared boot
@@ -369,7 +192,7 @@ and `trash`'s **native helper sidecars** (which macOS/Windows must execute from 
 - The agent runs in this process — a fatal fault takes the app down (the accepted in-process tradeoff).
 - `resolveShellEnv()` runs once, before any `AgentSession`.
 - The startup mark is a presentation of the resolved launch result, never a second readiness signal:
-  `bootHost` must return first, and the parse-stable `thinkrail → <url>` line remains unchanged beneath it.
+  `bootHost` must return first, and the parse-stable `raildesign → <url>` line remains unchanged beneath it.
 
 ## Later
 

@@ -3,7 +3,6 @@ import {
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
-	readdirSync,
 	readFileSync,
 	realpathSync,
 	rmSync,
@@ -11,24 +10,20 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
-import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
-import { createFauxCore, fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
-import { ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
+import { assistantMessage, modelResponse, ScriptedModel } from "@openai/agents/testing";
 import type { HistoryScope, Workspace } from "@thinkrail/contracts";
 import {
-	admissionContextFor,
-	configurePiRuntime,
+	configureAgentModelFactory,
 	createSession,
 	deleteSession,
 	disposeAllSessions,
 	ensureSessionAttached,
-	getSessionResources,
+	getSessionMessages,
 	listSessions,
 	promptSession,
 	removeSession,
 	renameSession,
-	setSessionManagerFactory,
-	setSkillAdmissionResolver,
+	sessionRecordPath,
 	settleSessionsForShutdown,
 } from "../agent";
 import { HistoryIndex } from "../history";
@@ -41,22 +36,8 @@ import {
 	openExistingWorktree,
 } from "../workspaces";
 import { buildHistoryScope } from "./historyScope";
+import { seedSdkTestModel, useSdkTestModel } from "./sdkTestFixture";
 
-const model = {
-	id: "spelling",
-	name: "spelling",
-	reasoning: false,
-	input: ["text"] as ("text" | "image")[],
-	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-	contextWindow: 100_000,
-	maxTokens: 4096,
-};
-const faux = createFauxCore({
-	provider: "spelling",
-	api: "spelling",
-	models: [model],
-	tokensPerSecond: 10000,
-});
 const saved = {
 	agent: process.env.PI_CODING_AGENT_DIR,
 	data: process.env.THINKRAIL_DATA_DIR,
@@ -85,19 +66,10 @@ function gitRepo(name: string): string {
 }
 
 function transcriptOf(sessionId: string): string {
-	const sessions = join(agentDir, "sessions");
-	for (const dir of readdirSync(sessions)) {
-		const file = readdirSync(join(sessions, dir)).find((name) =>
-			name.endsWith(`_${sessionId}.jsonl`),
-		);
-		if (file) return join(sessions, dir, file);
-	}
-	throw new Error(`no transcript for ${sessionId}`);
+	return sessionRecordPath(sessionId);
 }
-
 function headerCwd(sessionId: string): string {
-	const header = JSON.parse(readFileSync(transcriptOf(sessionId), "utf8").split("\n")[0] ?? "{}");
-	return header.cwd;
+	return JSON.parse(readFileSync(transcriptOf(sessionId), "utf8")).cwd;
 }
 
 async function chat(workspace: Workspace, text: string): Promise<string> {
@@ -105,7 +77,7 @@ async function chat(workspace: Workspace, text: string): Promise<string> {
 		workspaceId: workspace.id,
 		cwd: workspace.worktreePath,
 	});
-	faux.setResponses([fauxAssistantMessage(`reply to ${text}`)]);
+	useSdkTestModel([modelResponse([assistantMessage(`reply to ${text}`)])]);
 	await promptSession(sessionId, text);
 	return sessionId;
 }
@@ -126,8 +98,8 @@ async function expectFullChatLifecycle(workspace: Workspace): Promise<void> {
 	const cwd = workspace.worktreePath;
 
 	const live = await chat(workspace, `live ${workspace.kind}`);
-	await expect(getSessionResources(workspace.id, live, cwd)).resolves.toMatchObject({
-		sessionId: live,
+	await expect(getSessionMessages(live, workspace.id, cwd)).resolves.toMatchObject({
+		summary: { sessionId: live },
 	});
 	const liveTranscript = transcriptOf(live);
 	await deleteSession(live, workspace.id, cwd);
@@ -138,7 +110,10 @@ async function expectFullChatLifecycle(workspace: Workspace): Promise<void> {
 	const closedCwd = headerCwd(closed);
 	await removeSession(closed);
 	expect((await listSessions(workspace.id, cwd)).map((s) => s.sessionId)).toContain(closed);
-	expect(await renameSession(closed, workspace.id, cwd, "Renamed on disk")).toBe(true);
+	await renameSession(closed, workspace.id, cwd, "Renamed on disk");
+	expect((await getSessionMessages(closed, workspace.id, cwd)).summary.title).toBe(
+		"Renamed on disk",
+	);
 	expect(await ensureSessionAttached(closed, workspace.id, cwd)).toBe(true);
 	await removeSession(closed);
 
@@ -164,21 +139,10 @@ beforeAll(async () => {
 	process.env.PI_CODING_AGENT_DIR = agentDir;
 	process.env.THINKRAIL_DATA_DIR = join(root, "data");
 	process.env.PI_OFFLINE = "1";
-	const runtime = await ModelRuntime.create({
-		credentials: new InMemoryCredentialStore(),
-		modelsPath: null,
-		allowModelNetwork: false,
-	});
-	runtime.registerProvider("spelling", {
-		api: faux.api,
-		apiKey: "test",
-		baseUrl: "http://faux.local",
-		streamSimple: faux.streamSimple,
-		models: [{ ...model, api: faux.api }],
-	});
-	configurePiRuntime(runtime);
-	setSessionManagerFactory((cwd) => SessionManager.create(cwd));
-	setSkillAdmissionResolver(() => admissionContextFor({ piResourceTrust: "granted" }));
+	seedSdkTestModel(join(root, "data"), "spelling");
+	configureAgentModelFactory(
+		() => new ScriptedModel([modelResponse([assistantMessage("fixture reply")])]),
+	);
 	setTrashImplementationForTests(async (input) => {
 		for (const path of typeof input === "string" ? [input] : input) {
 			trashed.push(path);
@@ -189,10 +153,9 @@ beforeAll(async () => {
 
 afterAll(async () => {
 	setTrashImplementationForTests(undefined);
-	setSkillAdmissionResolver(() => admissionContextFor(undefined));
 	await settleSessionsForShutdown();
 	disposeAllSessions();
-	configurePiRuntime(null);
+	configureAgentModelFactory();
 	if (saved.agent === undefined) delete process.env.PI_CODING_AGENT_DIR;
 	else process.env.PI_CODING_AGENT_DIR = saved.agent;
 	if (saved.data === undefined) delete process.env.THINKRAIL_DATA_DIR;
@@ -218,14 +181,14 @@ test("a chat in an attached existing worktree lives its whole lifecycle", async 
 	await expectFullChatLifecycle(workspace);
 }, 30_000);
 
-test("chats recorded under a stored spelling pi resolves stay reachable once the record heals", async () => {
+test("chats recorded under a resolved spelling stay reachable when workspace paths normalize", async () => {
 	const repo = gitRepo("legacy-repo");
 	const project = openProject(repo);
 	const workspace = (await listWorkspaces(project.id)).find((w) => w.kind === "default");
 	if (!workspace) throw new Error("Default workspace is missing");
 	const unresolved = `${workspace.worktreePath}${sep}.`;
 	const legacy = await createSession({ workspaceId: workspace.id, cwd: unresolved });
-	faux.setResponses([fauxAssistantMessage("legacy reply")]);
+	useSdkTestModel([modelResponse([assistantMessage("legacy reply")])]);
 	await promptSession(legacy.sessionId, "legacy chat");
 	await removeSession(legacy.sessionId);
 	const dataDir = join(root, "data");

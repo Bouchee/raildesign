@@ -11,9 +11,9 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import type { McpExposure } from "@earendil-works/pi-coding-agent";
-import { CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
 import { isOverrideEntry, isRecord } from "./config";
+import type { McpExposure } from "./types";
+import { CONFIG_DIR_NAME } from "./types";
 
 export class McpConfigPathUnsafeError extends Error {
 	readonly code = "MCP_PATH_UNSAFE" as const;

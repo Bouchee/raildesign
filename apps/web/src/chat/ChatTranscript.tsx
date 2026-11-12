@@ -36,7 +36,6 @@ import { errorText, getTransport, respondToTool } from "@/transport";
 import { ACTIVITY_BREADCRUMB_HEIGHT, ActivityBreadcrumbTrail } from "./activityBreadcrumbs";
 import { type ChatActions, ChatActionsContext } from "./ChatActions";
 import type { ChatMessageOrder } from "./chatPreferences";
-import { refreshContinuation, requestContinuation } from "./continuations";
 import { type PendingExtUi, PendingExtUiContext, PendingExtUiPrompt } from "./ExtUiPrompt";
 import { FoldGeometryProvider } from "./foldState";
 import {
@@ -190,8 +189,8 @@ const ChatTranscript = forwardRef<
 		onOpenFile?: ((path: string) => void) | undefined;
 		workspaceRoot: string | undefined;
 		focusComposer: () => void;
-		openSubagentTranscript: (childSessionId: string | null) => void;
-		resultOpener: ChatActions["resultOpener"];
+		openSubagentTranscript?: ((childSessionId: string | null) => void) | undefined;
+		resultOpener?: ChatActions["resultOpener"];
 		markResultSeen?: ChatActions["markResultSeen"];
 		onTryAgain: () => void;
 		historyOpen: boolean;
@@ -545,14 +544,24 @@ const ChatTranscript = forwardRef<
 		if (!pendingExtUiRequest) return null;
 		let draft: string | undefined;
 		let revealed = false;
+		let replying = false;
 		return {
 			request: pendingExtUiRequest,
 			reply: (value) => {
-				const { id } = pendingExtUiRequest;
-				useAppStore.getState().clearPendingExtUi(sessionId, id);
+				const { id, runId, revision } = pendingExtUiRequest;
+				if (replying) return;
+				if (runId === undefined || revision === undefined) {
+					toast.error(translate("app.transport.requestFailedFallback"));
+					return;
+				}
+				replying = true;
 				getTransport()
-					.request("session.extUiReply", { response: { id, value } })
-					.catch(() => {});
+					.request("session.extUiReply", { response: { id, sessionId, runId, revision, value } })
+					.then(() => useAppStore.getState().clearPendingExtUi(sessionId, id))
+					.catch((error: unknown) => {
+						replying = false;
+						toast.error(errorText(error));
+					});
 			},
 			draft: () => draft,
 			rememberDraft: (text) => {
@@ -609,21 +618,6 @@ const ChatTranscript = forwardRef<
 		(operationId: string): ChatContinuation | undefined => continuations[operationId],
 		[continuations],
 	);
-	const welcomeGeneration = useAppStore((s) => s.welcomeGeneration);
-	const cardOperations = useMemo(
-		() =>
-			runtime.turns.flatMap((turn) =>
-				turn.kind === "continuationRequest" ? [turn.details.operationId] : [],
-			),
-		[runtime.turns],
-	);
-	useEffect(() => {
-		if (welcomeGeneration === 0) return;
-		const known = useAppStore.getState().chatContinuations;
-		for (const operationId of cardOperations) {
-			if (!known[operationId]) refreshContinuation(operationId, { workspaceId, sessionId });
-		}
-	}, [cardOperations, welcomeGeneration, workspaceId, sessionId]);
 	const chatActions = useMemo<ChatActions>(
 		() => ({
 			cancelAutomaticReveal,
@@ -639,11 +633,6 @@ const ChatTranscript = forwardRef<
 			openProviderSettings,
 			findModel,
 			continuationOf,
-			retryContinuation: (details) => {
-				void requestContinuation(workspaceId, details.projectId).catch((err: unknown) =>
-					toast.error(errorText(err), t("chat.turn.continuation.retryFailed")),
-				);
-			},
 			openHandoffSource: (details) => {
 				const container = selectChatsContainer(useAppStore.getState());
 				if (!container) return;

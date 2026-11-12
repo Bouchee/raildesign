@@ -334,7 +334,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 	}, []);
 
 	const canSubmit = (raw: string) =>
-		!dictating && !templatePending && pendingImages === 0 && (!!raw.trim() || images.length > 0);
+		!isStreaming &&
+		!dictating &&
+		!templatePending &&
+		pendingImages === 0 &&
+		(!!raw.trim() || images.length > 0);
 	const canSend = canSubmit(value);
 
 	const openModelPicker = (query: string) => {

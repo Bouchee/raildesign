@@ -28,12 +28,10 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import {
 	addManualModel,
 	addressMoved,
-	applyPreset,
 	canSave,
 	draftParams,
 	type EndpointDraft,
 	editEndpointDraft,
-	LOCAL_SERVER_PRESETS,
 	mergeProbe,
 	newEndpointDraft,
 	probeFailureText,
@@ -202,25 +200,6 @@ function EndpointDialog({
 								{t("settings.customEndpoints.addressMoved")}
 							</p>
 						) : null}
-						<div className="flex flex-wrap items-center gap-4">
-							<span className="tr-text-metadata text-text-muted">
-								{t("settings.customEndpoints.local")}
-							</span>
-							{LOCAL_SERVER_PRESETS.map((preset) => (
-								<Button
-									key={preset.name}
-									variant="outline"
-									size="s"
-									data-testid="custom-endpoints-preset"
-									data-preset={preset.name}
-									disabled={busy}
-									selected={draft.baseUrl === preset.baseUrl}
-									onClick={() => setDraft(applyPreset(draft, preset))}
-								>
-									{preset.name}
-								</Button>
-							))}
-						</div>
 					</Field>
 					<Field label={t("settings.customEndpoints.apiKey")} htmlFor={`${id}-key`}>
 						<div className="flex items-center gap-8">

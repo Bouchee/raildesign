@@ -28,8 +28,6 @@ export {
 	isFontFamilyRef,
 	isFontRole,
 	isFontWeightOffset,
-	isJbcentralConnected,
-	isJbcentralQuotaRefreshSeconds,
 	isLineWidth,
 	isLiveResource,
 	isLocalePreference,
@@ -43,7 +41,6 @@ export {
 	isTerminalWindowsShell,
 	isThemeMode,
 	isUserFontFile,
-	JBCENTRAL_QUOTA_REFRESH_SECONDS,
 	LINE_WIDTH_COLUMNS,
 	MAX_HISTORY_LIMIT,
 	MAX_HISTORY_QUERY_LENGTH,
@@ -70,9 +67,7 @@ export {
 	SKILL_LISTING_MAX_TOKENS,
 	SKILL_LISTING_MIN_TOKENS,
 	SUBAGENT_MAX_CONCURRENT,
-	SURVEY_OPEN_TEXT_LIMIT,
 	SYSTEM_LOCALE_PREFERENCE,
-	surveyRatingValues,
 	TERMINAL_REPLAY_KB,
 	TERMINAL_WINDOWS_SHELLS,
 	TEXT_SEARCH_LIMITS,
@@ -103,18 +98,18 @@ export {
 	prepareContent,
 } from "./match";
 export type * from "./nativeClient";
-export type * from "./piProtocol";
+export type { QuitConfirmationDependencies } from "./quitConfirmation";
+export { createQuitConfirmation, QUIT_CONFIRMATION } from "./quitConfirmation";
+export type { SearchFieldSource } from "./searchFields";
+export { searchHitFields } from "./searchFields";
+export type * from "./sessionProtocol";
 export {
 	assistantToolCallsAreExecutable,
 	canMarkCompletionUnread,
 	isSessionWorking,
 	isTranscriptMessageRole,
 	sameModel,
-} from "./piProtocol";
-export type { QuitConfirmationDependencies } from "./quitConfirmation";
-export { createQuitConfirmation, QUIT_CONFIRMATION } from "./quitConfirmation";
-export type { SearchFieldSource } from "./searchFields";
-export { searchHitFields } from "./searchFields";
+} from "./sessionProtocol";
 export type * from "./speech";
 export {
 	isSpeechErrorCode,

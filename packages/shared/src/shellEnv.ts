@@ -160,8 +160,8 @@ export async function repairShellEnv(options: { probe?: LoginShellEnvProbe } = {
 	if (sshAgentSock && !process.env.SSH_AUTH_SOCK) process.env.SSH_AUTH_SOCK = sshAgentSock;
 }
 
-const pendingKey = Symbol.for("thinkrail.shellEnv.pending");
-const launchKeysKey = Symbol.for("thinkrail.shellEnv.launchKeys");
+const pendingKey = Symbol.for("raildesign.shellEnv.pending");
+const launchKeysKey = Symbol.for("raildesign.shellEnv.launchKeys");
 const processState = globalThis as typeof globalThis & {
 	[pendingKey]?: Promise<void>;
 	[launchKeysKey]?: ReadonlySet<string>;

@@ -17,7 +17,7 @@ const repositoryRoot = resolve(import.meta.dir, "../../..");
 const shellInstaller = join(repositoryRoot, "install.sh");
 const powershellInstaller = join(repositoryRoot, "install.ps1");
 const roots: string[] = [];
-const binaryBody = "controlled thinkrail artifact\n";
+const binaryBody = "controlled raildesign artifact\n";
 const binaryHash = createHash("sha256").update(binaryBody).digest("hex");
 const powershell = Bun.which("powershell.exe") ?? Bun.which("pwsh");
 const POWERSHELL_TEST_TIMEOUT_MS = 30_000;
@@ -44,7 +44,7 @@ function shellPath(path: string): string {
 }
 
 function makeFixture(): Fixture {
-	const root = mkdtempSync(join(tmpdir(), "thinkrail-installer-test-"));
+	const root = mkdtempSync(join(tmpdir(), "raildesign-installer-test-"));
 	roots.push(root);
 	const home = join(root, "home");
 	const prefix = join(root, "prefix");
@@ -138,7 +138,7 @@ function runInstaller(
 ): ScriptResult {
 	const fakeBin = shellPath(fixture.fakeBin);
 	const home = shellPath(fixture.home);
-	const assetName = overrides.FAKE_ASSET_NAME ?? "thinkrail-linux-x64";
+	const assetName = overrides.FAKE_ASSET_NAME ?? "raildesign-linux-x64";
 	const child = Bun.spawnSync(
 		[
 			"bash",
@@ -184,7 +184,7 @@ function runPowerShellInstaller(
 	channel: string,
 	version: string,
 	tag = "v1.2.3",
-	prefix = "C:/isolated/thinkrail",
+	prefix = "C:/isolated/raildesign",
 ): ScriptResult {
 	if (!powershell) throw new Error("PowerShell is unavailable");
 	const wrapper = join(fixture.root, "invoke-installer.ps1");
@@ -287,7 +287,9 @@ describe("install.sh validation", () => {
 			"--no-modify-path",
 		]);
 		expect(installed.exitCode).toBe(0);
-		expect(readFileSync(join(expanded.home, "tools", "bin", "thinkrail"), "utf8")).toBe(binaryBody);
+		expect(readFileSync(join(expanded.home, "tools", "bin", "raildesign"), "utf8")).toBe(
+			binaryBody,
+		);
 	});
 });
 
@@ -306,21 +308,21 @@ describe.skipIf(process.platform !== "win32" || !powershell)("install.ps1 valida
 		() => {
 			if (!powershell) throw new Error("PowerShell is unavailable");
 			const fixture = makeFixture();
-			const definition = /^function Test-ThinkRailOnPath \{[\s\S]*?^\}/m.exec(
+			const definition = /^function Test-RailDesignOnPath \{[\s\S]*?^\}/m.exec(
 				readFileSync(powershellInstaller, "utf8"),
 			)?.[0];
-			if (!definition) throw new Error("install.ps1 defines no Test-ThinkRailOnPath");
+			if (!definition) throw new Error("install.ps1 defines no Test-RailDesignOnPath");
 			const script = join(fixture.root, "on-path.ps1");
 			writeFileSync(
 				script,
 				[
 					definition,
-					"$dir = 'C:\\Users\\me\\.thinkrail\\bin'",
-					"Write-Output (Test-ThinkRailOnPath -Dir $dir -PathEntries @('C:/Users/me/.thinkrail/bin'))",
-					"Write-Output (Test-ThinkRailOnPath -Dir $dir -PathEntries @('c:/users/ME/.thinkrail/bin/'))",
-					"Write-Output (Test-ThinkRailOnPath -Dir $dir -PathEntries @('C:\\Users\\me\\.thinkrail\\bin\\'))",
-					"Write-Output (Test-ThinkRailOnPath -Dir 'C:/Users/me/.thinkrail/bin' -PathEntries @('C:\\Users\\me\\.thinkrail\\bin'))",
-					"Write-Output (Test-ThinkRailOnPath -Dir $dir -PathEntries @('C:/Other/bin'))",
+					"$dir = 'C:\\Users\\me\\.raildesign\\bin'",
+					"Write-Output (Test-RailDesignOnPath -Dir $dir -PathEntries @('C:/Users/me/.raildesign/bin'))",
+					"Write-Output (Test-RailDesignOnPath -Dir $dir -PathEntries @('c:/users/ME/.raildesign/bin/'))",
+					"Write-Output (Test-RailDesignOnPath -Dir $dir -PathEntries @('C:\\Users\\me\\.raildesign\\bin\\'))",
+					"Write-Output (Test-RailDesignOnPath -Dir 'C:/Users/me/.raildesign/bin' -PathEntries @('C:\\Users\\me\\.raildesign\\bin'))",
+					"Write-Output (Test-RailDesignOnPath -Dir $dir -PathEntries @('C:/Other/bin'))",
 				].join("\n"),
 			);
 			const child = Bun.spawnSync(
@@ -402,7 +404,7 @@ describe.skipIf(process.platform !== "win32" || !powershell)("install.ps1 valida
 				.trim()
 				.split(/\r?\n/);
 			expect(requests).toHaveLength(1);
-			expect(requests[0]).toContain(`/releases/download/${tag}/thinkrail-windows-x64.exe`);
+			expect(requests[0]).toContain(`/releases/download/${tag}/raildesign-windows-x64.exe`);
 		},
 		POWERSHELL_TEST_TIMEOUT_MS,
 	);
@@ -410,14 +412,28 @@ describe.skipIf(process.platform !== "win32" || !powershell)("install.ps1 valida
 
 describe("install.sh controlled installation", () => {
 	test.each([
-		["stable", "1.2.3", "v1.2.3", "Linux", "x86_64", "thinkrail-linux-x64"],
-		["nightly", "1.2.3-nightly.7", "v1.2.3-nightly.7", "Linux", "x86_64", "thinkrail-linux-x64"],
-		["stable", "1.2.3", "v1.2.3", "Linux", "aarch64", "thinkrail-linux-arm64"],
-		["nightly", "1.2.3-nightly.7", "v1.2.3-nightly.7", "Linux", "aarch64", "thinkrail-linux-arm64"],
-		["stable", "1.2.3", "v1.2.3", "Darwin", "arm64", "thinkrail-darwin-arm64"],
-		["nightly", "1.2.3-nightly.7", "v1.2.3-nightly.7", "Darwin", "arm64", "thinkrail-darwin-arm64"],
-		["stable", "1.2.3", "v1.2.3", "Darwin", "x86_64", "thinkrail-darwin-x64"],
-		["nightly", "1.2.3-nightly.7", "v1.2.3-nightly.7", "Darwin", "x86_64", "thinkrail-darwin-x64"],
+		["stable", "1.2.3", "v1.2.3", "Linux", "x86_64", "raildesign-linux-x64"],
+		["nightly", "1.2.3-nightly.7", "v1.2.3-nightly.7", "Linux", "x86_64", "raildesign-linux-x64"],
+		["stable", "1.2.3", "v1.2.3", "Linux", "aarch64", "raildesign-linux-arm64"],
+		[
+			"nightly",
+			"1.2.3-nightly.7",
+			"v1.2.3-nightly.7",
+			"Linux",
+			"aarch64",
+			"raildesign-linux-arm64",
+		],
+		["stable", "1.2.3", "v1.2.3", "Darwin", "arm64", "raildesign-darwin-arm64"],
+		[
+			"nightly",
+			"1.2.3-nightly.7",
+			"v1.2.3-nightly.7",
+			"Darwin",
+			"arm64",
+			"raildesign-darwin-arm64",
+		],
+		["stable", "1.2.3", "v1.2.3", "Darwin", "x86_64", "raildesign-darwin-x64"],
+		["nightly", "1.2.3-nightly.7", "v1.2.3-nightly.7", "Darwin", "x86_64", "raildesign-darwin-x64"],
 	])(
 		"selects the exact %s %s target (%s, %s/%s, %s)",
 		(channel, version, tag, unameS, unameM, assetName) => {
@@ -441,11 +457,11 @@ describe("install.sh controlled installation", () => {
 			expect(requests[0]).toContain(`/releases/download/${tag}/${assetName}`);
 			expect(requests[1]).toContain(`/releases/download/${tag}/SHA256SUMS`);
 			const metadata = JSON.parse(
-				readFileSync(join(fixture.home, ".config", "thinkrail", "install.json"), "utf8"),
+				readFileSync(join(fixture.home, ".config", "raildesign", "install.json"), "utf8"),
 			);
 			expect(metadata).toMatchObject({ channel, version, tag, path_entry_added: false });
 			expect(
-				readdirSync(join(fixture.home, ".config", "thinkrail")).filter((name) =>
+				readdirSync(join(fixture.home, ".config", "raildesign")).filter((name) =>
 					name.includes(".tmp."),
 				),
 			).toEqual([]);
@@ -461,11 +477,11 @@ describe("install.sh controlled installation", () => {
 				FAKE_UNAME_S: "Darwin",
 				FAKE_UNAME_M: "x86_64",
 				FAKE_PROC_TRANSLATED: "1",
-				FAKE_ASSET_NAME: "thinkrail-darwin-arm64",
+				FAKE_ASSET_NAME: "raildesign-darwin-arm64",
 			},
 		);
 		expect(result.exitCode).toBe(0);
-		expect(curlRequests(fixture)[0]).toContain("/releases/download/v1.2.3/thinkrail-darwin-arm64");
+		expect(curlRequests(fixture)[0]).toContain("/releases/download/v1.2.3/raildesign-darwin-arm64");
 	});
 
 	test("installs under a Unix prefix containing Unicode and safe punctuation", () => {
@@ -479,7 +495,7 @@ describe("install.sh controlled installation", () => {
 			"--no-modify-path",
 		]);
 		expect(result.exitCode).toBe(0);
-		expect(readFileSync(join(prefix, "bin", "thinkrail"), "utf8")).toBe(binaryBody);
+		expect(readFileSync(join(prefix, "bin", "raildesign"), "utf8")).toBe(binaryBody);
 	});
 
 	test("records Git Bash installs with a native Unicode prefix", () => {
@@ -492,28 +508,28 @@ describe("install.sh controlled installation", () => {
 			["--version", "1.2.3", "--prefix", shellPath(prefix), "--no-modify-path"],
 			{
 				FAKE_UNAME_S: "MINGW64_NT-10.0",
-				FAKE_ASSET_NAME: "thinkrail-windows-x64.exe",
+				FAKE_ASSET_NAME: "raildesign-windows-x64.exe",
 				USERPROFILE: "C:/isolated/profile",
 				FAKE_USERPROFILE_POSIX: shellPath(profile),
-				FAKE_NATIVE_PREFIX: "C:/Users/José+dev@example/thinkrail",
+				FAKE_NATIVE_PREFIX: "C:/Users/José+dev@example/raildesign",
 			},
 		);
 		expect(result.exitCode).toBe(0);
-		expect(existsSync(join(prefix, "bin", "thinkrail.exe"))).toBe(true);
+		expect(existsSync(join(prefix, "bin", "raildesign.exe"))).toBe(true);
 		const metadata = JSON.parse(
-			readFileSync(join(profile, ".config", "thinkrail", "install.json"), "utf8"),
+			readFileSync(join(profile, ".config", "raildesign", "install.json"), "utf8"),
 		);
 		expect(metadata).toMatchObject({
-			prefix: "C:/Users/José+dev@example/thinkrail",
+			prefix: "C:/Users/José+dev@example/raildesign",
 			path_entry_added: false,
 		});
-		expect(existsSync(join(fixture.home, ".config", "thinkrail", "install.json"))).toBe(false);
+		expect(existsSync(join(fixture.home, ".config", "raildesign", "install.json"))).toBe(false);
 	});
 
 	test.each([
-		"# >>> thinkrail PATH >>>\nexport PATH=broken\n",
-		"# <<< thinkrail PATH <<<\nexport KEEP=1\n",
-		"# >>> thinkrail PATH >>>\n# >>> thinkrail PATH >>>\n# <<< thinkrail PATH <<<\n# <<< thinkrail PATH <<<\n",
+		"# >>> raildesign PATH >>>\nexport PATH=broken\n",
+		"# <<< raildesign PATH <<<\nexport KEEP=1\n",
+		"# >>> raildesign PATH >>>\n# >>> raildesign PATH >>>\n# <<< raildesign PATH <<<\n# <<< raildesign PATH <<<\n",
 	])("preserves malformed shell profile markers byte-for-byte", (profileBody) => {
 		const fixture = makeFixture();
 		const rcFile = join(fixture.home, ".bashrc");
@@ -526,14 +542,14 @@ describe("install.sh controlled installation", () => {
 		]);
 		expect(result.exitCode).toBe(0);
 		expect(readFileSync(rcFile, "utf8")).toBe(profileBody);
-		expect(result.stderr).toContain("malformed ThinkRail PATH markers");
+		expect(result.stderr).toContain("malformed RailDesign PATH markers");
 		expect(result.stdout).toContain("Add to PATH:");
 	});
 
 	test("final rename failure preserves the old binary and removes the destination temp", () => {
 		const fixture = makeFixture();
 		const binDir = join(fixture.prefix, "bin");
-		const destination = join(binDir, "thinkrail");
+		const destination = join(binDir, "raildesign");
 		mkdirSync(binDir, { recursive: true });
 		writeFileSync(destination, "old binary\n");
 		writeTool(
@@ -553,7 +569,7 @@ exit 88
 		expect(result.exitCode).not.toBe(0);
 		expect(result.stderr).toContain("previous executable was left unchanged");
 		expect(readFileSync(destination, "utf8")).toBe("old binary\n");
-		expect(readdirSync(binDir).filter((name) => name.startsWith(".thinkrail.new."))).toEqual([]);
-		expect(existsSync(join(fixture.home, ".config", "thinkrail", "install.json"))).toBe(false);
+		expect(readdirSync(binDir).filter((name) => name.startsWith(".raildesign.new."))).toEqual([]);
+		expect(existsSync(join(fixture.home, ".config", "raildesign", "install.json"))).toBe(false);
 	});
 });

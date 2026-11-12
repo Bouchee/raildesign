@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { openWorkspaceChat, revealWorkbenchTool } from "./fixtures/app";
-import { E2E_PI_AGENT_DIR } from "./fixtures/paths";
+import { E2E_DATA_DIR } from "./fixtures/paths";
 import { seedExternalCwdSessions } from "./fixtures/sessions";
 import {
 	clearTemplateFixtures,
@@ -221,7 +221,7 @@ test.describe("templates management", () => {
 		await revealWorkbenchTool(page, "files");
 		const promptsDir = page
 			.locator('[data-testid="file-node"][data-kind="dir"]')
-			.filter({ hasText: /^\.pi\/prompts$/ });
+			.filter({ hasText: /^(?:\.raildesign\/)?prompts$/ });
 		await expect(promptsDir).toBeVisible();
 		const scopedNote = page
 			.locator('[data-testid="file-node"][data-kind="file"]')
@@ -320,7 +320,7 @@ test.describe("templates management", () => {
 		page,
 	}) => {
 		const hugeHint = "p".repeat(16 * 1024);
-		const filePath = join(E2E_PI_AGENT_DIR, "prompts", "deep-meta.md");
+		const filePath = join(E2E_DATA_DIR, "prompts", "deep-meta.md");
 		writeFileSync(
 			filePath,
 			`---\ndescription: "buried description"\nargument-hint: "${hugeHint}"\n---\nOriginal body\n`,
@@ -361,7 +361,7 @@ test.describe("templates management", () => {
 	test("editing a hand-created template with a whitespace-bearing name round-trips to the same file", async ({
 		page,
 	}) => {
-		const promptsDir = join(E2E_PI_AGENT_DIR, "prompts");
+		const promptsDir = join(E2E_DATA_DIR, "prompts");
 		const filePath = join(promptsDir, "report .md");
 		writeFileSync(filePath, `---\ndescription: "Trailing-space name"\n---\nHand-created body\n`);
 		try {

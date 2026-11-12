@@ -89,5 +89,13 @@ const skillLoadRequests = createSkillLoadRequests({
 
 export const prewarmWorkspaceSkillLoad = skillLoadRequests.prewarmWorkspaceSkillLoad;
 export const createSessionWithSkillBaseline = skillLoadRequests.createSession;
-export const getSessionMessagesWithSkillBaseline = skillLoadRequests.getSessionMessages;
+export async function getSessionMessagesWithSkillBaseline(params: WsParams<"session.getMessages">) {
+	useAppStore.getState().beginSessionHydration(params.sessionId);
+	try {
+		return await skillLoadRequests.getSessionMessages(params);
+	} catch (error) {
+		useAppStore.getState().cancelSessionHydration(params.sessionId);
+		throw error;
+	}
+}
 export const reloadSessionResourcesWithSkillBaseline = skillLoadRequests.reloadSessionResources;

@@ -13,7 +13,7 @@ describe("workspace file checks shared by extension server halves", () => {
 		await expect(checkWorkspaceFile(`${MOCKUP_DIR}after.html`, cwd)).resolves.toBeUndefined();
 		await expect(checkWorkspaceFile("before.html", cwd)).resolves.toBeUndefined();
 		await expect(checkWorkspaceFile("missing.html", cwd)).rejects.toThrow("no such file");
-		await expect(checkWorkspaceFile(".thinkrail", cwd)).rejects.toThrow("not a regular file");
+		await expect(checkWorkspaceFile(".raildesign", cwd)).rejects.toThrow("not a regular file");
 		await expect(checkWorkspaceFile("../outside.html", cwd)).rejects.toThrow("inside it");
 		await expect(checkWorkspaceFile(join(cwd, "before.html"), cwd)).rejects.toThrow(
 			"relative to the workspace",
@@ -40,7 +40,7 @@ describe("workspace file checks shared by extension server halves", () => {
 	});
 
 	test("names the gitignored scratch directory for mockups", () => {
-		expect(workspaceFiles.scratchDir).toBe(".thinkrail/context/mockups/");
+		expect(workspaceFiles.scratchDir).toBe(".raildesign/context/mockups/");
 		expect(workspaceFiles.check).toBe(checkWorkspaceFile);
 	});
 });

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, expect, spyOn, test } from "bun:test";
 import {
 	existsSync,
 	mkdirSync,
@@ -12,19 +12,17 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
-import { createFauxCore, fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
-import { AgentSession, ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
+import { assistantMessage, modelResponse, ScriptedModel } from "@openai/agents/testing";
 import type { ChatCreateResult, Project, Workspace, WsResult } from "@thinkrail/contracts";
 import { CHATS_PROTOCOL_VERSION } from "@thinkrail/contracts";
+import * as agent from "../agent";
 import {
-	configurePiRuntime,
+	configureAgentModelFactory,
 	disposeAllSessions,
 	hasSession,
 	initializeSessionStates,
 	listSessions,
 	promptSession,
-	setSessionManagerFactory,
 	settleSessionsForShutdown,
 } from "../agent";
 import { loadChats, resetChatsStoreForTests } from "../persistence";
@@ -42,27 +40,12 @@ import {
 import { inspectChat } from "./chats";
 import { applyGitCeiling } from "./gitCeiling";
 import { handleRequest } from "./handlers";
+import { seedSdkTestModel, useSdkTestModel } from "./sdkTestFixture";
 
 const CTX = { clientKey: "chats-test" };
 const OLD_CLIENT = { clientKey: "old-client", protocolVersion: CHATS_PROTOCOL_VERSION - 1 };
 const NEW_CLIENT = { clientKey: "new-client", protocolVersion: CHATS_PROTOCOL_VERSION };
 
-const model = {
-	id: "chats-model",
-	name: "chats-model",
-	reasoning: false,
-	input: ["text"] as ("text" | "image")[],
-	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-	contextWindow: 100_000,
-	maxTokens: 4096,
-};
-const thinker = { ...model, id: "chats-thinker", name: "chats-thinker", reasoning: true };
-const faux = createFauxCore({
-	provider: "chats",
-	api: "chats",
-	models: [model, thinker],
-	tokensPerSecond: 10000,
-});
 const saved = {
 	agent: process.env.PI_CODING_AGENT_DIR,
 	data: process.env.THINKRAIL_DATA_DIR,
@@ -138,23 +121,10 @@ beforeAll(async () => {
 	delete process.env.GIT_CEILING_DIRECTORIES;
 	resetConfigCache();
 	resetChatIdCache();
-	const runtime = await ModelRuntime.create({
-		credentials: new InMemoryCredentialStore(),
-		modelsPath: null,
-		allowModelNetwork: false,
-	});
-	runtime.registerProvider("chats", {
-		api: faux.api,
-		apiKey: "test",
-		baseUrl: "http://faux.local",
-		streamSimple: faux.streamSimple,
-		models: [
-			{ ...model, api: faux.api },
-			{ ...thinker, api: faux.api },
-		],
-	});
-	configurePiRuntime(runtime);
-	setSessionManagerFactory((cwd) => SessionManager.create(cwd));
+	seedSdkTestModel(dataDir, "chats");
+	configureAgentModelFactory(
+		() => new ScriptedModel([modelResponse([assistantMessage("fixture reply")])]),
+	);
 	await initializeSessionStates([]);
 	setTrashImplementationForTests(recordTrash);
 	recordGitSpawns();
@@ -171,7 +141,7 @@ afterAll(async () => {
 	stopAllWatches();
 	await settleSessionsForShutdown();
 	disposeAllSessions();
-	configurePiRuntime(null);
+	configureAgentModelFactory();
 	resetChatIdCache();
 	for (const [key, value] of [
 		["PI_CODING_AGENT_DIR", saved.agent],
@@ -193,30 +163,30 @@ function deferred(): { promise: Promise<void>; resolve(): void } {
 	return { promise, resolve };
 }
 
-/** Holds every session preparation inside pi's extension binding until released: a first session still starting. */
 function holdSessionPreparations(): {
 	entered: Promise<void>;
 	release(): void;
 	sessionIds: string[];
 	restore(): void;
 } {
-	const original = AgentSession.prototype.bindExtensions;
+	const original = agent.createSession;
 	const entered = deferred();
 	const release = deferred();
 	const sessionIds: string[] = [];
-	AgentSession.prototype.bindExtensions = async function (bindings) {
-		await original.call(this, bindings);
-		sessionIds.push(this.sessionId);
+	const held = spyOn(agent, "createSession").mockImplementation(async (input) => {
+		const created = await original(input);
+		sessionIds.push(created.sessionId);
 		entered.resolve();
 		await release.promise;
-	};
+		return created;
+	});
 	return {
 		entered: entered.promise,
 		release: release.resolve,
 		sessionIds,
 		restore: () => {
 			release.resolve();
-			AgentSession.prototype.bindExtensions = original;
+			held.mockRestore();
 		},
 	};
 }
@@ -292,13 +262,7 @@ test("a chat is created with its folder, record and one session, listed without 
 		handleRequest("workspace.branchStatus", { workspaceId: workspace.id }, CTX),
 	).rejects.toThrow("branch status");
 	for (const [method, params] of [
-		["todo.startReview", { workspaceId: workspace.id, sessionId: created.sessionId, id: "t1" }],
-		["todo.reviewAll", { workspaceId: workspace.id, sessionId: created.sessionId }],
 		["todo.review", { workspaceId: workspace.id, sessionId: created.sessionId, id: "t1" }],
-		[
-			"todo.requestFix",
-			{ workspaceId: workspace.id, sessionId: created.sessionId, id: "t1", feedback: "x" },
-		],
 		["spec.graph", { workspaceId: workspace.id }],
 	] as const) {
 		await expect(handleRequest(method, params, CTX)).rejects.toMatchObject({
@@ -322,7 +286,6 @@ test("a chat is created with its folder, record and one session, listed without 
 	for (const [method, params] of [
 		["project.close", { id: workspace.projectId }],
 		["project.rename", { id: workspace.projectId, name: "Mine" }],
-		["project.setTrust", { id: workspace.projectId, trusted: true }],
 		["workspace.create", { projectId: workspace.projectId }],
 		["workspace.listExisting", { projectId: workspace.projectId }],
 		["git.listBranches", { projectId: workspace.projectId }],
@@ -341,12 +304,12 @@ test("a chat is created with its folder, record and one session, listed without 
 	expect(existsSync(join(workspace.worktreePath, "nested"))).toBe(false);
 	expect(gitUnderChats()).toEqual([]);
 
-	faux.setResponses([fauxAssistantMessage("noted")]);
+	useSdkTestModel([modelResponse([assistantMessage("noted")])]);
 	await promptSession(created.sessionId, "remember this");
 	await handleRequest("chat.delete", { workspaceId: workspace.id }, CTX);
 	expect(existsSync(workspace.worktreePath)).toBe(false);
 	expect(trashed.some((path) => path === workspace.worktreePath)).toBe(true);
-	expect(trashed.some((path) => path.endsWith(`_${created.sessionId}.jsonl`))).toBe(true);
+	expect(trashed.some((path) => path.endsWith(`${created.sessionId}.json`))).toBe(true);
 	expect(loadChats().chats).toEqual([]);
 	expect(gitUnderChats()).toEqual([]);
 }, 30_000);
@@ -354,7 +317,7 @@ test("a chat is created with its folder, record and one session, listed without 
 test("an older client never reads the container, its chats or their session states", async () => {
 	const created = (await handleRequest("chat.create", {}, CTX)) as ChatCreateResult;
 	const { workspace } = created;
-	faux.setResponses([fauxAssistantMessage("hello")]);
+	useSdkTestModel([modelResponse([assistantMessage("hello")])]);
 	await promptSession(created.sessionId, "say hello");
 	try {
 		const newProjects = (await handleRequest("project.list", {}, NEW_CLIENT)) as Project[];
@@ -491,7 +454,7 @@ test("a chat whose session never started gets exactly one through session.create
 		{ workspaceId: workspace.id },
 		CTX,
 	)) as WsResult<"session.create">;
-	expect(recovered.model).toMatchObject({ provider: "chats", id: "chats-model" });
+	expect(recovered.model).toMatchObject({ provider: "chats", id: "deepseek-v4.1-flash" });
 	expect(
 		(await listSessions(workspace.id, workspace.worktreePath)).map((summary) => summary.sessionId),
 	).toEqual([recovered.sessionId]);
@@ -501,18 +464,21 @@ test("a chat whose session never started gets exactly one through session.create
 	await handleRequest("chat.delete", { workspaceId: workspace.id }, CTX);
 }, 30_000);
 
-test("an explicit model and effort reach a chat's session on creation and on recovery, and become recent", async () => {
+test("an explicit model reaches creation and recovery, clamps unsupported effort and becomes recent", async () => {
 	const models = (await handleRequest("model.list", {}, CTX)) as WsResult<"model.list">;
-	const picked = models.find((candidate) => candidate.id === "chats-thinker");
-	if (!picked) throw new Error("the reasoning fixture model is not listed");
+	const picked = models.find((candidate) => candidate.id === "deepseek-v4.1-flash");
+	if (!picked) throw new Error("the configured fixture model is not listed");
 	const created = (await handleRequest(
 		"chat.create",
 		{ model: picked, thinkingLevel: "high" },
 		CTX,
 	)) as ChatCreateResult;
-	expect(created.model).toMatchObject({ provider: "chats", id: "chats-thinker" });
-	expect(created.thinkingLevel).toBe("high");
-	expect(getConfig().recentModels[0]).toMatchObject({ provider: "chats", id: "chats-thinker" });
+	expect(created.model).toMatchObject({ provider: "chats", id: "deepseek-v4.1-flash" });
+	expect(created.thinkingLevel).toBe("off");
+	expect(getConfig().recentModels[0]).toMatchObject({
+		provider: "chats",
+		id: "deepseek-v4.1-flash",
+	});
 
 	const workspace = createChatRecord();
 	const recovered = (await handleRequest(
@@ -520,8 +486,8 @@ test("an explicit model and effort reach a chat's session on creation and on rec
 		{ workspaceId: workspace.id, model: picked, thinkingLevel: "low" },
 		CTX,
 	)) as WsResult<"session.create">;
-	expect(recovered.model).toMatchObject({ provider: "chats", id: "chats-thinker" });
-	expect(recovered.thinkingLevel).toBe("low");
+	expect(recovered.model).toMatchObject({ provider: "chats", id: "deepseek-v4.1-flash" });
+	expect(recovered.thinkingLevel).toBe("off");
 	for (const id of [created.workspace.id, workspace.id]) {
 		await handleRequest("chat.delete", { workspaceId: id }, CTX);
 	}
@@ -540,7 +506,7 @@ test("two recoveries at once join the one session the first starts, with its rea
 			WsResult<"session.create">,
 		];
 		expect(b).toEqual(a);
-		expect(b.model).toMatchObject({ provider: "chats", id: "chats-model" });
+		expect(b.model).toMatchObject({ provider: "chats", id: "deepseek-v4.1-flash" });
 		expect(hold.sessionIds).toHaveLength(1);
 		expect(
 			(await listSessions(workspace.id, workspace.worktreePath)).map(
@@ -579,7 +545,7 @@ test("deleting a chat while its first session is still starting leaves no sessio
 test("a chat whose deletion did not finish refuses attach, terminals, sessions and history after a restart, and Retry completes it", async () => {
 	const created = (await handleRequest("chat.create", {}, CTX)) as ChatCreateResult;
 	const { workspace, sessionId } = created;
-	faux.setResponses([fauxAssistantMessage("kept")]);
+	useSdkTestModel([modelResponse([assistantMessage("kept")])]);
 	await promptSession(sessionId, "keep this");
 	const historyHits = async () => {
 		const result = (await handleRequest(
@@ -609,7 +575,6 @@ test("a chat whose deletion did not finish refuses attach, terminals, sessions a
 	resetChatsStoreForTests();
 	for (const [method, params] of [
 		["session.getMessages", { workspaceId: workspace.id, sessionId }],
-		["session.resources", { workspaceId: workspace.id, sessionId }],
 		["session.create", { workspaceId: workspace.id }],
 		["terminal.attach", { workspaceId: workspace.id, tabKey: "after-restart" }],
 		["terminal.reserve", { workspaceId: workspace.id, tabKey: "after-restart", title: "Shell" }],
@@ -623,21 +588,11 @@ test("a chat whose deletion did not finish refuses attach, terminals, sessions a
 	await handleRequest("chat.delete", { workspaceId: workspace.id }, CTX);
 	expect(existsSync(workspace.worktreePath)).toBe(false);
 	expect(trashed).toContain(workspace.worktreePath);
-	expect(trashed.some((path) => path.endsWith(`_${sessionId}.jsonl`))).toBe(true);
+	expect(trashed.some((path) => path.endsWith(`${sessionId}.json`))).toBe(true);
 	expect(loadChats().chats.some((chat) => chat.id === workspace.id)).toBe(false);
 }, 30_000);
 
-test("a chat's delegated conversations go to the Trash with it", async () => {
-	const created = (await handleRequest("chat.create", {}, CTX)) as ChatCreateResult;
-	const store = join(dataDir, "delegation", created.workspace.id);
-	mkdirSync(join(store, created.sessionId), { recursive: true });
-	writeFileSync(join(store, created.sessionId, "child.jsonl"), "{}\n");
-	await handleRequest("chat.delete", { workspaceId: created.workspace.id }, CTX);
-	expect(trashed).toContain(store);
-	expect(existsSync(store)).toBe(false);
-}, 30_000);
-
-test("chat.inspect counts a chat's own files, not ThinkRail's scaffolding, never follows a symlink and yields while it walks", async () => {
+test("chat.inspect counts a chat's own files, not RailDesign's scaffolding, never follows a symlink and yields while it walks", async () => {
 	const created = (await handleRequest("chat.create", {}, CTX)) as ChatCreateResult;
 	const folder = created.workspace.worktreePath;
 	const inspect = () =>
@@ -677,7 +632,7 @@ test("chat.inspect answers truncated at its entry budget, folders included, and 
 	});
 	for (let index = 2; index < 20; index += 1)
 		rmSync(join(worktreePath, `empty-${index}`), { recursive: true });
-	rmSync(join(worktreePath, ".thinkrail"), { recursive: true, force: true });
+	rmSync(join(worktreePath, ".raildesign"), { recursive: true, force: true });
 	let calls = 0;
 	const lateAfterTheRoot = () => (++calls > 4 ? 1_000 : 0);
 	expect(await inspectChat(id, { entries: 1_000, ms: 10 }, lateAfterTheRoot)).toEqual({

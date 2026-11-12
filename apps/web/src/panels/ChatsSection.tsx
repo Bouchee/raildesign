@@ -8,7 +8,6 @@ import {
 	RiAddLine as Plus,
 	RiChat3Fill,
 	RiChat3Line,
-	RiShareForwardLine,
 	RiDeleteBin6Line as Trash2,
 } from "@remixicon/react";
 import type { EditorInfo, Workspace } from "@thinkrail/contracts";
@@ -44,12 +43,7 @@ import {
 	type WorkspaceReadAction,
 } from "../store";
 import { ChatDeleteDialog } from "./ChatDeleteDialog";
-import { ContinueChatDialog } from "./ContinueChatDialog";
-import {
-	deleteProjectlessChat,
-	startProjectlessChat,
-	supportsChatContinuation,
-} from "./chatActions";
+import { deleteProjectlessChat, startProjectlessChat } from "./chatActions";
 import {
 	loadProjectWorkspaces,
 	markWorkspaceRead,
@@ -153,10 +147,8 @@ function ChatRow({
 	const label = chatLabel(t, title, firstPrompt);
 	const [menuOpen, setMenuOpen] = useState(false);
 	const [confirming, setConfirming] = useState(false);
-	const [continueOpen, setContinueOpen] = useState(false);
 	const pending = workspace.deletionPending === true;
 	const Icon = isActive ? RiChat3Fill : RiChat3Line;
-	const canContinue = useAppStore((s) => supportsChatContinuation(s.protocolVersion));
 	const continuedProject = useAppStore((s) => {
 		const link = workspace.continuedTo?.at(-1);
 		return link
@@ -274,18 +266,7 @@ function ChatRow({
 										{t("panels.projectTree.markUnread")}
 									</DropdownMenuItem>
 								) : null}
-								{canContinue ? (
-									<>
-										<DropdownMenuSeparator />
-										<DropdownMenuItem
-											data-testid="chat-continue"
-											onSelect={() => setContinueOpen(true)}
-										>
-											<RiShareForwardLine />
-											{t("panels.chats.continueInWorkspace")}
-										</DropdownMenuItem>
-									</>
-								) : null}
+
 								<DropdownMenuSeparator />
 							</>
 						)}
@@ -308,12 +289,6 @@ function ChatRow({
 				workspaceId={confirming ? workspace.id : null}
 				name={label.text}
 				onClose={() => setConfirming(false)}
-			/>
-			<ContinueChatDialog
-				chat={workspace}
-				title={label.text}
-				open={continueOpen}
-				onOpenChange={setContinueOpen}
 			/>
 		</li>
 	);

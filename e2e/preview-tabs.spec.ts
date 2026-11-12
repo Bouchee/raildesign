@@ -72,6 +72,8 @@ test("Enter and Space on a file row open its preview", async ({ page }) => {
 	await expect(tabs.first()).toContainText("README.md");
 	await expect(tabs.first()).toHaveAttribute("data-preview", "true");
 	await expect(tabs.first()).toHaveAttribute("data-active", "true");
+	// Finish Enter's intended tab-focus handoff before starting a separate keyboard preview.
+	await expect(tabs.first().getByRole("tab")).toBeFocused();
 
 	await page.getByTestId("file-node").filter({ hasText: "notes.txt" }).focus();
 	await page.keyboard.press("Space");

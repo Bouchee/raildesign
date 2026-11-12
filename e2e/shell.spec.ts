@@ -25,7 +25,7 @@ test("renders the branded shell and, with no workspace, the Welcome screen", asy
 
 	const logo = page.getByTestId("brand-logo");
 	await expect(logo).toBeVisible();
-	await expect(logo).toHaveAttribute("aria-label", "ThinkRail");
+	await expect(logo).toHaveAttribute("aria-label", "RailDesign");
 	const logoBox = await logo.boundingBox();
 	expect(logoBox).not.toBeNull();
 	expect(logoBox?.height).toBeCloseTo(32, 0);
@@ -43,8 +43,10 @@ test("renders the branded shell and, with no workspace, the Welcome screen", asy
 	const faviconResponse = await page.request.get("/favicon.svg");
 	expect(faviconResponse.ok()).toBe(true);
 	const faviconSvg = await faviconResponse.text();
-	expect(faviconSvg).toContain("<title>ThinkRail</title>");
-	expect(faviconSvg).toContain("prefers-color-scheme: dark");
+	expect(faviconSvg).toContain("<title>RailDesign</title>");
+	expect(faviconSvg.trim()).toBe(
+		readFileSync(new URL("../packages/shared/assets/icon.svg", import.meta.url), "utf8").trim(),
+	);
 	await expect(page.locator('link[rel="icon"][sizes="32x32"]')).toHaveAttribute(
 		"href",
 		"/favicon.ico",

@@ -5,9 +5,16 @@ status: active
 title: Shared server-side utilities
 parent: architecture
 depends-on: [module-contracts]
-references: [central-integration]
 tags: [host]
 ---
+
+## RailDesign identity and execution
+
+RailDesign uses `io.github.bouchee.raildesign`, new state under `~/.raildesign`, the `raildesign`
+CLI, and updates from `https://github.com/Bouchee/thinkrail/releases/download/desktop-updates`.
+The SDK execution path belongs to the shared host. Launchers contain native startup and packaging only.
+No JetBrains service, PostHog key, attribution or survey integration ships in development builds.
+The fork does not import the official application's records or configuration.
 
 ## Responsibility
 
@@ -39,10 +46,6 @@ bundled into `apps/web`. Exposed through explicit subpath exports, not a barrel.
   a child process ran from goes through;
   `@thinkrail/shared/spawn` → `spawnSyncCaptured()` + `spawnSyncCapturedBytes()` + `spawnDetached()`, the
   hidden-child-process seam every console child the host or CLI launches goes through;
-  `@thinkrail/shared/jbcentral` → the native Central CLI adapter: absolute executable/version/status
-  probing; the minimum supported version and the global opaque PI-extension path; a one-directional auth
-  verdict; an artifact-location watcher; `add pi` / `remove pi` / `login` / `update --install` actions; and
-  the per-OS official install plan. It never edits PI model or credential configuration.
 - **/spawn** — `spawnSyncCaptured()` (sync capture → `{ launched, exitCode, timedOut, stdout, stderr }`;
   `timeoutMs` runs the child in its own process group (POSIX), sends the child `SIGTERM` at the deadline
   and, once it exits, `SIGKILL`s the whole group, so grandchildren holding a hang (a hook, an ssh helper)
@@ -60,10 +63,8 @@ bundled into `apps/web`. Exposed through explicit subpath exports, not a barrel.
   `spawnDetached()` (fire-and-forget `unref`) over `Bun.spawnSync` / `Bun.spawn`, always
   `windowsHide: true`. Bun 1.4.0 maps that option to libuv `UV_PROCESS_WINDOWS_HIDE`; the seam prevents
   background console spawns from omitting it. The two bespoke bounded runners (`server/subprocess`
-  `runBounded`, `jbcentral`'s version/quota runner) set it directly.
-- **Allowed deps:** Bun/Node runtime (`@types/bun`); `contracts` **types** (`JbcentralInstall`, the wire shape `jbcentralInstall`
-  returns — kept in the wire so the server can carry it to the card verbatim); the icon generator's
-  build-only `@resvg/resvg-js` and `resedit`.
+  `runBounded`) sets it directly.
+- **Allowed deps:** Bun/Node runtime, contracts types, and build-only icon dependencies.
 - **Forbidden:** importing `server` / `web` / any `pi` package; being imported by `web` (it carries
   Bun/Node code that must not reach the browser bundle).
 
@@ -95,7 +96,7 @@ bundled into `apps/web`. Exposed through explicit subpath exports, not a barrel.
   - **`SSH_AUTH_SOCK`** (darwin only) — when absent, recover the launchd ssh-agent socket via
     `launchctl getenv SSH_AUTH_SOCK` (3s timeout, never throws, no-op when launchd reports none).
     Without it both the host's own git pushes (`pr`) and every embedded terminal lose the user's
-    ssh-agent: `ssh-add` inside a ThinkRail terminal answers "Could not open a connection to your
+    ssh-agent: `ssh-add` inside a RailDesign terminal answers "Could not open a connection to your
     authentication agent", and a key loaded in Terminal.app never reaches the host's push.
 
   All repairs land on `process.env`, which is what makes them reach *every* shell the host spawns: the PTY
@@ -104,8 +105,8 @@ bundled into `apps/web`. Exposed through explicit subpath exports, not a barrel.
   host can pick an open port instead of colliding with one already running. `isPortFree(port, host?)`:
   the underlying single-port check. `parsePort(value)`: strict port parse (plain decimal digits, 0-65535, else `undefined`), so an empty,
   `0x10`, `1e3` or out-of-range `THINKRAIL_PORT` is ignored instead of becoming port 0 or `NaN`.
-- **/startupMark** — the launchers' one boot signature: a committed 42×20 `TR` silhouette built from a
-  cyclic `THINKRAIL·` field, composed with the product identity, a caller-supplied honest status, and its
+- **/startupMark** — the launchers' one boot signature: a committed 42×20 `RD` silhouette built from a
+  cyclic `RAILDESIGN·` field, composed with the product identity, a caller-supplied honest status, and its
   resolved endpoint. At 72+ columns it is a right-hand lockup; from 42–71 it stacks, and below 42 it uses
   the identity/status alone rather than wrapping the artwork.
   Rendering is one synchronous write's worth of text: terminal-palette green + sparse bright signals +
@@ -115,13 +116,11 @@ bundled into `apps/web`. Exposed through explicit subpath exports, not a barrel.
   conversion is never a runtime concern.
 - **/version** — the one permanent release-stamping seam. Source runs report `0.0.0-dev`; release CI
   overwrites this module in its throwaway checkout before building either artifact family so CLI
-  `--version`, desktop package metadata, analytics, and `server.welcome.appVersion` cannot drift. It
-  contains identity data plus the release-only public `posthogProjectKey` (empty in source, so
-  unstamped builds never report) and has no launcher dependency.
-- **/windowsIdentity** — `windowsFileIdentity({ version, channel })`: what Windows shows for a ThinkRail
+  `--version`, desktop package metadata and `server.welcome.appVersion` cannot drift. It contains release identity data and has no launcher dependency.
+- **/windowsIdentity** — `windowsFileIdentity({ version, channel })`: what Windows shows for a RailDesign
   executable. The product name, which also serves as the file description Task Manager displays, is
-  `ThinkRail` on stable, `ThinkRail Nightly` on nightly and `ThinkRail Dev` on unstamped builds. The
-  publisher and copyright are JetBrains s.r.o., as in `LICENSE` and the signing certificate. The version
+  `RailDesign` on stable, `RailDesign Nightly` on nightly and `RailDesign Dev` on unstamped builds. The
+  publisher and copyright are Bouchee, as in `LICENSE` and the signing certificate. The version
   takes the four numeric parts Windows requires: `X.Y.Z` plus the prerelease's trailing number
   (`0.3.0-nightly.6` → `0.3.0.6`), else `.0`. An unknown channel or a part above 65535 throws, so a
   release build fails rather than ship wrong properties. The CLI compile, the desktop `postBuild` and
@@ -136,7 +135,7 @@ bundled into `apps/web`. Exposed through explicit subpath exports, not a barrel.
   Never hand-edit a raster; regenerate them with `bun run --cwd packages/shared generate-icons`
   (`@resvg/resvg-js` rasterizes straight from the vector, `resedit` packs the ICO). The outputs are the
   macOS iconset, the Linux 512 px PNG, and the Windows ICO, whose path `windowsIconPath` exports.
-  - **Artwork.** The mark keeps its rounded-square silhouette: the ThinkRail glyph in the dark-family
+  - **Artwork.** The new RD mark uses a rounded-square silhouette: the RailDesign RD glyph in the dark-family
     brand green (`#8dff4f`) on a solid black tile. Translucent glass, highlights, and decorative edging
     are excluded so small taskbar frames stay crisp.
   - **ICO frames.** PNG-compressed at 256/128/80/72/64/56/48/40/36/32/28/24/20/16: Microsoft's
@@ -163,107 +162,17 @@ bundled into `apps/web`. Exposed through explicit subpath exports, not a barrel.
   locked past the backoff throws, and a failure no delay can fix (`ENOTDIR`, …) throws on the first
   attempt. `options.remove` is the injected-remover seam the unit test drives; `attempts`/`delayMs` let a
   caller trade patience for speed.
-- **/paths** — the worktree-relative path conventions ThinkRail owns, named once so current and future
+- **/paths** — the worktree-relative path conventions RailDesign owns, named once so current and future
   consumers agree (today: `workspaces` *creates* the scratch dir and git *ignores* it):
-  `WORKSPACE_INTERNAL_DIR` (`.thinkrail` — the repo-local host-managed dir, today holding the ephemeral
+  `WORKSPACE_INTERNAL_DIR` (`.raildesign` — the repo-local host-managed dir, today holding the ephemeral
   scratch, the intended home for future host files like a cached spec index; **not** hidden from the file
   tree), `WORKSPACE_CONTEXT_DIR` (its `context/` scratch dir for temp docs), and `WORKSPACE_TODOS_DIR`
   (`context/todos/` — the chat TODO plans, one JSON per session, so they're ephemeral with the rest of
   the scratch). The pi-free `pi-todos/core` can't import this package (it stays vanilla-`pi`-installable),
   so it keeps a local mirror of the todos path; this module is the host-side source of truth. Distinct
-  from the *home* state dir `~/.thinkrail` (server `persistence`). (The `.gitignore` *body* the host seeds
+  from the *home* state dir `~/.raildesign` (server `persistence`). (The `.gitignore` *body* the host seeds
   into the scratch dir — a lone `*` — is a one-off inlined at that call site, not a path, so it lives
   there, not here.)
-- **/jbcentral** — the **single Central process/filesystem boundary**. It resolves Central by absolute path,
-  parses a bounded `central --version` result into a compatibility verdict, exposes the
-  global opaque artifact path (`~/.pi/agent/extensions/jetbrains-central.ts`, and the `~/.local/bin/`
-  installer fallback) and existence only, and invokes only the reviewed argv: `status`, `quota --json`,
-  `add pi`, `remove pi`, `login`, `update --install`, and `proxy start --ensure-updated`. Support is a
-  **minimum version only** (`MINIMUM_CENTRAL_VERSION`,
-  `1.4.0` — the first Central release carrying the native PI surface): anything at or above it is supported,
-  lower versions require update, and malformed output is
-  unsupported. There is deliberately **no upper bound** — a newer Central is assumed forward-compatible with
-  the argv this adapter invokes, and gating on it would strand users behind every Central release.
-
-  **Auth and proxy health are separate, one-directional observations from one status probe.** Until Central's
-  requested JSON status surface ships, `central status` exits 0 across these states and emits styled
-  presentation rows. The `Auth` verdict therefore trusts only its single negative marker: `not connected`
-  means **signed out**, every other rendering of the row (account, licence, managed-server, or wording we
-  have not seen) means **connected**, and a missing row or failed probe means **unknown**. The `Proxy`
-  verdict similarly trusts only the exact stopped marker as **stopped**; running, missing, or unrecognised
-  presentation collapses to **unknown/not-stopped**. Only those positively observed negative facts may drive
-  a recovery demand. This is the only place presentation output is read, and the shared observation never
-  returns raw text, port, PID, URL, account, licence, company, server details, or diagnostics. Swapping to
-  JSON later remains internal to this boundary; every other command's output is still never parsed.
-  The probe is expensive by Central's design (a proxy health check plus a network update check, ~1.3s, and one
-  CLI analytics event per call), so `JBCENTRAL_STATUS_TTL_MS` bounds how long a caller
-  may serve an observation before re-probing; nothing here polls.
-
-  **Quota is a structured, numeric-only read.** `readJbcentralQuota()` resolves the same absolute executable
-  and runs only `quota --json` with bounded stdout and a deadline. It parses JSON internally and admits only
-  finite `tariffQuota.available` / `tariffQuota.maximum` values (numeric strings or numbers) as recurring
-  `remaining` / `total`; all other fields are ignored. Invalid JSON/shape/amount, timeout, oversized output,
-  launch failure, or non-zero exit becomes a closed reason. There is no text-output fallback and no cache or
-  polling here. Raw output plus account, plan, used, top-up, refill, and diagnostic data are discarded and
-  never returned, logged, or persisted.
-
-  **A spawned login is not a started login.** `central login` drives its browser handoff from a terminal UI,
-  so with no TTY it exits immediately and no sign-in happens — while the spawn itself succeeds. The launch
-  therefore waits a grace period for an early exit and reports `launch-failed` on any non-zero one, so a
-  caller can offer the command to run on the host instead of promising a browser that never opened. An
-  immediate *zero* exit is Central's "already signed in" short-circuit and counts as launched; a flow that
-  really started is still running when the grace elapses, because it is waiting on browser consent. The
-  dependency seam exposes only the child's exit — never its output.
-
-  **A timeout bounds the wait, not just the child.** Killing a child does not close a pipe its own
-  grandchildren still hold open — and Central spawns a proxy daemon — so the deadline resolves the call
-  outright rather than firing a kill and then awaiting the read. This is load-bearing because the version
-  probe sits on the host's boot path: an unbounded wait there means no port, no UI, and no error to show.
-  Version stdout is bounded in memory; action stdout/stderr is ignored. No child output is logged or returned, and only exit success plus safe
-  postconditions map to a closed adapter outcome. `watchJbcentralArtifact(onChange)` observes only that
-  reviewed location and reports invalidation events for add, remove, and replacement; it handles a not-yet-
-  existing extension directory by re-arming from the nearest existing parent, and an existence-only poll
-  repairs dropped add/remove filesystem events. Each newly installed watch re-checks once: an artifact that
-  appeared, or a deeper directory that now exists, while the watch was being moved emits no event for it, so
-  the watcher invalidates or re-arms deeper right away instead of leaving it to the poll (a late poll hit
-  re-ran the runtime rebuild after a first Connect had already settled). It never opens or fingerprints the
-  generated file. The caller debounces events and rechecks existence through the ordinary inspection API.
-
-  **A directory event is not an artifact event.** `fs.watch` is per-directory, and the re-arm above means the
-  watched directory is routinely an *ancestor* — when the artifact directory has not been created, the
-  watcher may land on `~/.pi/agent`, pi's entire state directory. So invalidation is
-  gated on the artifact itself: an event is forwarded only when it names the artifact entry inside the
-  artifact's own directory, and named events from anywhere else (ancestor churn, a sibling extension) at most
-  re-arm and re-check existence. Naming the entry — rather than stat-fingerprinting the file — is what keeps
-  "replacement" observable without ever reading the generated artifact.
-
-  **An event is classified against the watcher that emitted it, never the current one.** The watched
-  directory is mutable state that re-arming changes, so a callback already queued by a watcher that has
-  since been closed would otherwise be judged against its successor's directory — reading an ancestor's
-  churn as an artifact replacement, or an artifact event as ancestor churn. Each `arm()` therefore binds its
-  own directory and a monotonic generation into the callback it installs, and closing a handle retires that
-  generation, so a superseded callback is dropped rather than reclassified.
-
-  **An unnamed event is scoped, not uniformly trusted or dropped.** `fs.watch` may omit the filename, and a
-  watcher error surfaces the same way, so `null` carries no information about *what* changed — only about
-  where we were watching. On the artifact's own directory it is treated as a possible replacement: the handle
-  is closed (it may be the dead watcher behind an error) and the caller is invalidated, because existence is
-  unchanged for an in-place rewrite and the existence poll therefore cannot recover it. From an ancestor it
-  falls back to existence only. That asymmetry is deliberate: trusting `null` from an ancestor would restore
-  that livelock on any platform that omits filenames, while dropping it on the artifact directory would
-  silently strand a stale Central runtime until restart.
-
-  The cross-module liveness obligation and post-mortem live in [[central-integration]]; watcher mechanics are
-  pinned by `packages/shared/src/jbcentral.test.ts`.
-
-  The adapter deliberately has no migration path for the previous unpublished integration: it never reads or
-  edits `models.json`, `auth.json`, backups, or any unrelated PI state.
-
-  **Install guidance is per-OS and single-sourced:** `jbcentralInstall(platform)` returns the official host-OS
-  plan carried to the card; a remote browser never guesses its own OS. **The server's `auth` module is the sole
-  caller** and composes these host-local actions and watcher invalidations with `agent`'s runtime-generation
-  seam.
-
 ## Get right (shellEnv)
 
 - Runs **once at startup, before creating any `AgentSession`**.
@@ -278,8 +187,7 @@ bundled into `apps/web`. Exposed through explicit subpath exports, not a barrel.
   shell (~100 ms typical, seconds with nvm/conda), and a sync probe stalls the whole boot for it. The
   async probe lets a launcher overlap it with work that spawns nothing (bundle import, logging init) and
   await it before the first spawn.
-  Gating each spawn site instead was rejected: the sites are many (git, PTY, editors, Central, pi tools,
-  extensions), and a missed one silently gets the stripped PATH. The login-shell and `launchctl` probes
+  Gating each spawn site instead was rejected: the sites are many (git, PTY, editors, tools and extensions), and a missed one silently gets the stripped PATH. The login-shell and `launchctl` probes
   run in parallel; the `launchctl` `SSH_AUTH_SOCK` applies only when the login-env import did not set it.
 - **Output counts only up to its end marker.** The probe prints `LOGIN_ENV_END` after `env -0`, and output
   without it is a failed probe, so a cut-off read never applies a truncated `PATH` or silently drops
@@ -302,41 +210,6 @@ bundled into `apps/web`. Exposed through explicit subpath exports, not a barrel.
   `/usr/local/bin` was among them; it heads macOS `/etc/paths` and every Linux default PATH, so the probe
   never ran for Dock-launched hosts and every session lost Homebrew/bun (`command not found`, failing git
   hooks, stuck subagents). The one-time login-shell probe per app start is cheaper than guessing.
-
-## Get right (jbcentral)
-
-- **Detect + invoke Central by absolute path (`resolveJbcentralBin`), never by bare command.** Pass the live
-  `process.env.PATH` to lookup and retain the official `~/.local/bin` fallback, because a long-running
-  host must see a just-installed executable without restart. **The fallback names the file each OS's
-  installer actually writes** — `central.exe` on Windows, `central` elsewhere (`install.ps1` installs
-  `$HOME\.local\bin\central.exe`) — while the PATH lookup keeps the bare name, since `Bun.which` tries the
-  Windows executable extensions itself and refuses extensionless files there. An extensionless fallback on
-  Windows can never match a real install, which is precisely the case the fallback exists for: Central
-  installed from the in-app guidance while the host is already running with a stale PATH. Its unit test
-  pins the exact path, never an `exists` stub that answers true for everything.
-- **`~` is `USERPROFILE` on Windows and `HOME` everywhere else** — read from the live env, per platform, with
-  `homedir()` only as the fallback. This is the *same* home pi resolves for `getAgentDir()`, which is the
-  whole point: the adapter and pi must name one artifact. Two rejected forms, both real bugs:
-  `env.HOME ?? homedir()` (the original) silently loses on Windows, where `HOME` is ignored by pi but *is*
-  set by Git Bash to an MSYS path — Central would be installed and configured and ThinkRail would report
-  `absent`; and plain `homedir()` cannot be redirected in-process under Bun, which resolves it **once at
-  startup** rather than per call (Node re-reads it), so the tests and e2e/smoke hosts that redirect a home
-  would silently read the developer's real one. The platform is an injectable dependency (`platform`), so
-  both branches are pinned by unit tests on any host OS.
-- **Confidential-source-informed, public-surface-only.** Tracked artifacts contain only reviewed argv,
-  compatibility bounds, the opaque path, typed outcomes, and independently authored fakes. Never copy or
-  paraphrase Central source/output, and never read, parse, hash, snapshot, copy, log, upload, persist elsewhere,
-  or serve the generated extension.
-- **No standalone PI dependency.** Central writes global PI configuration; ThinkRail loads its path into the
-  embedded PI runtime, including when `PI_CODING_AGENT_DIR` points elsewhere and no `pi` command exists.
-  Watcher events are hints only: every rebuild re-inspects version + existence, and in-app actions explicitly
-  request the same rebuild after their postcondition, so a dropped/coalesced filesystem event cannot lose a
-  state transition.
-- **Never return or throw raw child/loader data.** Adapter errors are closed codes with no free-form child
-  text. Quota success carries only recurring `remaining` / `total` numbers; the caller may report generic
-  guidance only.
-- **No legacy migration.** This is the first supported native integration; the adapter never touches prior
-  provider overrides or maintains backup/rollback machinery.
 
 ## Get right (freePort)
 

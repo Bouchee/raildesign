@@ -46,7 +46,7 @@ export function renderPrBody(plan: TodoPlan): string {
 	const reviewable = [...items, ...adopted].filter((t) => t.review !== undefined);
 	if (reviewable.length > 0) {
 		const settled = reviewable.filter(reviewSettled).length;
-		lines.push("", `Review: ${settled}/${reviewable.length} steps reviewed in ThinkRail.`);
+		lines.push("", `Review: ${settled}/${reviewable.length} steps reviewed in RailDesign.`);
 	}
 	return lines.join("\n").trim();
 }

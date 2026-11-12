@@ -9,7 +9,6 @@ import {
 	isComposerGrowthLimit,
 	isFontChoice,
 	isFontWeightOffset,
-	isJbcentralQuotaRefreshSeconds,
 	isLineWidth,
 	isLocalePreference,
 	isQuestionPanelHeight,
@@ -38,8 +37,7 @@ const ACCEPTED_UPDATE_KEYS = {
 	theme: true,
 	themeMode: true,
 	systemThemePair: true,
-	analyticsEnabled: true,
-	analyticsConsentConfirmed: true,
+
 	notificationsEnabled: true,
 	terminalReplayKb: true,
 	terminalWindowsShell: true,
@@ -60,8 +58,7 @@ const ACCEPTED_UPDATE_KEYS = {
 	agentReviewEnabled: true,
 	subagentsEnabled: true,
 	subagentMaxConcurrent: true,
-	jbcentralQuotaEnabled: true,
-	jbcentralQuotaRefreshSeconds: true,
+
 	settleIdleDays: true,
 	disabledExtensions: true,
 	extensionSettings: true,
@@ -195,8 +192,7 @@ export function updateConfig(partial: AppConfigUpdate): AppConfig {
 		["chatLineWidthBounded", runtimeUpdate.chatLineWidthBounded],
 		["fileLineWidthBounded", runtimeUpdate.fileLineWidthBounded],
 		["voiceInputEnabled", runtimeUpdate.voiceInputEnabled],
-		["analyticsEnabled", runtimeUpdate.analyticsEnabled],
-		["analyticsConsentConfirmed", runtimeUpdate.analyticsConsentConfirmed],
+
 		["notificationsEnabled", runtimeUpdate.notificationsEnabled],
 		["reviewAutoFix", runtimeUpdate.reviewAutoFix],
 		["agentReviewEnabled", runtimeUpdate.agentReviewEnabled],
@@ -229,12 +225,7 @@ export function updateConfig(partial: AppConfigUpdate): AppConfig {
 			`fontWeightOffset must be a multiple of ${FONT_WEIGHT_OFFSET.step} from ${FONT_WEIGHT_OFFSET.min} to ${FONT_WEIGHT_OFFSET.max}`,
 		);
 	}
-	if (
-		runtimeUpdate.analyticsConsentConfirmed !== undefined &&
-		runtimeUpdate.analyticsEnabled === undefined
-	) {
-		throw new Error("analytics consent must include the sharing preference");
-	}
+
 	const {
 		defaultModel,
 		defaultEffort,
@@ -247,8 +238,7 @@ export function updateConfig(partial: AppConfigUpdate): AppConfig {
 		theme,
 		themeMode,
 		systemThemePair,
-		jbcentralQuotaEnabled,
-		jbcentralQuotaRefreshSeconds,
+
 		disabledExtensions,
 		extensionSettings,
 		disabledPackages,
@@ -281,9 +271,7 @@ export function updateConfig(partial: AppConfigUpdate): AppConfig {
 	) {
 		throw new Error("subagentMaxConcurrent must be a whole number from 1 to 16");
 	}
-	if (jbcentralQuotaEnabled !== undefined && typeof jbcentralQuotaEnabled !== "boolean") {
-		throw new Error("jbcentralQuotaEnabled must be a boolean");
-	}
+
 	if (
 		runtimeUpdate.terminalWindowsShell !== undefined &&
 		!isTerminalWindowsShell(runtimeUpdate.terminalWindowsShell)
@@ -302,12 +290,7 @@ export function updateConfig(partial: AppConfigUpdate): AppConfig {
 	) {
 		throw new Error(`composerGrowthLimit must be one of ${COMPOSER_GROWTH_LIMITS.join(", ")}`);
 	}
-	if (
-		jbcentralQuotaRefreshSeconds !== undefined &&
-		!isJbcentralQuotaRefreshSeconds(jbcentralQuotaRefreshSeconds)
-	) {
-		throw new Error("jbcentralQuotaRefreshSeconds must be a whole number from 1 to 3600");
-	}
+
 	if (
 		runtimeUpdate.settleIdleDays !== undefined &&
 		!isSettleIdleDays(runtimeUpdate.settleIdleDays)
@@ -324,14 +307,7 @@ export function updateConfig(partial: AppConfigUpdate): AppConfig {
 		throw new Error("systemThemePair must contain light and dark theme ids");
 	}
 	const current = getConfig();
-	if (
-		runtimeUpdate.analyticsEnabled === true &&
-		!current.analyticsEnabled &&
-		current.analyticsConsentConfirmed &&
-		runtimeUpdate.analyticsConsentConfirmed === undefined
-	) {
-		throw new Error("enabling additional analytics requires an explicit confirmation");
-	}
+
 	const nextThemeMode = themeMode ?? (theme !== undefined ? "fixed" : current.themeMode);
 	const nextSystemThemePair =
 		systemThemePair === undefined
@@ -347,8 +323,7 @@ export function updateConfig(partial: AppConfigUpdate): AppConfig {
 		themeMode: nextThemeMode,
 		...(nextSystemThemePair ? { systemThemePair: nextSystemThemePair } : {}),
 		...(subagentsEnabled === undefined ? {} : { subagentsEnabled }),
-		...(jbcentralQuotaEnabled === undefined ? {} : { jbcentralQuotaEnabled }),
-		...(jbcentralQuotaRefreshSeconds === undefined ? {} : { jbcentralQuotaRefreshSeconds }),
+
 		...(customLayoutPresets === undefined
 			? {}
 			: { customLayoutPresets: validateCustomLayoutPresets(customLayoutPresets) }),

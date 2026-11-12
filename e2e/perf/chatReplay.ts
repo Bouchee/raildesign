@@ -1,6 +1,6 @@
 import type {
 	AssistantMessage,
-	PiEvent,
+	SessionEvent,
 	SessionEventPayload,
 	ToolCall,
 	ToolResultMessage,
@@ -166,9 +166,11 @@ function replayPlans(
 	random: () => number,
 	shape: StreamShape,
 ): ChatReplay {
-	const push = (event: PiEvent) => {
-		const payload: SessionEventPayload = { sessionId, event };
-		const frame: WsPush = { channel: "pi.event", data: payload };
+	let seq = 0;
+	const runId = `replay:${sessionId}`;
+	const push = (event: SessionEvent) => {
+		const payload: SessionEventPayload = { sessionId, runId, seq: ++seq, event };
+		const frame: WsPush = { channel: "session.event", data: payload };
 		return JSON.stringify(frame);
 	};
 	const steps: ReplayStep[] = [{ frames: [push({ type: "agent_start" })] }];

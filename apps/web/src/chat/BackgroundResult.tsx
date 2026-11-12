@@ -45,7 +45,7 @@ export function BackgroundCommandResult({
 				expanded={expanded}
 				onToggle={toggle}
 				toggleRef={toggleRef}
-				onOpen={actions?.resultOpener({ kind: "command", id: details.id })}
+				onOpen={actions?.resultOpener?.({ kind: "command", id: details.id })}
 			>
 				<div className="flex flex-col gap-4">
 					{details.errorMessage ? (
@@ -110,7 +110,10 @@ export function SubagentResult({
 				metaLead={<RunModelLabel model={details.model} thinkingLevel={details.thinkingLevel} />}
 				meta={usageCounters(t, details).join(" · ")}
 				teaser={reportTeaser(report)}
-				onOpen={actions?.resultOpener({ kind: "subagent", childSessionId: details.childSessionId })}
+				onOpen={actions?.resultOpener?.({
+					kind: "subagent",
+					childSessionId: details.childSessionId,
+				})}
 			>
 				{report ? (
 					<div className="tr-text-reading text-text-default">

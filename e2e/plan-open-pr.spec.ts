@@ -8,7 +8,7 @@ import {
 	openFixtureProject,
 	revealWorkbenchTool,
 } from "./fixtures/app";
-import { gitAs } from "./fixtures/git";
+import { gitAs, gitBare } from "./fixtures/git";
 
 // The plan page's finish line, no agent and no GitHub: Open PR in the header opens the compose
 // dialog (pr.preview prefills title + body) and submitting runs the deterministic host-side
@@ -46,7 +46,7 @@ test("Open PR: no origin errors, with origin pushes, re-press follows the same b
 	await expect(compose).not.toBeVisible();
 
 	const bare = mkdtempSync(join(tmpdir(), "thinkrail-pr-origin-"));
-	gitAs(bare, "init", "--bare");
+	gitBare(bare, "init", "--bare");
 	gitAs(workspace.worktreePath, "remote", "add", "origin", bare);
 	writeFileSync(join(workspace.worktreePath, "flood.ts"), "export const wait = 1;\n");
 	gitAs(workspace.worktreePath, "add", "--", "flood.ts");
@@ -59,7 +59,7 @@ test("Open PR: no origin errors, with origin pushes, re-press follows the same b
 	await submit.click();
 	await expect(page.getByText("Branch pushed").first()).toBeVisible();
 	await expect(compose).not.toBeVisible();
-	expect(gitAs(bare, "rev-parse", `refs/heads/${branch}`)).toBe(firstSha);
+	expect(gitBare(bare, "rev-parse", `refs/heads/${branch}`)).toBe(firstSha);
 
 	writeFileSync(join(workspace.worktreePath, "flood.ts"), "export const wait = 2;\n");
 	gitAs(workspace.worktreePath, "add", "--", "flood.ts");
@@ -76,7 +76,7 @@ test("Open PR: no origin errors, with origin pushes, re-press follows the same b
 	await expect(compose).toBeVisible();
 	await submit.click();
 	await expect
-		.poll(() => gitAs(bare, "rev-parse", `refs/heads/${branch}`), { timeout: 10_000 })
+		.poll(() => gitBare(bare, "rev-parse", `refs/heads/${branch}`), { timeout: 10_000 })
 		.toBe(secondSha);
 });
 

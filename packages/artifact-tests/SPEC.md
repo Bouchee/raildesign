@@ -21,7 +21,8 @@ It consumes finished artifacts; it does not build the application or supply appl
   probes, their fixtures and helper unit tests, and the public build action's desktop packaging-invocation
   and artifact-collector contract tests.
 - **Public surface:** `locateDesktopLauncher`, `waitForDocument`, `within`
-- **Allowed deps:** CLI's public artifact-name helper; server's sanctioned history-fixture export; shared
+- **Allowed deps:** contracts for the current wire protocol version; CLI's public artifact-name helper;
+  server's sanctioned history-fixture export; shared
   release identity, its Windows file identity and icon, and retrying teardown; `resedit` to read Windows
   executable resources;
   read-only access to
@@ -38,25 +39,26 @@ with their owning modules. The process-tree lifecycle test reads a fixture pid f
 a positive integer, and its grandchild writes an empty file first so that path runs every time; it never
 signals a pid ≤ 0, which would reach the test runner's whole process group.
 
+## RailDesign identity
+
+Artifact names, bundle names, setup executable names, Windows file properties, icons, installer metadata
+and shell profile markers use RailDesign's own identity. Test fixtures must name the files produced by
+`install.sh`, `install.ps1`, the CLI artifact helper and the desktop packaging configuration. Preserve
+checksum, path validation, atomic replacement, existing-binary retention and malformed-profile checks.
+No fixture update may turn an installation failure into an expected success without checking the actual
+installed executable and metadata.
+
 ## Artifact verification
 
-Shared probes boot the real artifact, load a synthetic external PI extension with no pi executable (the
-fixture value-imports a bare `@earendil-works/pi-coding-agent` specifier and surfaces the imported value in
-its model name, so the load exercises pi's virtual-module mapping through the transform path the host
-forces — a bundle missing the `PI_BUNDLED_NODE` define fails this probe; [[submodule-server-agent]] owns
-the seam),
-exercise the bundled factories/skills, run **two scripted provider turns** — the fixture also registers a
-pi-ai faux `streamSimple` under its own `api` name that calls `visualize` with a dangling flowchart edge,
-so the probe asserts the strict mermaid parse error reaches the transcript as an `isError` tool result
-(the packaged host composes the ThinkRail extension registry, never the portable package's best-effort
-probe; [[module-ext-visualize]]), and on a second prompt calls `ask_user_question`, so the probe sees the
-session block with `needsInput.kind === "tool-response"`, answers through `session.respondToTool`, and reads
-the answer back as the call's non-error tool result (the registry's per-session composition and the host
-mailbox inside the artifact; [[module-ext-ask-user-question]]) — start pi's bundled MCP engine in a real chat (a written-out
-stdio fixture must report *connected · 1 tool* and an in-probe HTTP server that answers 401 with
-protected-resource metadata *needs sign-in*, read back through `mcp.list`, which proves the lazily imported
-MCP runtime executes inside the artifact), reach an OAuth URL without a provider turn, verify health/UI
-and transcript trash, and shut down. CLI-specific probes also check its exit-only and embedded-cache behavior.
+Shared probes boot the real RailDesign artifact with isolated home, data and cache directories and no
+model credentials. They check health and the served UI, current wire RPC, truthful empty provider
+configuration, an isolated worktree and file reads, an actual PTY command whose output file appears in
+that worktree, PTY resize/close, transcript deletion and record retention after host restart. Native
+trash sidecars must be present. No pi, Central, synthetic provider or obsolete extension loader is used.
+The harness does not run a model or claim SDK tool/approval/advanced artifact acceptance. Those need
+separate real stage 4 artifact checks after their owning features are available. A host probe passing
+must retain that limitation in its output.
+
 On Windows both smokes first read executables' resources, without running them:
 - the CLI smoke reads the built exe;
 - the desktop smoke reads the bundle's `bin/bun.exe`, `bin/launcher.exe` and `Resources/uninstall`.
@@ -91,19 +93,12 @@ subsequent external-navigation probes need the window. Desktop-backed Playwright
 only hydrated client. The live-window ready/control seam remains in the launcher, never a runtime import
 of this package.
 
-Normal artifact children set `CI=1` to mute every analytics tier without changing the production runtime mode; `THINKRAIL_NO_ANALYTICS`
-alone suppresses only additional events. `bun run smoke:desktop --analytics [launcher]` instead runs a
-controlled hidden-host probe against a loopback PostHog collector, never the vendor endpoint. The collector
-also answers the host's in-app survey list read (`GET /api/surveys/?token=…`) with an empty list, so a keyed
-human launch neither fails the probe nor offers a survey; muted launches must make no request at all. It removes
-inherited CI/test/optional mutes and proxies for human-mode launches, checks first packaged initialization
-emits `app_installed` before `app_started`, checks restart emits only `app_started`, and pins standard
-desktop/release/platform provenance plus one UUID across both (including additional opt-out). Any
-`$exception` error report a launch happens to emit stays outside that launch sequence but must share the
-UUID, stay personless, and carry only allow-listed plain properties. It then proves
-CI and test mutes independently. No UI action or confirmation is simulated; delivery is checked after normal
-host shutdown. The expected release identity is the shared identity used to build the artifact, so the
-probe needs a release-stamped (keyed) artifact; an unstamped build correctly emits nothing.
+Normal host probes use disposable state. The negative telemetry probe runs first launch and restart
+without CI/test mutes or model credentials; any telemetry or survey request to its loopback regression
+collector fails. The obsolete telemetry-host variable is test input only, verifying the removed path
+stays inactive. This check does not claim to observe arbitrary network egress.
+`smoke:desktop --privacy [launcher]` selects this negative probe; normal smoke includes it after native
+and host checks. No analytics key or reporting integration is part of a release stamp or build action.
 
 Every host owns isolated home, data, agent and cache directories; environment overrides respect Windows'
 case-insensitive keys. The native UI launch pre-creates its home directory: on macOS the window never
@@ -135,4 +130,4 @@ creating files or launching the installer. Other native smoke still isolates bot
 Locators resolve the documented app/installer paths and channel-specific setup names, not the first
 matching artifact from an ambiguous directory. Windows setup suffixes retain the stable/canary distinction.
 A macOS run is not evidence of Windows/Linux native execution or download-time Gatekeeper acceptance.
-Signing/notarization verification belongs to [[module-ci-release]]'s private service handoff.
+Signing/notarization verification uses fork-maintainer identities and remains a stage 4 release gate.

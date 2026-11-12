@@ -81,7 +81,6 @@ import {
 	mcpChatFailureText,
 	mcpEntryUpdate,
 	mcpExposureLabel,
-	mcpHandledElsewhereText,
 	mcpRenderedTarget,
 	mcpRowView,
 	mcpSaveFeedback,
@@ -149,7 +148,7 @@ async function settle<T>(work: () => Promise<T>): Promise<Settled<T>> {
 async function readProjectEntry(workspaceId: string, name: string): Promise<McpServerEntryInput> {
 	const { content } = await getTransport().request("fs.readFile", {
 		workspaceId,
-		path: ".pi/mcp.json",
+		path: ".raildesign/mcp.json",
 	});
 	return projectEntryFrom(content, name);
 }
@@ -705,7 +704,7 @@ function McpWorkspaceSettings({ workspace }: { workspace: Workspace }) {
 	const activeLogin = useAppStore((s) => s.activeLogin);
 	const loginBusy = useAppStore(selectLoginBusy);
 	const now = useNow();
-	const trusted = project?.piResourceTrust === "granted";
+	const trusted = project?.resourceTrust === "granted";
 	const rows = useMemo(
 		() =>
 			deriveMcpServerRows(projection, now).filter(
@@ -739,8 +738,7 @@ function McpWorkspaceSettings({ workspace }: { workspace: Workspace }) {
 		setRemoving((current) => (current?.summary.scope === "project" ? null : current));
 	}, [trusted]);
 
-	const handledElsewhere = projection?.handledElsewhere ?? null;
-	const readOnly = !connected || handledElsewhere !== null;
+	const readOnly = !connected;
 	const servers = projection?.servers ?? null;
 	const configErrors = projection?.configErrors ?? [];
 	const mcpLogin =
@@ -833,7 +831,7 @@ function McpWorkspaceSettings({ workspace }: { workspace: Workspace }) {
 	};
 
 	const projectTrustedNow = () =>
-		useAppStore.getState().projects.find((p) => p.id === workspace.projectId)?.piResourceTrust ===
+		useAppStore.getState().projects.find((p) => p.id === workspace.projectId)?.resourceTrust ===
 		"granted";
 
 	const openEdit = async (row: McpServerRow) => {
@@ -940,16 +938,11 @@ function McpWorkspaceSettings({ workspace }: { workspace: Workspace }) {
 					</Button>
 				) : null}
 			</div>
+			<p data-testid="mcp-execution-unavailable" className="text-text-muted tr-text-metadata">
+				{t("mcp.settings.executionUnavailable")}
+			</p>
 			<McpConfirmBanner />
-			{handledElsewhere ? (
-				<p
-					data-testid="mcp-handled-elsewhere"
-					className="flex items-start gap-8 rounded-sm border border-border-default border-l-[3px] border-l-feedback-warning bg-feedback-warning-subtle px-12 py-8 text-text-default tr-text-metadata"
-				>
-					<TriangleAlert className="mt-2 size-14 shrink-0 text-feedback-warning" />
-					{mcpHandledElsewhereText(t, handledElsewhere.by)}
-				</p>
-			) : null}
+
 			{!trusted ? (
 				<p data-testid="mcp-untrusted" className="text-text-muted tr-text-metadata">
 					{t("mcp.settings.untrusted")}

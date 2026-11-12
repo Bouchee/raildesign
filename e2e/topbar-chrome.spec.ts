@@ -1,4 +1,3 @@
-import { writeFileSync } from "node:fs";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import type {
 	NativeUpdateBridge,
@@ -13,8 +12,6 @@ import {
 	openFixtureProject,
 	PHONE_VIEWPORT,
 } from "./fixtures/app";
-import { connectCentral, openProviders, waitForCentralState } from "./fixtures/jbcentral";
-import { E2E_CENTRAL_STATE } from "./fixtures/paths";
 
 interface Rect {
 	x: number;
@@ -90,13 +87,6 @@ async function headerColors(page: Page): Promise<{ actual: string; expected: str
 		probe.remove();
 		return { actual: getComputedStyle(header).backgroundColor, expected };
 	});
-}
-
-async function setQuotaInterval(page: Page, seconds: number): Promise<void> {
-	const interval = page.getByTestId("jbcentral-quota-interval");
-	await interval.fill(String(seconds));
-	await interval.press("Enter");
-	await expect(interval).toHaveValue(String(seconds));
 }
 
 async function selectOppositeAppearanceTheme(page: Page): Promise<string> {
@@ -261,69 +251,6 @@ test("native updates progress from explicit download through install and restart
 	await page.getByTestId("update-restart").click();
 	await expect(page.getByTestId("update-status")).toContainText("Installing update");
 	await expect(page.getByTestId("update-install-dialog")).toBeVisible();
-});
-
-test("the action cluster keeps Update, quota Retry and Settings out of the drag region", async ({
-	page,
-}) => {
-	await page.addInitScript(() => {
-		const state: NativeUpdateState = {
-			revision: 1,
-			status: "ready",
-			version: "0.1.0",
-			channel: "stable",
-			availableVersion: "0.1.1",
-			progress: null,
-			error: null,
-			failedPhase: null,
-			installStep: null,
-			log: [],
-			lastInstall: null,
-		};
-		const bridge: NativeUpdateBridge = {
-			getState: async () => state,
-			checkForUpdates: async () => {},
-			downloadUpdate: async () => {},
-			restartToUpdate: async () => {},
-			dismissInstallResult: async () => {},
-			subscribe: () => () => {},
-		};
-		Object.defineProperty(globalThis, "__THINKRAIL_NATIVE_UPDATES__", { value: bridge });
-	});
-	await openFixtureProject(page);
-	await enterDefaultWorkspace(page);
-	await openProviders(page);
-	await waitForCentralState(page, "supported");
-	await setQuotaInterval(page, 3600);
-	writeFileSync(E2E_CENTRAL_STATE, "quota-error");
-	await connectCentral(page);
-	await waitForCentralState(page, "configured");
-	const quota = page.getByTestId("jbcentral-quota");
-	await expect(quota).toHaveAttribute("data-state", "unavailable");
-	await page.keyboard.press("Escape");
-	await expect(page.getByTestId("settings-dialog")).toBeHidden();
-
-	const buttons = ["update-ready", "jbcentral-quota", "open-settings"];
-	await page.evaluate(() =>
-		document.documentElement.setAttribute("data-window-chrome-drag-region", "drag"),
-	);
-	await setInsets(page, 80, 138);
-	await expectUsableHeader(page, buttons, "drag");
-
-	await setInsets(page, 0, 0);
-	await page.setViewportSize(PHONE_VIEWPORT);
-	await expectUsableHeader(page, buttons, "drag");
-
-	await page.getByTestId("update-ready").click();
-	await expect(page.getByTestId("settings-updates")).toBeVisible();
-	await page.keyboard.press("Escape");
-	await expect(page.getByTestId("settings-dialog")).toBeHidden();
-
-	await openProviders(page);
-	await setQuotaInterval(page, 30);
-	writeFileSync(E2E_CENTRAL_STATE, "");
-	await page.getByTestId("jetbrains-disconnect").click();
-	await waitForCentralState(page, "supported");
 });
 
 test("HTML window controls appear only with the native bridge and drive it", async ({ page }) => {

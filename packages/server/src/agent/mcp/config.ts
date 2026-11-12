@@ -1,14 +1,9 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type {
-	LoadedMcpConfig,
-	McpExposure,
-	McpServerConfig,
-	McpServerEntry,
-} from "@earendil-works/pi-coding-agent";
-import { CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
 import type { McpProjectOverride, McpToolGrant, Project } from "@thinkrail/contracts";
+import type { LoadedMcpConfig, McpExposure, McpServerConfig, McpServerEntry } from "./types";
+import { CONFIG_DIR_NAME } from "./types";
 
 // Port of pi's `core/mcp-servers.ts` and `extensions/mcp/config.ts` (MIT, Earendil Works).
 
@@ -89,12 +84,24 @@ function validateOAuth(value: unknown): string | undefined {
 		return "oauth.clientName must be a non-empty string";
 	}
 	const registration = value.clientRegistration;
+	if (value.clientMetadataUrl !== undefined) {
+		const url =
+			typeof value.clientMetadataUrl === "string" && URL.canParse(value.clientMetadataUrl)
+				? new URL(value.clientMetadataUrl)
+				: undefined;
+		if (url?.protocol !== "https:" || url.username || url.password || url.hash) {
+			return "oauth.clientMetadataUrl must be an https URL without credentials or fragment";
+		}
+	}
 	if (registration !== undefined && registration !== "auto" && registration !== "dcr") {
 		if (registration !== "cimd") {
 			return 'oauth.clientRegistration must be "auto", "dcr", or "cimd"';
 		}
 		if (value.clientId !== undefined || value.clientName !== undefined) {
 			return 'oauth.clientRegistration "cimd" cannot be combined with oauth.clientId or oauth.clientName';
+		}
+		if (value.clientMetadataUrl === undefined) {
+			return 'oauth.clientRegistration "cimd" requires oauth.clientMetadataUrl';
 		}
 		const callback = typeof value.callbackUrl === "string" ? new URL(value.callbackUrl) : undefined;
 		if (callback && (callback.hostname === "[::1]" || callback.pathname !== "/callback")) {

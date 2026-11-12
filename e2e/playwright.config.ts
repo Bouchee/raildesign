@@ -3,28 +3,19 @@ import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, devices } from "@playwright/test";
 import { toolHomeEnv } from "@thinkrail/shared/toolHomes";
-import { assertCentralPlaywrightRunner } from "./agentRunPlan";
-import {
-	CENTRAL_STUB_READ_ONLY_ENV,
-	isRealCentralE2e,
-	REAL_CENTRAL_E2E_ENV,
-} from "./fixtures/centralAgent";
+import { assertLivePlaywrightRunner } from "./agentRunPlan";
 import { hermeticE2ePath, hermeticE2eShell, resolveBunExecutable } from "./fixtures/executables";
 import {
-	E2E_CENTRAL_BAD_EXTENSION_SOURCE,
-	E2E_CENTRAL_EXTENSION_SOURCE,
-	E2E_CENTRAL_LOG,
-	E2E_CENTRAL_STATE,
 	E2E_DATA_DIR,
 	E2E_EDITOR_LOG,
 	E2E_FAKE_BIN_DIR,
 	E2E_HOME_DIR,
 	E2E_INSTALLED_FONTS,
-	E2E_PI_AGENT_DIR,
 	E2E_PICK_DIR_POINTER,
 	E2E_PORT,
 	E2E_SPEECH_MANIFEST,
 } from "./fixtures/paths";
+import { isLiveAgentE2e, LIVE_AGENT_E2E_ENV } from "./fixtures/sdkAgent";
 import { REAL_SPEECH_E2E_ENV } from "./fixtures/speech";
 
 const rootDir = fileURLToPath(new URL("..", import.meta.url));
@@ -35,8 +26,8 @@ const staticDir = fileURLToPath(new URL("../apps/web/dist", import.meta.url));
 // (e2e/fixtures/portBlock.ts). Supersedes the manual THINKRAIL_E2E_PORT knob
 // (THINKRAIL_E2E_PORT_BASE pins the whole per-worktree block explicitly when ever needed).
 const PORT = E2E_PORT;
-const centralMode = isRealCentralE2e();
-assertCentralPlaywrightRunner(process.env, process.argv);
+const liveMode = isLiveAgentE2e();
+assertLivePlaywrightRunner(process.env, process.argv);
 const bunExecutable = resolveBunExecutable();
 const hostPath = hermeticE2ePath(E2E_FAKE_BIN_DIR);
 if (hostPath.split(delimiter).some((directory) => existsSync(join(directory, "pi"))))
@@ -48,9 +39,9 @@ const hostCommand =
 export default defineConfig({
 	testDir: ".",
 	// The headless workflow-test suite has its own config (e2e/playwright.workflows.config.ts) — no browser,
-	// no webServer; `bun run test:workflows`. Never picked up by the browser suites.
+	// no webServer; `bun run test:workflow-helpers`. Never picked up by the browser suites.
 	testIgnore: "workflows/**",
-	...(centralMode ? { grep: /@agent/ } : { grepInvert: /@agent/ }),
+	...(liveMode ? { grep: /@agent/ } : { grepInvert: /@agent/ }),
 	// One worker owns one stateful host; the shard runner deals tests to lanes through test lists.
 	workers: 1,
 	forbidOnly: !!process.env.CI,
@@ -104,29 +95,16 @@ export default defineConfig({
 			THINKRAIL_GH_OFFLINE: "1",
 			// Keep cross-agent personal skill aliases away from the developer's real homes/overrides.
 			...toolHomeEnv(E2E_HOME_DIR),
-			PI_CODING_AGENT_DIR: E2E_PI_AGENT_DIR,
-			// Keep the suite hermetic: `model.list` fires a detached pi.dev catalog refresh (issue #98) that
-			// must never leave the machine in tests — PI_OFFLINE is pi's own convention and our guard honors it.
-			PI_OFFLINE: "1",
-			// Lane-local `central` + `code` stubs: deterministic and safe under process-level sharding.
 			PATH: hostPath,
 			SHELL: hermeticE2eShell(E2E_FAKE_BIN_DIR),
-			CENTRAL_STUB_STATE: E2E_CENTRAL_STATE,
-			CENTRAL_STUB_LOG: E2E_CENTRAL_LOG,
-			CENTRAL_STUB_EXTENSION_SOURCE: E2E_CENTRAL_EXTENSION_SOURCE,
-			CENTRAL_STUB_BAD_EXTENSION_SOURCE: E2E_CENTRAL_BAD_EXTENSION_SOURCE,
-			...(centralMode
+			...(liveMode
 				? {
-						[REAL_CENTRAL_E2E_ENV]: "1",
-						[CENTRAL_STUB_READ_ONLY_ENV]: "1",
+						[LIVE_AGENT_E2E_ENV]: "1",
 					}
 				: {}),
 			// Where the stub `code` appends each invocation's argv, so a test can assert "Open in VS Code"
 			// actually launched with the right worktree path.
 			THINKRAIL_E2E_EDITOR_LOG: E2E_EDITOR_LOG,
-			// Register a deterministic fake OAuth provider (`e2e-oauth`) so the in-app login flow is drivable
-			// end-to-end without a real provider/browser (see packages/server/src/dev.ts).
-			THINKRAIL_E2E_FAKE_OAUTH: centralMode ? "0" : "1",
 			CI: "1",
 		},
 	},

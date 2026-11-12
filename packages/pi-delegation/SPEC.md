@@ -144,7 +144,7 @@ shutdown release barriers; and finalized outcomes after a shrinking compaction.
   project trust a child's settings manager receives (asked at creation and again at the revalidation
   below): trust is part of the context a child derives from its parent, so a child never loads more of
   the project than its parent — pure pi's `ctx` carries the session's own trust, ThinkRail answers its
-  parent's loaded trust AND the current `Project.piResourceTrust`; absent → trusted, pi's own
+  parent's loaded trust AND the current `Project.resourceTrust`; absent → trusted, pi's own
   `SettingsManager` default. A resource context (`ResourceContextInput`) takes the same optional field. The parent's own retained `modelRuntime` is preferred
   over every fallback: an embedder whose sessions each retain their creation-time runtime generation
   (ThinkRail) must give a child its *parent's* generation, or a parent kept alive on a Central-only

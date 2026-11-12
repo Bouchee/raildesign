@@ -13,7 +13,7 @@ tags: [todos]
 
 Serve the in-chat TODO plan for a chat session, mapped to the wire DTOs. The list is **scoped by
 `sessionId`** (one JSON file per session under the workspace's worktree, in the ephemeral context scratch
-dir `.thinkrail/context/todos/<sessionId>.json`), not the worktree. Read-modify-write on demand: every call re-reads
+dir `.raildesign/context/todos/<sessionId>.json`), not the worktree. Read-modify-write on demand: every call re-reads
 through `pi-todos`' pi-free `TodoStore`, so the agent's in-session `todo_*` writes and the user's UI edits
 converge on the same file with no staleness window. `listTodos` also **decorates each group with its
 derived `status`** (`pi-todos`' `groupStatus`) on the way out: the rule belongs to the package that owns plan
@@ -64,7 +64,7 @@ cannot roll back an earlier item's completed window.
 On `in_progress` it **opens the item's work window**: a baseline of the worktree's **uncommitted**
 changed-path set + the current `HEAD` sha, captured through the git module's deliberately synchronous
 `gitUncommittedPaths` leaf before the tool-end publisher returns, then **persisted** in a host-owned sidecar next to the todos JSON
-(`.thinkrail/context/todos/<sessionId>.baselines.json`, read-modify-write like the store) — so a host
+(`.raildesign/context/todos/<sessionId>.baselines.json`, read-modify-write like the store) — so a host
 restart mid-item changes nothing; `head` is the range base for **in-window commit adoption** (below).
 A window opening while **another chat** already has one records `shared: true` and marks that other
 window shared too (`markOtherSessionWindowsShared`) — the flag is **sticky**, because "was this window
@@ -155,7 +155,7 @@ as a permanently open foreign window and force every sibling chat into the fallb
   it (a settled round resets the counter for the next one); `recordAgentChangesRequested` writes it
   independently of the record it also writes; `todoReviewAutoCycles` is the read side.
 
-The host's own on-disk state (anything under `WORKSPACE_INTERNAL_DIR` = `.thinkrail/…`, e.g. the todos
+The host's own on-disk state (anything under `WORKSPACE_INTERNAL_DIR` = `.raildesign/…`, e.g. the todos
 JSON under `context/todos/`) is filtered out of every change set — writing a todo shows up in `git status`
 but is never a change the step *produced*. The pi-free `TodoStore` never touches git; `commit`/`change`
 are host-only, while the agent attaches `file`/`spec` itself through the `todo_*` tools (see
@@ -245,7 +245,7 @@ that is then re-edited uncommitted appears in both `adoptedCommits` (the commit'
 **The review workflow (`reviews.ts` + the ops in `todos.ts`).** A completed item that carries a host
 change set is **reviewable** — the gate is that artifact presence, so research/verification steps never
 demand review and no LLM attribution is involved. The user's decision lives in a second host-owned
-sidecar, `.thinkrail/context/todos/<sessionId>.reviews.json` (read-modify-write, atomic, same lifecycle
+sidecar, `.raildesign/context/todos/<sessionId>.reviews.json` (read-modify-write, atomic, same lifecycle
 as the baselines: `session.delete` removes the file; orphan records are inert) — deliberately **not** the agent-writable todos JSON: an agent re-plan must
 never flip a review decision. A record is `reviewed` or `changes_requested` plus **`reviewedShas`, the
 watermark**: the sha set the reviewer actually acted on. For a HUMAN action that is the item's commit
@@ -348,7 +348,7 @@ before the already-enqueued replacement pass has reconciled the current plan.
   pure `renderFixPackage` (the review ops; the send itself is `host`'s composition), and the
   `TodoReviewRecord` type. **Mapping only** — no plan logic; `TodoStore` owns disk.
   **`listStoredPlans(root) → StoredPlanFile[]`** is the Git-free reader the search palette's host
-  providers use: it enumerates `<root>/.thinkrail/context/todos/<sessionId>.json` (sidecars such as
+  providers use: it enumerates `<root>/.raildesign/context/todos/<sessionId>.json` (sidecars such as
   `.baselines.json` are skipped by the id grammar) and hands each plan back as a lazy
   `TodoStore.read()` — no artifact settling, no git, no review decoration. A read parses a file only when
   its `mtime` or size changed since the last read (a bounded per-file memo), so a search over every open

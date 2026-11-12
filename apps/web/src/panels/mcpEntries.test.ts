@@ -40,7 +40,7 @@ function draft(overrides: Partial<McpFormDraft>): McpFormDraft {
 	return { ...emptyMcpDraft(), ...overrides };
 }
 
-test(`config references follow pi's grammar: \${VAR}, $VAR and !command, with $$ and $! escapes`, () => {
+test(`config references accept the supported grammar: \${VAR}, $VAR and !command, with $$ and $! escapes`, () => {
 	expect(isConfigReference(`\${GITHUB_TOKEN}`)).toBe(true);
 	expect(isConfigReference(`Bearer \${TOKEN}`)).toBe(true);
 	expect(isConfigReference("$TOKEN")).toBe(true);
@@ -180,7 +180,7 @@ test("the run list names every host command line and every !command value", () =
 	expect(needsMcpReview([quiet, reviewMcpServer("cmd", { command: "x" })])).toBe(true);
 });
 
-test("names follow pi's charset, are unique per file, and never twin another name across - and _", () => {
+test("names use the supported charset, are unique per file, and never twin another name across - and _", () => {
 	expect(mcpNameIssue(currentTranslator(), "", "user", existing)).toBe("Name the server.");
 	expect(mcpNameIssue(currentTranslator(), "bad name", "user", existing)).toBe(
 		"Use letters, digits, - and _ only.",
@@ -490,7 +490,7 @@ test("dialogs show plain values hidden; an untouched marker keeps the written va
 	});
 });
 
-test("project entries are read as written and toggled with pi's writer semantics", () => {
+test("project entries are read as written and toggled with the configuration writer semantics", () => {
 	const content = JSON.stringify({
 		mcpServers: { repo: { command: "x", enabled: false }, linear: { enabled: false } },
 	});

@@ -19,6 +19,7 @@ interface TransportDispatchHooks {
 const DEFAULT_TIMEOUT_MS = 60_000;
 
 const NON_REPLAYABLE_CHANNELS: ReadonlySet<string> = new Set([
+	WS_CHANNELS.sessionEvent,
 	WS_CHANNELS.terminalData,
 	WS_CHANNELS.terminalExit,
 	WS_CHANNELS.terminalDetached,
@@ -26,8 +27,6 @@ const NON_REPLAYABLE_CHANNELS: ReadonlySet<string> = new Set([
 	WS_CHANNELS.sessionResourcesChanged,
 	WS_CHANNELS.mcpStatus,
 	WS_CHANNELS.providerChanged,
-	WS_CHANNELS.feedbackInterview,
-	WS_CHANNELS.feedbackGithubStar,
 	WS_CHANNELS.searchTextResults,
 ]);
 

@@ -2,6 +2,7 @@ import {
 	RiBrainLine as Brain,
 	RiCheckLine as Check,
 	RiArrowRightSLine as ChevronRight,
+	RiTimeLine as Clock,
 	RiStackLine as Layers,
 	RiLoader4Line as Loader2,
 	RiCloseLine as X,
@@ -331,6 +332,7 @@ function liveActivityTicker(
 	const current = flatSteps[flatSteps.length - 1];
 	if (!current) return t("chat.activity.working");
 	if (current.kind === "thinking") return t("chat.activity.thinkingLive");
+	if (!current.tool && !current.dead) return current.toolName;
 	const summary = getToolSummary(t, current.toolName, toolRenderProps(current, workspaceRoot));
 	return summary ? `${current.toolName} · ${summary}` : `${current.toolName}…`;
 }
@@ -365,9 +367,10 @@ function RoutineToolRow({
 }) {
 	const t = useT();
 	const [expanded, toggle, toggleRef] = useFold(step.id);
+	const pending = !step.tool && !step.dead;
 	const status: ToolStatus = step.tool?.status ?? (step.dead ? "error" : "running");
 	const renderProps = toolRenderProps(step, workspaceRoot, onOpenFile);
-	const summary = getToolSummary(t, step.toolName, renderProps);
+	const summary = pending ? "" : getToolSummary(t, step.toolName, renderProps);
 	return (
 		<div
 			data-testid="activity-step"
@@ -379,7 +382,7 @@ function RoutineToolRow({
 			data-activity-node-meta={summary}
 			data-step="tool"
 			data-tool={step.toolName}
-			data-status={status}
+			data-status={pending ? "pending" : status}
 			data-expanded={expanded}
 			className="text-text-muted tr-text-metadata"
 		>
@@ -388,7 +391,9 @@ function RoutineToolRow({
 				onToggle={toggle}
 				toggleRef={toggleRef}
 				icon={
-					status === "running" ? (
+					pending ? (
+						<Clock className="size-12 shrink-0" />
+					) : status === "running" ? (
 						<Loader2 className="size-12 shrink-0 animate-spin motion-reduce:animate-none" />
 					) : status === "error" ? (
 						<X className="size-12 shrink-0 text-feedback-error" />
@@ -399,7 +404,7 @@ function RoutineToolRow({
 				name={step.toolName}
 				summary={summary}
 			/>
-			{expanded ? (
+			{expanded && !pending ? (
 				<div className={cn("px-8 pb-4 pl-16", status === "error" && "text-feedback-error")}>
 					<ToolRendererBody {...renderProps} imageLabel={summary} />
 				</div>

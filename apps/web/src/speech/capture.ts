@@ -82,7 +82,7 @@ export async function startCapture(sink: CaptureSink, signal: AbortSignal): Prom
 		await context.audioWorklet.addModule(workletUrl);
 		if (signal.aborted) throw cancelled();
 		source = context.createMediaStreamSource(stream);
-		node = new AudioWorkletNode(context, "thinkrail-pcm16", {
+		node = new AudioWorkletNode(context, "raildesign-pcm16", {
 			numberOfOutputs: 0,
 			processorOptions: { targetRate: SPEECH_SAMPLE_RATE, frameSamples: FRAME_SAMPLES },
 		});

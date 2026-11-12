@@ -20,7 +20,7 @@ const managed: Workspace = {
 	baseBranch: "main",
 };
 
-test("manual rename requires its introducing host protocol and a ThinkRail-managed workspace", () => {
+test("manual rename requires its introducing host protocol and a RailDesign-managed workspace", () => {
 	expect(WORKSPACE_RENAME_PROTOCOL_VERSION).toBe(55);
 	expect(canRenameWorkspace(54, managed)).toBe(false);
 	expect(canRenameWorkspace(55, managed)).toBe(true);

@@ -34,8 +34,8 @@ test("renders dashed titles with a compact dot separator", () => {
 	expect(specDisplayTitle("ACP client — spawn, negotiate, translate")).toBe(
 		"ACP client · spawn, negotiate, translate",
 	);
-	expect(specDisplayTitle("meta – the ThinkRail extension namespace")).toBe(
-		"meta · the ThinkRail extension namespace",
+	expect(specDisplayTitle("meta – the RailDesign extension namespace")).toBe(
+		"meta · the RailDesign extension namespace",
 	);
 	expect(specDisplayTitle("browser↔host wire")).toBe("browser↔host wire");
 	expect(specDisplayTitle("e2e/workflows — harness")).toBe("e2e/workflows · harness");

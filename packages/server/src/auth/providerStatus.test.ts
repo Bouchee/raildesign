@@ -1,227 +1,93 @@
-import { describe, expect, test } from "bun:test";
-import type { JbcentralInstall } from "@thinkrail/contracts";
-import {
-	buildProviderReport,
-	type ProviderStatusSources,
-	statusProviderIds,
-} from "./providerStatus";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { saveCustomEndpoint } from "../agent";
+import { getProviderStatus } from "./providerStatus";
 
-const INSTALL: JbcentralInstall = {
-	platform: "linux",
-	shell: "bash",
-	command: "curl -fsSL https://example/install.sh | bash",
-};
-
-function sources(overrides: Partial<ProviderStatusSources> = {}): ProviderStatusSources {
-	return {
-		modelProviderIds: new Set(),
-		availableProviders: new Set(),
-		centralProviders: new Set(),
-		credentialProviders: [],
-		oauthProviders: [],
-		credentialType: () => undefined,
-		providerAuth: () => ({}),
-		apiKeyLogin: () => true,
-		displayName: (id) => id,
-		hasAuth: () => false,
-		jbcentral: { state: "absent" },
-		jbcentralInstall: INSTALL,
-		warnings: { anthropicExtraUsage: true },
-		...overrides,
-	};
-}
-
-test("custom servers saved after the runtime started join the status allowlist, opaque ids never do", () => {
-	expect(
-		statusProviderIds(new Set(["anthropic", "openai"]), new Set(["anthropic", "custom-central"]), [
-			"anthropic",
-			"openai",
-			"custom-gw-1a2b3c",
-			"custom-central",
-			"central-test",
-		]),
-	).toEqual(["anthropic", "openai", "custom-gw-1a2b3c"]);
+const keys = [
+	"THINKRAIL_DATA_DIR",
+	"OPENAI_BASE_URL",
+	"OPENAI_MODEL",
+	"OPENAI_API_KEY",
+	"RAILDESIGN_TEST_KEY",
+] as const;
+let previous: (string | undefined)[];
+let directory: string;
+beforeEach(() => {
+	previous = keys.map((key) => process.env[key]);
+	for (const key of keys) delete process.env[key];
+	directory = mkdtempSync(join(tmpdir(), "raildesign-auth-"));
+	process.env.THINKRAIL_DATA_DIR = directory;
+});
+afterEach(() => {
+	keys.forEach((key, index) => {
+		const value = previous[index];
+		if (value === undefined) delete process.env[key];
+		else process.env[key] = value;
+	});
+	rmSync(directory, { recursive: true, force: true });
 });
 
-describe("buildProviderReport", () => {
-	test("empty runtime carries the closed Central state and install plan", () => {
-		expect(buildProviderReport(sources())).toEqual({
-			providers: [],
-			jbcentral: { state: "absent" },
-			jbcentralInstall: INSTALL,
-			warnings: { anthropicExtraUsage: true },
-		});
-	});
-
-	test("Central lifecycle flows through without model or endpoint inference", () => {
-		const jbcentral = { state: "configuring" as const, action: "connect" as const };
-		expect(buildProviderReport(sources({ jbcentral })).jbcentral).toEqual(jbcentral);
-	});
-
-	test("stored credentials map to oauth/api-key kinds and remain removable", () => {
-		const report = buildProviderReport(
-			sources({
-				modelProviderIds: new Set(["anthropic", "openai"]),
-				availableProviders: new Set(["anthropic", "openai"]),
-				credentialProviders: ["anthropic", "openai"],
-				credentialType: (id) => (id === "anthropic" ? "oauth" : "api_key"),
-				providerAuth: () => ({ source: "stored" }),
-				hasAuth: () => true,
-			}),
-		);
-		expect(
-			report.providers.map((provider) => [provider.id, provider.kind, provider.canLogout]),
-		).toEqual([
-			["anthropic", "oauth", true],
-			["openai", "api-key", true],
-		]);
-	});
-
-	test("Central attribution overrides provider auth detail without changing ordinary rows", () => {
-		const report = buildProviderReport(
-			sources({
-				modelProviderIds: new Set(["anthropic", "fallback"]),
-				availableProviders: new Set(["anthropic", "fallback"]),
-				centralProviders: new Set(["anthropic"]),
-				credentialProviders: ["fallback"],
-				credentialType: (id) => (id === "fallback" ? "api_key" : undefined),
-				providerAuth: (id) =>
-					id === "anthropic"
-						? { source: "environment", label: "ANTHROPIC_API_KEY" }
-						: { source: "fallback" },
-			}),
-		);
-		expect(report.providers).toEqual([
+test("reports only configured SDK endpoint identities without credentials", async () => {
+	await saveCustomEndpoint({
+		name: "Private endpoint",
+		baseUrl: "https://opencode.ai/inference/go/openai/v1",
+		apiKey: "private-key-sentinel",
+		models: [
 			{
-				id: "anthropic",
-				name: "anthropic",
-				configured: true,
-				kind: "central",
-				canApiKey: true,
+				id: "deepseek-v4.1-flash",
+				contextWindow: 128000,
+				maxTokens: 8192,
+				reasoning: false,
+				vision: false,
+				tools: true,
 			},
+		],
+	});
+	const report = await getProviderStatus();
+	expect(report.providers).toHaveLength(1);
+	expect(report.providers[0]).toMatchObject({
+		name: "Private endpoint",
+		configured: true,
+		kind: "api-key",
+	});
+	expect(JSON.stringify(report)).not.toContain("private-key-sentinel");
+	expect(JSON.stringify(report)).not.toContain("opencode.ai");
+	expect(report).not.toHaveProperty("jbcentral");
+});
+
+test("an unresolved key variable remains unconfigured", async () => {
+	await saveCustomEndpoint({
+		name: "Unset key",
+		baseUrl: "https://opencode.ai/inference/go/openai/v1",
+		apiKey: "$RAILDESIGN_TEST_KEY",
+		models: [
 			{
-				id: "fallback",
-				name: "fallback",
-				configured: true,
-				kind: "api-key",
-				canApiKey: true,
-				canLogout: true,
+				id: "deepseek-v4.1-flash",
+				contextWindow: null,
+				maxTokens: null,
+				reasoning: null,
+				vision: null,
+				tools: null,
 			},
-		]);
+		],
 	});
+	expect((await getProviderStatus()).providers[0]?.configured).toBe(false);
+	process.env.RAILDESIGN_TEST_KEY = "protected-key";
+	expect((await getProviderStatus()).providers[0]?.configured).toBe(true);
+});
 
-	test("an unconfigured Central id remains unconfigured", () => {
-		const report = buildProviderReport(
-			sources({
-				modelProviderIds: new Set(["central-only"]),
-				centralProviders: new Set(["central-only"]),
-			}),
-		);
-		expect(report.providers).toEqual([
-			{ id: "central-only", name: "central-only", configured: false, canApiKey: true },
-		]);
-	});
+test("host environment configuration uses the same status path", async () => {
+	process.env.OPENAI_BASE_URL = "https://opencode.ai/inference/go/openai/v1";
+	process.env.OPENAI_MODEL = "deepseek-v4.1-flash";
+	process.env.OPENAI_API_KEY = "protected-key";
+	expect((await getProviderStatus()).providers).toEqual([
+		expect.objectContaining({ id: "environment", configured: true }),
+	]);
+});
 
-	test("environment and models.json sources remain generic provider auth", () => {
-		const report = buildProviderReport(
-			sources({
-				modelProviderIds: new Set(["custom", "groq"]),
-				availableProviders: new Set(["custom", "groq"]),
-				providerAuth: (id) =>
-					id === "groq"
-						? { source: "environment", label: "GROQ_API_KEY" }
-						: { source: "models_json_key" },
-			}),
-		);
-		expect(report.providers).toEqual([
-			{
-				id: "custom",
-				name: "custom",
-				configured: true,
-				kind: "api-key",
-				detail: "models.json",
-				canApiKey: true,
-			},
-			{
-				id: "groq",
-				name: "groq",
-				configured: true,
-				kind: "env",
-				detail: "GROQ_API_KEY",
-				canApiKey: true,
-			},
-		]);
-	});
-
-	test("a model-less stored credential remains visible without inventing login support", () => {
-		const report = buildProviderReport(
-			sources({
-				credentialProviders: ["mystery"],
-				credentialType: () => "api_key",
-				providerAuth: () => ({ source: "stored" }),
-				hasAuth: (id) => id === "mystery",
-				apiKeyLogin: () => false,
-			}),
-		);
-		expect(report.providers).toEqual([
-			{ id: "mystery", name: "mystery", configured: true, kind: "api-key", canLogout: true },
-		]);
-	});
-
-	test("OAuth-only providers appear under their own login ids and labels", () => {
-		const report = buildProviderReport(
-			sources({
-				oauthProviders: [
-					{ id: "openai-codex", name: "ChatGPT Subscription" },
-					{ id: "github-copilot", name: "GitHub Copilot" },
-				],
-				apiKeyLogin: () => false,
-			}),
-		);
-		expect(report.providers).toEqual([
-			{
-				id: "openai-codex",
-				name: "ChatGPT Subscription",
-				configured: false,
-				canOAuth: true,
-			},
-			{
-				id: "github-copilot",
-				name: "GitHub Copilot",
-				configured: false,
-				canOAuth: true,
-			},
-		]);
-	});
-
-	test("pi-owned API-key capability supports multi-prompt providers", () => {
-		const report = buildProviderReport(
-			sources({
-				modelProviderIds: new Set(["amazon-bedrock", "google-vertex", "azure-openai-responses"]),
-			}),
-		);
-		expect(
-			Object.fromEntries(report.providers.map((provider) => [provider.id, provider.canApiKey])),
-		).toEqual({
-			"amazon-bedrock": true,
-			"azure-openai-responses": true,
-			"google-vertex": true,
-		});
-	});
-
-	test("configured providers sort first and alphabetically within each group", () => {
-		const report = buildProviderReport(
-			sources({
-				modelProviderIds: new Set(["zai", "anthropic", "google", "openai"]),
-				availableProviders: new Set(["zai", "openai"]),
-				providerAuth: () => ({ source: "models_json_key" }),
-			}),
-		);
-		expect(report.providers.map((provider) => provider.id)).toEqual([
-			"openai",
-			"zai",
-			"anthropic",
-			"google",
-		]);
-	});
+test("malformed own configuration fails instead of reporting an empty provider list", async () => {
+	writeFileSync(join(directory, "models.json"), "broken");
+	await expect(getProviderStatus()).rejects.toThrow("RailDesign model configuration is unreadable");
 });

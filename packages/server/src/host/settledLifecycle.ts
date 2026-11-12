@@ -36,7 +36,7 @@ export function stampSessionActivity(record: SessionStateRecord): void {
 
 /**
  * Rows whose review state can still change the partition: live rows every pass, idle-settled rows at
- * most every 30 minutes (a PR opened from outside ThinkRail must still surface), parked and complete
+ * most every 30 minutes (a PR opened from outside RailDesign must still surface), parked and complete
  * merged/closed rows never — the override wins regardless, incomplete terminal facts retry, and a reopened
  * complete review is caught on activation.
  */

@@ -3,7 +3,6 @@ import {
 	RiFileCopyLine as Copy,
 	RiFolderOpenLine as FolderOpen,
 	RiAddLine as Plus,
-	RiShareForwardLine,
 	RiDeleteBin6Line as Trash2,
 } from "@remixicon/react";
 import type { Workspace } from "@thinkrail/contracts";
@@ -21,12 +20,7 @@ import { useShallow } from "zustand/react/shallow";
 import { RunningIcon } from "../../components/RunningIcon";
 import { chatDisplayName, chatLabel, copyText } from "../../lib";
 import { ChatDeleteDialog } from "../../panels/ChatDeleteDialog";
-import { ContinueChatDialog } from "../../panels/ContinueChatDialog";
-import {
-	deleteProjectlessChat,
-	startProjectlessChat,
-	supportsChatContinuation,
-} from "../../panels/chatActions";
+import { deleteProjectlessChat, startProjectlessChat } from "../../panels/chatActions";
 import { revealWorkspace } from "../../panels/workspaceActions";
 import {
 	selectChatWorkspaceFirstPrompt,
@@ -64,13 +58,10 @@ export function ChatSegment({ workspace }: { workspace: Workspace }) {
 		),
 	);
 	const [confirming, setConfirming] = useState<string | null>(null);
-	const [continuing, setContinuing] = useState<string | null>(null);
 	const pending = workspace.deletionPending === true;
 	useEffect(() => {
 		if (confirming !== null && confirming !== workspace.id) setConfirming(null);
-		if (continuing !== null && continuing !== workspace.id) setContinuing(null);
-	}, [confirming, continuing, workspace.id]);
-	const canContinue = useAppStore((s) => supportsChatContinuation(s.protocolVersion));
+	}, [confirming, workspace.id]);
 	return (
 		<Segment
 			caption={t("shell.location.chat.caption")}
@@ -125,19 +116,7 @@ export function ChatSegment({ workspace }: { workspace: Workspace }) {
 						<FolderOpen />
 						{t("shell.location.workspace.reveal")}
 					</DropdownMenuItem>
-					{canContinue && !pending ? (
-						<>
-							<DropdownMenuSeparator />
-							<DropdownMenuItem
-								data-testid="scope-chat-continue"
-								onSelect={() => setContinuing(workspace.id)}
-							>
-								<RiShareForwardLine />
-								{t("panels.chats.continueInWorkspace")}
-							</DropdownMenuItem>
-						</>
-					) : null}
-					<DropdownMenuSeparator />
+
 					<DropdownMenuItem
 						data-testid="scope-chat-delete"
 						className="text-feedback-error focus:bg-feedback-error-subtle [&_svg]:text-feedback-error"
@@ -155,12 +134,6 @@ export function ChatSegment({ workspace }: { workspace: Workspace }) {
 				workspaceId={confirming === workspace.id ? confirming : null}
 				name={title}
 				onClose={() => setConfirming(null)}
-			/>
-			<ContinueChatDialog
-				chat={workspace}
-				title={title}
-				open={continuing === workspace.id}
-				onOpenChange={(open) => setContinuing(open ? workspace.id : null)}
 			/>
 		</Segment>
 	);

@@ -2,14 +2,12 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
-import type { PiEvent } from "@thinkrail/contracts";
+import type { SessionEvent } from "@thinkrail/contracts";
 import type { AskUserQuestionItem } from "@thinkrail/pi-ask-user-question/core";
 import {
-	attachDialog,
 	checkBudget,
 	checks,
 	DEFAULT_BUDGET,
-	defineScenario,
 	EventLog,
 	FIXTURE_MD_SUFFIX,
 	includeInFixtureSnapshot,
@@ -20,7 +18,6 @@ import {
 	parseSimReply,
 	pickRecommended,
 	runChecks,
-	runScenario,
 	signals,
 	skipAll,
 	unmaskFixtureMarkdown,
@@ -29,24 +26,20 @@ import {
 
 const SKILLS = "/repo/packages/pi-thinkrail-workflow/skills";
 
-function toolStart(id: string, name: string, args: Record<string, unknown>): PiEvent {
-	return { type: "tool_execution_start", toolCallId: id, toolName: name, args } as PiEvent;
+function toolStart(id: string, name: string, args: Record<string, unknown>): SessionEvent {
+	return { type: "tool_execution_start", toolCallId: id, toolName: name, args } as SessionEvent;
 }
-function toolEnd(id: string, name: string, result: unknown): PiEvent {
+function toolEnd(id: string, name: string, result: unknown): SessionEvent {
 	return {
 		type: "tool_execution_end",
 		toolCallId: id,
 		toolName: name,
 		result,
 		isError: false,
-	} as PiEvent;
+	} as SessionEvent;
 }
-function turnEnd(): PiEvent {
-	return {
-		type: "turn_end",
-		message: { role: "assistant" },
-		toolResults: [],
-	} as unknown as PiEvent;
+function turnEnd(): SessionEvent {
+	return { type: "agent_settled", terminal: { stopReason: "stop" } };
 }
 
 function routedLog(): EventLog {
@@ -92,40 +85,6 @@ const QUESTIONS: AskUserQuestionItem[] = [
 		],
 	},
 ];
-
-test("dialog: a throwing script degrades to the fallback rung and records the error", async () => {
-	const log = new EventLog();
-	const { answered, detach } = attachDialog("unit-session-throwing-script", log, {
-		script: [
-			{
-				match: () => {
-					throw new Error("boom-match");
-				},
-				answer: () => skipAll(),
-			},
-		],
-		fallback: "pickRecommended",
-	});
-	log.push(toolStart("q1", "ask_user_question", { questions: QUESTIONS }));
-	await expect.poll(() => answered.length).toBe(1);
-	expect(answered[0]?.rung).toBe("fallback");
-	expect(answered[0]?.error).toContain("boom-match");
-	expect(answered[0]?.result.answers[0]?.answer).toBe("Plain text (Recommended)");
-	detach();
-});
-
-test("dialog: settle resolves once deliveries finish and records delivery failures", async () => {
-	const log = new EventLog();
-	const { answered, detach, settle } = attachDialog("unit-session-settle", log, {
-		fallback: "pickRecommended",
-	});
-	log.push(toolStart("q1", "ask_user_question", { questions: QUESTIONS }));
-	await settle();
-	expect(answered).toHaveLength(1);
-	expect(answered[0]?.error).toContain("delivery:");
-	expect(answered[0]?.result.answers[0]?.answer).toBe("Plain text (Recommended)");
-	detach();
-});
 
 test("dialog: pickRecommended, skipAll, persona reply parsing", () => {
 	const recommended = pickRecommended(QUESTIONS);
@@ -178,35 +137,6 @@ test("userSim + judge reply parsing", () => {
 	);
 	expect(parsed.map((i) => i.verdict)).toEqual(["pass", "fail"]);
 	expect(parseJudgeReply("no json here", rubric).every((i) => i.verdict === "unclear")).toBe(true);
-});
-
-test("scenario: a crashed run records `crashed` and never a false pass", async () => {
-	const tmpLog = join(tmpdir(), `workflow-runlog-${Date.now()}.jsonl`);
-	process.env.THINKRAIL_WORKFLOW_RUNLOG = tmpLog;
-	try {
-		await expect(
-			runScenario(
-				defineScenario({
-					name: "unit: missing fixture crashes",
-					skill: "brainstorming",
-					workspace: "empty",
-					preset: { transcript: "does-not-exist-fixture" },
-					entry: { prompt: "unused" },
-					expect: [],
-				}),
-			),
-		).rejects.toThrow(/does-not-exist-fixture/);
-		const lines = readFileSync(tmpLog, "utf8").trim().split("\n");
-		const record = JSON.parse(lines[lines.length - 1] ?? "{}") as {
-			crashed?: string;
-			deterministic?: { pass: boolean; checks: unknown[] };
-		};
-		expect(record.crashed).toContain("does-not-exist-fixture");
-		expect(record.deterministic?.pass).toBe(false);
-		expect(record.deterministic?.checks).toEqual([]);
-	} finally {
-		delete process.env.THINKRAIL_WORKFLOW_RUNLOG;
-	}
 });
 
 test("presets: fixture snapshot filter drops only the .git directory", () => {

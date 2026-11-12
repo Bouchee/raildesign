@@ -1,5 +1,4 @@
-import "./env";
-import type { PiEvent } from "@thinkrail/contracts";
+import type { SessionEvent } from "@thinkrail/contracts";
 import { setSessionPublisher } from "@thinkrail/server/agent";
 
 export interface CapturedToolCall {
@@ -13,10 +12,10 @@ export interface CapturedToolCall {
 type Listener = () => void;
 
 export class EventLog {
-	readonly events: PiEvent[] = [];
+	readonly events: SessionEvent[] = [];
 	private readonly listeners = new Set<Listener>();
 
-	push(event: PiEvent): void {
+	push(event: SessionEvent): void {
 		this.events.push(event);
 		for (const listener of [...this.listeners]) listener();
 	}
@@ -75,7 +74,7 @@ export class EventLog {
 	}
 
 	turnCount(): number {
-		return this.events.filter((e) => e.type === "turn_end").length;
+		return this.events.filter((e) => e.type === "agent_settled").length;
 	}
 
 	waitFor(predicate: (log: EventLog) => boolean, timeoutMs: number): Promise<void> {

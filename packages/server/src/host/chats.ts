@@ -6,10 +6,11 @@ import { CHATS_PROTOCOL_VERSION } from "@thinkrail/contracts";
 import { CodedError } from "@thinkrail/shared/codedError";
 import { WORKSPACE_CONTEXT_DIR } from "@thinkrail/shared/paths";
 import {
+	cancelMcpProbesForWorkspace,
+	closeWorkspaceMcpConnections,
 	closeWorkspaceSessions,
 	deleteSession,
 	listSessions,
-	trashWorkspaceDelegation,
 } from "../agent";
 import { forgetWorkspaceChanges } from "../changes";
 import { logger } from "../log";
@@ -31,8 +32,6 @@ import {
 import { startChatSession } from "./chatSession";
 import { provisionInitialTerminal } from "./initialTerminal";
 import type { NewChatModelRequest } from "./newChatModel";
-import { runObservation } from "./runAnalytics";
-import { taskObservation } from "./taskAnalytics";
 
 const log = logger("host");
 
@@ -177,13 +176,12 @@ export function deleteChat(workspaceId: string): Promise<void> {
 
 async function runChatDeletion(workspace: Workspace): Promise<void> {
 	const { id, worktreePath: cwd } = workspace;
+	await cancelMcpProbesForWorkspace(id);
+	await closeWorkspaceMcpConnections(id);
 	await closeWorkspaceSessions(id, async () => {
 		for (const summary of await listSessions(id, cwd)) {
-			runObservation.forget(summary.sessionId);
-			taskObservation.forget(summary.sessionId);
 			await deleteSession(summary.sessionId, id, cwd);
 		}
-		await trashWorkspaceDelegation(id);
 	});
 	closeWorkspaceTerminals(id);
 	stopWatch(id);

@@ -1,25 +1,22 @@
-import { readFileSync, realpathSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import type { Api, Model } from "@earendil-works/pi-ai";
-import {
-	type ExtensionAPI,
-	parseSkillBlock,
-	type SessionEntry,
-	type Skill,
-	stripFrontmatter,
-} from "@earendil-works/pi-coding-agent";
-import type { AgentMessage } from "@thinkrail/contracts";
+import { realpathSync } from "node:fs";
+import { resolve } from "node:path";
+import type { TranscriptMessage, WireModel } from "@thinkrail/contracts";
+import { parseSkillBlock, readSkillBody, type Skill } from "./skills";
 
-export const SKILL_CARRYOVER_CUSTOM_TYPE = "thinkrail/skill-carryover";
+function safeBody(skill: Skill): string | undefined {
+	try {
+		return readSkillBody(skill);
+	} catch {
+		return undefined;
+	}
+}
+
+export const SKILL_CARRYOVER_CUSTOM_TYPE = "raildesign/skill-carryover";
 const SKILL_CARRYOVER_SKILL_TOKENS = 5_000;
 const SKILL_CARRYOVER_TOTAL_TOKENS = 25_000;
 const SKILL_CARRYOVER_WINDOW_SHARE = 0.1;
 
 const CHARS_PER_TOKEN = 4;
-const PI_VIRTUAL_MODEL_API = "pi-virtual";
-const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
 const SEPARATOR = "\n\n";
 
 export const SKILL_CARRYOVER_PREAMBLE =
@@ -30,8 +27,10 @@ export interface CarryoverBudget {
 	totalChars: number;
 }
 
-export function carryoverBudget(model: Model<Api> | undefined): CarryoverBudget | undefined {
-	if (!model || model.api === PI_VIRTUAL_MODEL_API || !(model.contextWindow > 0)) return undefined;
+export function carryoverBudget(
+	model: Pick<WireModel, "contextWindow"> | undefined,
+): CarryoverBudget | undefined {
+	if (!model || !(model.contextWindow > 0)) return undefined;
 	const totalTokens = Math.min(
 		SKILL_CARRYOVER_TOTAL_TOKENS,
 		Math.floor(model.contextWindow * SKILL_CARRYOVER_WINDOW_SHARE),
@@ -58,16 +57,8 @@ function canonicalPath(path: string): string {
 	}
 }
 
-function readTarget(path: string, cwd: string): string | undefined {
-	const spaced = path.replace(UNICODE_SPACES, " ");
-	const bare = spaced.startsWith("@") ? spaced.slice(1) : spaced;
-	const expanded = bare === "~" || bare.startsWith("~/") ? join(homedir(), bare.slice(1)) : bare;
-	try {
-		const local = expanded.startsWith("file://") ? fileURLToPath(expanded) : expanded;
-		return canonicalPath(resolve(cwd, local));
-	} catch {
-		return undefined;
-	}
+function readTarget(path: string, cwd: string): string {
+	return canonicalPath(resolve(cwd, path));
 }
 
 interface LineRange {
@@ -110,7 +101,7 @@ function covers(ranges: readonly LineRange[], lineCount: number): boolean {
 }
 
 function skillLoads(
-	entries: readonly SessionEntry[],
+	entries: readonly TranscriptMessage[],
 	skills: readonly Skill[],
 	cwd: string,
 ): SkillLoad[] {
@@ -118,9 +109,7 @@ function skillLoads(
 	const byPath = new Map(skills.map((skill) => [canonicalPath(resolve(skill.filePath)), skill]));
 	const reads = new Map<string, ReadLoad>();
 	const loads: SkillLoad[] = [];
-	entries.forEach((entry, index) => {
-		if (entry.type !== "message") return;
-		const message = entry.message;
+	entries.forEach((message, index) => {
 		if (message.role === "user") {
 			for (const text of texts(message.content)) {
 				const block = parseSkillBlock(text);
@@ -149,25 +138,17 @@ function skillLoads(
 	return loads;
 }
 
-function skillLineCount(skill: Skill): number | undefined {
-	try {
-		return readFileSync(skill.filePath, "utf8").split("\n").length;
-	} catch {
-		return undefined;
-	}
-}
-
+/** Pure retained-tail analysis. The compaction transaction supplies its committed cut; no journal is read. */
 export function compactedSkills(
-	entries: readonly SessionEntry[],
+	entries: readonly TranscriptMessage[],
 	skills: readonly Skill[],
 	cwd: string,
-	lineCount: (skill: Skill) => number | undefined = skillLineCount,
+	retainedFrom: number,
+	lineCount: (skill: Skill) => number | undefined = () => undefined,
 ): Skill[] {
-	const compaction = entries.findLastIndex((entry) => entry.type === "compaction");
-	const entry = entries[compaction];
-	if (entry?.type !== "compaction") return [];
-	const kept = entries.findIndex((candidate) => candidate.id === entry.firstKeptEntryId);
-	const cut = kept < 0 || kept > compaction ? compaction : kept;
+	if (!Number.isInteger(retainedFrom) || retainedFrom < 0 || retainedFrom > entries.length)
+		throw new RangeError("Invalid retained transcript cut");
+	const cut = retainedFrom;
 	const loads = skillLoads(entries, skills, cwd);
 	const latest = new Map<Skill, number>();
 	for (const load of loads) latest.set(load.skill, load.index);
@@ -183,18 +164,10 @@ export function compactedSkills(
 		.map(([skill]) => skill);
 }
 
-function skillBody(skill: Skill): string | undefined {
-	try {
-		return stripFrontmatter(readFileSync(skill.filePath, "utf8")).trim();
-	} catch {
-		return undefined;
-	}
-}
-
 export function skillCarryoverText(
 	skills: readonly Skill[],
 	budget: CarryoverBudget,
-	readBody: (skill: Skill) => string | undefined = skillBody,
+	readBody: (skill: Skill) => string | undefined = safeBody,
 ): string | undefined {
 	const blocks: string[] = [];
 	let used = SKILL_CARRYOVER_PREAMBLE.length;
@@ -222,12 +195,12 @@ export function skillCarryoverText(
 }
 
 export function withSkillCarryover(
-	messages: AgentMessage[],
+	messages: TranscriptMessage[],
 	text: string | undefined,
-): AgentMessage[] | undefined {
-	const summary = messages.findIndex((message) => message.role === "compactionSummary");
+): TranscriptMessage[] | undefined {
+	const summary = messages.findLastIndex((message) => message.role === "compactionSummary");
 	if (text === undefined || summary < 0) return undefined;
-	const carryover: AgentMessage = {
+	const carryover: TranscriptMessage = {
 		role: "custom",
 		customType: SKILL_CARRYOVER_CUSTOM_TYPE,
 		content: text,
@@ -235,24 +208,4 @@ export function withSkillCarryover(
 		timestamp: messages[summary]?.timestamp ?? Date.now(),
 	};
 	return [...messages.slice(0, summary + 1), carryover, ...messages.slice(summary + 1)];
-}
-
-export function skillCarryover(pi: ExtensionAPI): void {
-	let skills: readonly Skill[] = [];
-	let memo: { key: string; text: string | undefined } | undefined;
-	pi.on("before_agent_start", (event) => {
-		skills = event.systemPromptOptions.skills;
-	});
-	pi.on("context", (event, ctx) => {
-		const entries = ctx.sessionManager.getBranch();
-		const compaction = entries.findLast((entry) => entry.type === "compaction");
-		if (!compaction) return;
-		const budget = carryoverBudget(ctx.model);
-		if (!budget) return;
-		const key = `${compaction.id}:${budget.totalChars}:${skills.map((skill) => skill.filePath).join("|")}`;
-		if (memo?.key !== key)
-			memo = { key, text: skillCarryoverText(compactedSkills(entries, skills, ctx.cwd), budget) };
-		const messages = withSkillCarryover(event.messages, memo.text);
-		return messages ? { messages } : undefined;
-	});
 }

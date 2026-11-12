@@ -1,47 +1,13 @@
 import { expect, test } from "bun:test";
-import { basename, dirname, join } from "node:path";
+import { existsSync } from "node:fs";
+import { basename } from "node:path";
 import { resolveBuildRuntimeSources } from "./buildSupport";
-import {
-	resolveExtensionSkillRoots,
-	STAGED_HOST_SKILLS_ROUTE,
-	serverExtensions,
-	stagedExtensionSkillRoute,
-} from "./extensions";
 
 test("runtime source manifest covers the launcher artifact surface", () => {
 	const sources = resolveBuildRuntimeSources();
-	expect(sources.extensions.map((extension) => extension.specifier)).toEqual([
-		"pi-spec-graph/index.ts",
-		"pi-thinkrail-workflow/index.ts",
-		"pi-todos/index.ts",
-	]);
-	expect(sources.extensions.map((extension) => extension.specifier)).not.toContain(
-		expect.stringMatching(/visualize|web-access/),
-	);
-	const piPackageSkillRoots = sources.extensions.map((extension) =>
-		join(dirname(extension.entry), "skills"),
-	);
-	expect(sources.skillRoots).toEqual([
-		...[...piPackageSkillRoots, join(import.meta.dir, "..", "skills")].map((source) => ({
-			source,
-			route: STAGED_HOST_SKILLS_ROUTE,
-		})),
-		...serverExtensions.flatMap((entry) =>
-			resolveExtensionSkillRoots(entry).map((source) => ({
-				source,
-				route: stagedExtensionSkillRoute(entry.extension.name),
-			})),
-		),
-	]);
-	expect(sources.skillRoots.map(({ source, route }) => [basename(dirname(source)), route])).toEqual(
-		[
-			["spec-graph", "host"],
-			["pi-thinkrail-workflow", "host"],
-			["pi-todos", "host"],
-			["server", "host"],
-			["pi-web-access", "extensions/web-access"],
-		],
-	);
+	expect(sources.skillRoots.filter(({ route }) => route === "host")).toHaveLength(4);
+	expect(sources.skillRoots.some(({ route }) => route === "extensions/web-access")).toBe(true);
+	expect(sources.skillRoots.every(({ source }) => existsSync(source))).toBe(true);
 	expect(
 		Object.fromEntries(
 			Object.entries(sources.ptyLibraries).map(([target, path]) => [target, basename(path)]),

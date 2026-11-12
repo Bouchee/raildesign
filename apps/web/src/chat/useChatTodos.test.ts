@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { PiEvent, TodoItem, TodoPlan } from "@thinkrail/contracts";
+import type { SessionEvent, TodoItem, TodoPlan } from "@thinkrail/contracts";
 import { PLAN_SUMMARY_GENERATION_PROTOCOL_VERSION } from "@thinkrail/contracts";
 import { supportsPlanSummaryGeneration } from "../transport";
 import {
@@ -20,11 +20,11 @@ const item = (status: TodoItem["status"]): TodoItem => ({
 const plan = (over: Partial<TodoPlan>): TodoPlan => ({ todos: [], groups: [], ...over });
 
 test("TODO refreshes follow tool completion and final settlement, not attempt-level agent_end", () => {
-	expect(shouldRefreshTodos({ type: "tool_execution_end" } as PiEvent)).toBe(true);
+	expect(shouldRefreshTodos({ type: "tool_execution_end" } as SessionEvent)).toBe(true);
 	expect(shouldRefreshTodos({ type: "agent_settled", terminal: null })).toBe(true);
-	expect(shouldRefreshTodos({ type: "agent_end", messages: [], willRetry: false } as PiEvent)).toBe(
-		false,
-	);
+	expect(
+		shouldRefreshTodos({ type: "agent_end", messages: [], willRetry: false } as SessionEvent),
+	).toBe(false);
 });
 
 test("auto-summary is eligible only when every step is done and no summary exists", () => {

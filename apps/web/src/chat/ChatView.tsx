@@ -1,43 +1,27 @@
 import {
 	type PromptHit,
-	type QueueLane,
-	type ResourceKind,
-	type SessionQueueContent,
-	type SubagentResourceSummary,
 	sameModel,
 	type TemplateInfo,
 	type ThinkingLevel,
 } from "@thinkrail/contracts";
 import { t as translate, useT } from "@thinkrail/locales/react";
-import { Button } from "@thinkrail/ui/button";
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogTitle,
-} from "@thinkrail/ui/dialog";
 import { useCallback, useEffect, useInsertionEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { useNow } from "@/components/useNow";
 import { type ParsedTemplate, templateToSlashCommand, useTemplateCommandPicker } from "@/prompt";
 import {
 	EMPTY_RUNTIME,
 	SettingsSection,
 	selectCanRenameChat,
 	selectCatalogModel,
-	selectCompactionTurnIds,
 	selectComposerFocusRequested,
 	selectPickerModels,
 	selectSkillsStale,
-	selectSupportsMcp,
 	selectWorkspaceById,
 	toast,
 	useAppStore,
 	workspaceName,
 } from "@/store";
-import { errorText, getTransport, watchMcpWorkspace } from "@/transport";
-import type { ResultTarget } from "./ChatActions";
+import { errorText, getTransport } from "@/transport";
 import { ChatHeader } from "./ChatHeader";
 import ChatTranscript, { type ChatTranscriptHandle } from "./ChatTranscript";
 import {
@@ -47,33 +31,19 @@ import {
 	type MentionCandidate,
 	type SubmitBehavior,
 } from "./Composer";
-import { ExtraUsageNotice } from "./ExtraUsageNotice";
 import { mentionLookup } from "./fileTargets";
 import { HistoryOverlay } from "./HistoryOverlay";
 import { awaitingToolCallIdOf } from "./interactionState";
-import { parseModelRef, RunModelLabel } from "./ModelEffortLabel";
+import { parseModelRef } from "./ModelEffortLabel";
 import type { ModelSelection } from "./ModelEffortPicker";
 import {
-	compactSubmissionError,
 	mergeNativeChatCommands,
 	parseNativeChatCommand,
 	prepareNameChatCommand,
 } from "./nativeCommands";
-import { QueueStrip } from "./QueueStrip";
 import { deriveRecentPrompts } from "./recentPrompts";
-import {
-	CommandLogView,
-	newestResourceId,
-	ResourcesAttention,
-	ResourcesButton,
-	ResourcesDock,
-	ResourcesInspector,
-} from "./resources";
 import { SkillsDialog } from "./SkillsDialog";
-import { SubagentTranscriptDialog, SubagentTranscriptPane } from "./SubagentTranscriptDialog";
 import { TemplateEditorDialog } from "./TemplateEditorDialog";
-import { useChatResources, useCommandLog } from "./useChatResources";
-import { inspectedResult, resultTargetKey, useFreshResults } from "./useFreshResults";
 import { useModelCatalog } from "./useModelCatalog";
 import { useModelPreferences } from "./useModelPreferences";
 import { useSessionStats } from "./useSessionStats";
@@ -82,12 +52,6 @@ import type { ChatAttachment } from "./types";
 import { useHistorySearch } from "./useHistorySearch";
 
 const TRY_AGAIN_PROMPT = "Try again.";
-const NOTHING_EXPANDED: Partial<Record<ResourceKind, boolean>> = {};
-
-function renderSubagentModel({ model, thinkingLevel }: SubagentResourceSummary) {
-	return <RunModelLabel model={model} thinkingLevel={thinkingLevel} />;
-}
-
 export default function ChatView({
 	sessionId,
 	workspaceId,
@@ -104,7 +68,6 @@ export default function ChatView({
 		(s) => awaitingToolCallIdOf(s.sessions[sessionId]?.hostState ?? null) != null,
 	);
 	const draft = useAppStore((s) => s.sessions[sessionId]?.draft ?? "");
-	const queue = useAppStore((s) => s.sessions[sessionId]?.queue ?? EMPTY_RUNTIME.queue);
 	const sessionModel = useAppStore((s) => s.sessions[sessionId]?.model ?? null);
 	const thinkingLevel = useAppStore(
 		(s) => s.sessions[sessionId]?.thinkingLevel ?? EMPTY_RUNTIME.thinkingLevel,
@@ -115,8 +78,6 @@ export default function ChatView({
 	const extUiWidget = useAppStore(
 		(s) => s.sessions[sessionId]?.extUiWidget ?? EMPTY_RUNTIME.extUiWidget,
 	);
-	const notice = useAppStore((s) => s.sessions[sessionId]?.notice ?? null);
-	const [disablingNotice, setDisablingNotice] = useState(false);
 	const commands = useAppStore((s) => s.sessions[sessionId]?.commands ?? EMPTY_RUNTIME.commands);
 	const stats = useAppStore((s) => s.sessions[sessionId]?.stats ?? null);
 	const statsRefreshTick = useAppStore((s) => s.sessions[sessionId]?.statsRefreshTick ?? 0);
@@ -130,7 +91,6 @@ export default function ChatView({
 	const status = useAppStore((s) => s.status);
 	const connectionGeneration = useAppStore((s) => s.connectionGeneration);
 	const canRenameChat = useAppStore(selectCanRenameChat);
-	const supportsMcp = useAppStore(selectSupportsMcp);
 	const composerGrowthLimit = useAppStore((state) => state.composerGrowthLimit);
 	const questionPanelHeight = useAppStore((state) => state.questionPanelHeight);
 	const [dockTarget, setDockTarget] = useState<HTMLDivElement | null>(null);
@@ -188,141 +148,8 @@ export default function ChatView({
 	const [templates, setTemplates] = useState<TemplateInfo[]>([]);
 	const [templatesEmpty, setTemplatesEmpty] = useState(false);
 	const [saveAsTemplateHit, setSaveAsTemplateHit] = useState<PromptHit | null>(null);
-	const [transcriptSelection, setTranscriptSelection] = useState<{
-		workspaceId: string;
-		sessionId: string;
-		childSessionId: string;
-	} | null>(null);
-	const transcriptChildId =
-		transcriptSelection?.workspaceId === workspaceId && transcriptSelection.sessionId === sessionId
-			? transcriptSelection.childSessionId
-			: null;
-	const setTranscriptChildId = useCallback(
-		(childSessionId: string | null) =>
-			setTranscriptSelection(childSessionId ? { workspaceId, sessionId, childSessionId } : null),
-		[workspaceId, sessionId],
-	);
 	const composerRef = useRef<ComposerHandle>(null);
 	const transcriptRef = useRef<ChatTranscriptHandle>(null);
-	const resources = useChatResources(workspaceId, sessionId);
-	const freshResults = useFreshResults(
-		workspaceId,
-		sessionId,
-		resources.groups.recentFinished,
-		resources.visible && resources.authoritative,
-	);
-	const freshIds = new Set([
-		...freshResults.commands.map((command) => command.id),
-		...freshResults.subagents.map((child) => child.childSessionId),
-	]);
-	const resourcesTrigger = useRef<HTMLButtonElement>(null);
-	const [stopAllOpen, setStopAllOpen] = useState(false);
-	const [inspector, setInspector] = useState<{
-		workspaceId: string;
-		sessionId: string;
-		open: boolean;
-		selectedId: string | null;
-		expanded: Partial<Record<ResourceKind, boolean>>;
-	} | null>(null);
-	const inspectorOpen =
-		inspector?.workspaceId === workspaceId && inspector.sessionId === sessionId && inspector.open;
-	const inspectorSelectedId =
-		inspector?.workspaceId === workspaceId && inspector.sessionId === sessionId
-			? inspector.selectedId
-			: null;
-	const inspectorExpanded =
-		inspector?.workspaceId === workspaceId && inspector.sessionId === sessionId
-			? inspector.expanded
-			: NOTHING_EXPANDED;
-	const openInspector = useCallback(
-		(selectedId?: string) =>
-			setInspector((previous) => ({
-				workspaceId,
-				sessionId,
-				open: true,
-				selectedId:
-					selectedId ??
-					(previous?.workspaceId === workspaceId && previous.sessionId === sessionId
-						? previous.selectedId
-						: null),
-				expanded: NOTHING_EXPANDED,
-			})),
-		[workspaceId, sessionId],
-	);
-	const setFinishedExpanded = useCallback(
-		(kind: ResourceKind, expanded: boolean) =>
-			setInspector((previous) =>
-				previous?.workspaceId === workspaceId && previous.sessionId === sessionId
-					? { ...previous, expanded: { ...previous.expanded, [kind]: expanded } }
-					: previous,
-			),
-		[workspaceId, sessionId],
-	);
-	const openFinished = () =>
-		openInspector(
-			newestResourceId(freshResults.commands, freshResults.subagents) ??
-				newestResourceId(resources.groups.finishedCommands, resources.groups.finishedSubagents) ??
-				undefined,
-		);
-	const setInspectorOpen = useCallback(
-		(open: boolean) => {
-			if (open) openInspector();
-			else setInspector((previous) => (previous ? { ...previous, open: false } : previous));
-		},
-		[openInspector],
-	);
-	const selectResource = useCallback(
-		(selectedId: string) =>
-			setInspector((previous) =>
-				previous?.workspaceId === workspaceId && previous.sessionId === sessionId
-					? { ...previous, selectedId }
-					: { workspaceId, sessionId, open: true, selectedId, expanded: NOTHING_EXPANDED },
-			),
-		[workspaceId, sessionId],
-	);
-	const selectedCommandId =
-		inspectorOpen &&
-		inspectorSelectedId &&
-		[...resources.groups.commands, ...resources.groups.finishedCommands].some(
-			(command) => command.id === inspectorSelectedId,
-		)
-			? inspectorSelectedId
-			: null;
-	const selectedSubagentId =
-		inspectorOpen &&
-		inspectorSelectedId &&
-		[...resources.groups.subagents, ...resources.groups.finishedSubagents].some(
-			(child) => child.childSessionId === inspectorSelectedId,
-		)
-			? inspectorSelectedId
-			: null;
-	const commandLog = useCommandLog(workspaceId, sessionId, selectedCommandId);
-	const markResultSeen = freshResults.markSeen;
-	const inspected = inspectedResult(resources.groups, selectedCommandId, selectedSubagentId);
-	const inspectedKey = inspected ? resultTargetKey(inspected) : null;
-	useEffect(() => {
-		if (inspected) markResultSeen(inspected);
-	}, [inspectedKey, markResultSeen]);
-	const now = useNow();
-	const returnToResources = (event: Event) => {
-		event.preventDefault();
-		if (resourcesTrigger.current) resourcesTrigger.current.focus();
-		else composerRef.current?.refocus();
-	};
-	useEffect(() => {
-		if (!resources.knownUnsupported) return;
-		setInspector(null);
-		setStopAllOpen(false);
-	}, [resources.knownUnsupported]);
-	const watchesMcp = inspectorOpen && !!resources.groups.mcpServers?.length;
-	useEffect(
-		() => (watchesMcp && connectionGeneration > 0 ? watchMcpWorkspace(workspaceId) : undefined),
-		[watchesMcp, workspaceId, connectionGeneration],
-	);
-	const openMcpSettings = useCallback(
-		() => useAppStore.getState().openSettings(SettingsSection.Mcp),
-		[],
-	);
 	const openProviderSettings = useCallback(
 		() => useAppStore.getState().openSettings(SettingsSection.Providers),
 		[],
@@ -331,40 +158,6 @@ export default function ChatView({
 		(ref: string) => selectCatalogModel(allModels, parseModelRef(ref)),
 		[allModels],
 	);
-	const readMcpOutput = useCallback(
-		(toolCallId: string) =>
-			getTransport().request("mcp.readOutput", { workspaceId, sessionId, toolCallId }),
-		[workspaceId, sessionId],
-	);
-
-	const resultOpener = useMemo(() => {
-		const { commands, finishedCommands, subagents, finishedSubagents } = resources.groups;
-		const commandIds = new Set(
-			resources.visible ? [...commands, ...finishedCommands].map((command) => command.id) : [],
-		);
-		const subagentIds = new Set(
-			resources.visible
-				? [...subagents, ...finishedSubagents].map((child) => child.childSessionId)
-				: [],
-		);
-		return (target: ResultTarget): (() => void) | undefined => {
-			if (target.kind === "command")
-				return commandIds.has(target.id) ? () => openInspector(target.id) : undefined;
-			const { childSessionId } = target;
-			return subagentIds.has(childSessionId)
-				? () => openInspector(childSessionId)
-				: () => setTranscriptChildId(childSessionId);
-		};
-	}, [resources.visible, resources.groups, openInspector, setTranscriptChildId]);
-
-	const stillRunning = useMemo(
-		() =>
-			resources.visible && resources.authoritative && resources.groups.activeCount > 0
-				? { count: resources.groups.activeCount, onOpen: () => openInspector() }
-				: undefined,
-		[resources.visible, resources.authoritative, resources.groups.activeCount, openInspector],
-	);
-
 	const chatViewRef = useCallback(
 		(element: HTMLDivElement | null) => {
 			if (element) {
@@ -395,13 +188,6 @@ export default function ChatView({
 	}, [historyState.open, sessionId]);
 
 	useEffect(() => {
-		getTransport()
-			.request("session.getCommands", { sessionId })
-			.then((c) => useAppStore.getState().setCommands(sessionId, c))
-			.catch(() => {});
-	}, [sessionId]);
-
-	useEffect(() => {
 		if (!slashActive) return;
 		let cancelled = false;
 		getTransport()
@@ -426,7 +212,7 @@ export default function ChatView({
 					...templates.map(templateToSlashCommand),
 				],
 				canRenameChat,
-			),
+			).filter((command) => command.name !== "compact"),
 		[canRenameChat, commands, t, templates],
 	);
 
@@ -535,50 +321,6 @@ export default function ChatView({
 			.then(() => refreshStats());
 	};
 
-	const restoreTextToDraft = (text: string) => {
-		if (!text.trim()) return;
-		const current = useAppStore.getState().sessions[sessionId]?.draft ?? "";
-		const combined = [text, current].filter((t) => t.trim()).join("\n\n");
-		useAppStore.getState().setChatDraft(sessionId, combined);
-		composerRef.current?.refocus();
-	};
-
-	const restoreQueueContentToDraft = (content: SessionQueueContent): void => {
-		const messages = [...content.steering, ...content.followUp];
-		restoreTextToDraft(messages.map((message) => message.text).join("\n\n"));
-		const images = messages.flatMap((message) => message.images ?? []);
-		composerRef.current?.restoreAttachments(
-			images.map((image, index) => ({
-				name: `queued-image-${index + 1}`,
-				content: image,
-			})),
-		);
-	};
-
-	const drainQueueToDraft = async (): Promise<void> => {
-		const content = await getTransport().request("session.clearQueue", {
-			sessionId,
-			requireTextOnly: true,
-		});
-		restoreQueueContentToDraft(content);
-	};
-
-	const performCompact = (instructions?: string) => {
-		const observedTurnIds = selectCompactionTurnIds(useAppStore.getState(), sessionId);
-		void drainQueueToDraft()
-			.then(() =>
-				getTransport().request("session.compact", {
-					sessionId,
-					...(instructions ? { instructions } : {}),
-				}),
-			)
-			.catch((err) =>
-				useAppStore
-					.getState()
-					.appendCompactionFailureUnlessObserved(sessionId, observedTurnIds, errorText(err)),
-			);
-	};
-
 	const performRename = (title: string) => {
 		void getTransport()
 			.request("session.rename", { workspaceId, sessionId, title })
@@ -590,29 +332,19 @@ export default function ChatView({
 		attachments: ChatAttachment[],
 		behavior: Exclude<SubmitBehavior, "interrupt">,
 	) => {
-		const queued = behavior !== "send";
-		freshResults.markAllSeen();
-		if (!queued && (text || attachments.length > 0)) {
+		if (useAppStore.getState().sessions[sessionId]?.isStreaming || behavior !== "send") return;
+		if (text || attachments.length > 0) {
 			transcriptRef.current?.armImmediateTurn();
 			useAppStore.getState().appendUserMessage(sessionId, text, attachments);
 		}
 		const images = attachments.map((a) => a.content);
 		const params = { sessionId, text, ...(images.length > 0 ? { images } : {}) };
-		const method =
-			behavior === "steer"
-				? "session.steer"
-				: behavior === "followUp"
-					? "session.followUp"
-					: "session.prompt";
 		getTransport()
-			.request(method, params)
+			.request("session.prompt", params)
 			.catch((err) => {
 				useAppStore.getState().appendErrorTurn(sessionId, errorText(err));
-				if (queued) restoreTextToDraft(text);
-				else {
-					const streaming = useAppStore.getState().sessions[sessionId]?.isStreaming ?? false;
-					transcriptRef.current?.cancelImmediateTurn(streaming);
-				}
+				const streaming = useAppStore.getState().sessions[sessionId]?.isStreaming ?? false;
+				transcriptRef.current?.cancelImmediateTurn(streaming);
 			});
 	};
 
@@ -622,55 +354,22 @@ export default function ChatView({
 		behavior: SubmitBehavior,
 	): ComposerSubmitDisposition => {
 		const nativeCommand = parseNativeChatCommand(text, canRenameChat);
-		if (nativeCommand?.kind === "compact") {
-			const submissionError = compactSubmissionError(
-				attachments.length > 0,
-				queue.hasImages === true,
-			);
-			if (submissionError) return { accepted: false, reason: submissionError };
-			performCompact(nativeCommand.instructions);
-			return { accepted: true };
-		}
 		if (nativeCommand?.kind === "name") {
 			const prepared = prepareNameChatCommand(nativeCommand.title, attachments.length > 0);
 			if ("reason" in prepared) return { accepted: false, reason: prepared.reason };
 			performRename(prepared.title);
 			return { accepted: true };
 		}
-		if (behavior !== "interrupt") {
-			performSend(text, attachments, behavior);
-			return { accepted: true };
+		if (isStreaming || behavior !== "send") {
+			return { accepted: false, reason: t("chat.view.runInProgress") };
 		}
-		getTransport()
-			.request("session.abort", { sessionId })
-			.then(() => performSend(text, attachments, "send"))
-			.catch((err) => {
-				useAppStore.getState().appendErrorTurn(sessionId, errorText(err));
-				restoreTextToDraft(text);
-			});
+		performSend(text, attachments, "send");
 		return { accepted: true };
 	};
 
-	const removeQueued = (kind: QueueLane, index: number) =>
-		getTransport().request("session.removeQueued", { sessionId, kind, index });
-
-	const onEditQueued = (kind: QueueLane, index: number) =>
-		void removeQueued(kind, index)
-			.then(({ removed }) => {
-				if (removed === null) return;
-				restoreQueueContentToDraft({ steering: [removed], followUp: [] });
-			})
-			.catch(() => {});
-
-	const onRemoveQueued = (kind: QueueLane, index: number) =>
-		void removeQueued(kind, index).catch(() => {});
-
 	const onAbort = () => {
 		void getTransport()
-			.request("session.abort", { sessionId, restoreQueue: true })
-			.then(({ restoredQueue }) => {
-				if (restoredQueue) restoreQueueContentToDraft(restoredQueue);
-			})
+			.request("session.abort", { sessionId })
 			.catch(() => {});
 	};
 
@@ -753,14 +452,6 @@ export default function ChatView({
 	}, [composerFocusRequested]);
 
 	const widgetEntries = Object.entries(extUiWidget);
-	const disableNotice = () => {
-		setDisablingNotice(true);
-		getTransport()
-			.request("provider.disableWarning", { warning: "anthropicExtraUsage" })
-			.then(() => useAppStore.getState().silenceNotice("anthropicExtraUsage"))
-			.catch((err) => toast.error(errorText(err), translate("chat.extraUsage.disableFailed")))
-			.finally(() => setDisablingNotice(false));
-	};
 	const focusComposer = useCallback(() => composerRef.current?.refocus(), []);
 	// Keep a stable `onTryAgain` identity (it is passed to every transcript row) while always calling the
 	// latest `performSend` closure.
@@ -780,33 +471,8 @@ export default function ChatView({
 		>
 			<div className="shrink-0">
 				<ChatHeader
-					resources={
-						resources.visible ? (
-							<span className="flex shrink-0 items-center gap-2">
-								<ResourcesButton
-									ref={resourcesTrigger}
-									activeCount={
-										resources.authoritative
-											? resources.groups.activeCount + resources.groups.mcpActiveCount
-											: null
-									}
-									working={resources.authoritative && resources.groups.activeCount > 0}
-									freshCount={freshResults.count}
-									open={inspectorOpen}
-									onClick={() => setInspectorOpen(!inspectorOpen)}
-								/>
-								{resources.groups.mcpAttentionCount > 0 ? (
-									<ResourcesAttention
-										count={resources.groups.mcpAttentionCount}
-										onOpen={openMcpSettings}
-									/>
-								) : null}
-							</span>
-						) : null
-					}
 					stats={stats}
 					statusEntries={Object.entries(extUiStatus)}
-					skillsStale={skillsStale}
 					{...(projectId ? { onOpenSkills: () => setSkillsOpen(true) } : {})}
 				/>
 			</div>
@@ -817,70 +483,13 @@ export default function ChatView({
 				onOpenFile={onOpenFile}
 				workspaceRoot={workspaceRoot}
 				focusComposer={focusComposer}
-				openSubagentTranscript={setTranscriptChildId}
-				resultOpener={resultOpener}
-				markResultSeen={markResultSeen}
 				onTryAgain={onTryAgain}
 				historyOpen={historyState.open}
-				inspectorOpen={inspectorOpen}
-				stillRunning={stillRunning}
-				readMcpOutput={supportsMcp ? readMcpOutput : undefined}
-				openMcpSettings={supportsMcp ? openMcpSettings : undefined}
+				inspectorOpen={false}
+				stillRunning={undefined}
 				openProviderSettings={openProviderSettings}
 				findModel={findModel}
 				dockTarget={dockTarget}
-				resourcesOverlay={
-					resources.visible ? (
-						<ResourcesInspector
-							open={inspectorOpen}
-							onOpenChange={setInspectorOpen}
-							onCloseAutoFocus={returnToResources}
-							{...resources.groups}
-							now={now}
-							authoritative={resources.authoritative}
-							loading={resources.loading}
-							staleness={resources.staleness}
-							error={resources.projection?.error ?? null}
-							actions={resources.actions}
-							newIds={freshIds}
-							expanded={inspectorExpanded}
-							onExpandedChange={setFinishedExpanded}
-							{...(resources.loadOlder ? { onLoadMore: resources.loadOlder } : {})}
-							retained={resources.retained}
-							selectedId={inspectorSelectedId}
-							onSelect={selectResource}
-							onRetry={resources.retry}
-							onStopCommand={resources.stopCommand}
-							onStopSubagent={resources.stopSubagent}
-							onStopAll={() => setStopAllOpen(true)}
-							onMcpSetEnabled={resources.setMcpEnabled}
-							onMcpReconnect={resources.reconnectMcp}
-							onOpenMcpSettings={openMcpSettings}
-							renderSubagentModel={renderSubagentModel}
-							detail={
-								selectedCommandId ? (
-									<CommandLogView
-										{...commandLog}
-										onRetry={commandLog.retry}
-										interrupted={
-											resources.groups.finishedCommands.find(
-												(command) => command.id === selectedCommandId,
-											)?.interrupted === true
-										}
-										retained={resources.retained}
-									/>
-								) : selectedSubagentId ? (
-									<SubagentTranscriptPane
-										key={selectedSubagentId}
-										workspaceId={workspaceId}
-										parentSessionId={sessionId}
-										childSessionId={selectedSubagentId}
-									/>
-								) : null
-							}
-						/>
-					) : null
-				}
 			/>
 			<div
 				ref={setDockTarget}
@@ -893,32 +502,6 @@ export default function ChatView({
 						<div key={key}>{lines.join(" ")}</div>
 					))}
 				</div>
-			) : null}
-			<QueueStrip queue={queue} onEdit={onEditQueued} onRemove={onRemoveQueued} />
-			{resources.visible && !inspectorOpen ? (
-				<ResourcesDock
-					commands={resources.groups.commands}
-					subagents={resources.groups.subagents}
-					finishedCount={resources.groups.finishedCount}
-					freshCount={freshResults.count}
-					now={now}
-					authoritative={resources.authoritative}
-					staleness={resources.staleness}
-					actions={resources.actions}
-					onInspect={openInspector}
-					onOpenFinished={openFinished}
-					onStopCommand={resources.stopCommand}
-					onStopSubagent={resources.stopSubagent}
-				/>
-			) : null}
-			{notice === "anthropicExtraUsage" ? (
-				<ExtraUsageNotice
-					context="chat"
-					className="mx-12 mb-8 shrink-0"
-					onDismiss={() => useAppStore.getState().dismissSessionNotice(sessionId)}
-					onDisable={disableNotice}
-					disabling={disablingNotice}
-				/>
 			) : null}
 			<div className="relative shrink-0">
 				<HistoryOverlay
@@ -968,52 +551,6 @@ export default function ChatView({
 					templatesEmpty={templatesEmpty}
 				/>
 			</div>
-			<TemplateEditorDialog
-				open={saveAsTemplateHit != null}
-				onOpenChange={(open) => {
-					if (!open) setSaveAsTemplateHit(null);
-				}}
-				workspaceId={workspaceId}
-				initialBody={saveAsTemplateHit?.text ?? ""}
-			/>
-			<Dialog open={stopAllOpen} onOpenChange={setStopAllOpen}>
-				<DialogContent onCloseAutoFocus={returnToResources}>
-					<DialogTitle>{t("chat.view.stopAllTitle")}</DialogTitle>
-					<DialogDescription>
-						{t("chat.view.stopAllDescription", { count: resources.groups.subagents.length })}
-					</DialogDescription>
-					<DialogFooter>
-						<Button variant="ghost" onClick={() => setStopAllOpen(false)}>
-							{t("common.cancel")}
-						</Button>
-						<Button
-							data-testid="resources-stop-all-confirm"
-							disabled={
-								!resources.authoritative ||
-								resources.groups.subagents.length === 0 ||
-								resources.actions.all?.pending
-							}
-							onClick={() => {
-								resources.stopAll();
-								setStopAllOpen(false);
-							}}
-						>
-							{t("chat.view.stopAllConfirm", { count: resources.groups.subagents.length })}
-						</Button>
-					</DialogFooter>
-				</DialogContent>
-			</Dialog>
-			{transcriptChildId ? (
-				<SubagentTranscriptDialog
-					key={`${workspaceId}:${sessionId}:${transcriptChildId}`}
-					workspaceId={workspaceId}
-					parentSessionId={sessionId}
-					childSessionId={transcriptChildId}
-					onOpenChange={(open) => {
-						if (!open) setTranscriptChildId(null);
-					}}
-				/>
-			) : null}
 			{projectId ? (
 				<SkillsDialog
 					projectId={projectId}
@@ -1022,13 +559,20 @@ export default function ChatView({
 						sessionId,
 						streaming: isStreaming,
 						stale: skillsStale,
-						onReloaded: (syncedTick) =>
-							useAppStore.getState().markSkillsSynced(sessionId, syncedTick),
+						allowReload: false,
 					}}
 					open={skillsOpen}
 					onOpenChange={setSkillsOpen}
 				/>
 			) : null}
+			<TemplateEditorDialog
+				open={saveAsTemplateHit != null}
+				onOpenChange={(open) => {
+					if (!open) setSaveAsTemplateHit(null);
+				}}
+				workspaceId={workspaceId}
+				initialBody={saveAsTemplateHit?.text ?? ""}
+			/>
 		</div>
 	);
 }

@@ -12,8 +12,9 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { CONFIG_DIR_NAME, getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import type { Template, TemplateInfo, TemplateScope } from "@thinkrail/contracts";
+import { parse as parseYaml } from "yaml";
+import { dataDir, isRecord } from "../persistence";
 
 export interface TemplateDirs {
 	globalDir: string;
@@ -26,10 +27,10 @@ export function isValidTemplateName(name: string): boolean {
 	return !name.includes("/") && !name.includes("\\") && !name.includes("\0") && !name.includes(":");
 }
 
-export function templateDirs(cwd?: string, agentDir: string = getAgentDir()): TemplateDirs {
+export function templateDirs(cwd?: string, directory: string = dataDir()): TemplateDirs {
 	return {
-		globalDir: join(agentDir, "prompts"),
-		...(cwd ? { projectDir: join(cwd, CONFIG_DIR_NAME, "prompts") } : {}),
+		globalDir: join(directory, "prompts"),
+		...(cwd ? { projectDir: join(cwd, ".raildesign", "prompts") } : {}),
 	};
 }
 
@@ -86,6 +87,13 @@ function readHead(filePath: string, bytes: number): string {
 	} finally {
 		closeSync(fd);
 	}
+}
+
+function parseFrontmatter(text: string): { frontmatter: Record<string, unknown> } {
+	const header = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
+	if (!header) return { frontmatter: {} };
+	const parsed: unknown = parseYaml(header[1] ?? "");
+	return { frontmatter: isRecord(parsed) ? parsed : {} };
 }
 
 function frontmatterMeta(text: string): Pick<TemplateInfo, "description" | "argumentHint"> {

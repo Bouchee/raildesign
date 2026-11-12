@@ -169,66 +169,11 @@ test("folder-mode Start with an empty prompt lands in a fresh chat in the Defaul
 	await expect(page.locator('[data-testid="chat-message"][data-role="user"]')).toHaveCount(0);
 });
 
-test("a project's committed skills are gated behind trust, then autocomplete", async ({ page }) => {
-	await openFixtureProject(page);
-
-	await page.getByTestId("add-workspace").first().click();
-	const dialog = page.getByTestId("new-workspace-dialog");
-	await expect(dialog).toBeVisible();
-	const prompt = dialog.getByTestId("ws-prompt");
-	const portable = dialog.getByTestId("slash-command").filter({ hasText: "/skill:e2e-portable" });
-
-	await expect(dialog.getByTestId("ws-trust-notice")).toBeVisible();
-	await prompt.fill("/e2e");
-	await expect(portable).toHaveCount(0);
-
-	await dialog.getByTestId("ws-trust-project").click();
-	await expect(dialog.getByTestId("ws-trust-notice")).toBeHidden();
-	await prompt.fill("/e2e");
-	await expect(portable).toBeVisible();
-	await expect(portable).toContainText("skill/project");
-
-	await prompt.press("Escape");
-	await expect(dialog.getByTestId("slash-menu")).toBeHidden();
-	await expect(dialog).toBeVisible();
-	await prompt.fill("/e2");
-	await expect(portable).toBeVisible();
-
-	await prompt.press("Enter");
-	await expect(prompt).toHaveValue("/skill:e2e-portable ");
-	await expect(dialog).toBeVisible();
-	await expect(worktreeRows(page)).toHaveCount(0);
-});
-
-test("a project whose only gated resources are subagent definitions still asks for trust and names what it loads", async ({
-	page,
-}) => {
-	const definitions = join(E2E_FIXTURE_REPO, ".pi", "agents");
-	mkdirSync(definitions, { recursive: true });
-	writeFileSync(
-		join(definitions, "e2e-definer.md"),
-		"---\nname: e2e-definer\ndescription: Repo-defined agent\n---\n\nDefine things.\n",
-	);
-	try {
-		await openFixtureProject(page);
-		await page.getByTestId("add-workspace").first().click();
-		const dialog = page.getByTestId("new-workspace-dialog");
-		const notice = dialog.getByTestId("ws-trust-notice");
-		await expect(notice).toContainText("1 skill and its own Pi resources");
-		await expect(notice).toContainText("subagent definitions");
-
-		await dialog.getByTestId("ws-trust-project").click();
-		await expect(notice).toBeHidden();
-	} finally {
-		rmSync(join(E2E_FIXTURE_REPO, ".pi"), { recursive: true, force: true });
-	}
-});
-
 test("the start prompt shares template completion and slot behavior without live-only commands", async ({
 	page,
 }) => {
-	const templateFile = join(E2E_FIXTURE_REPO, ".pi", "prompts", "workspace-kickoff.md");
-	mkdirSync(join(E2E_FIXTURE_REPO, ".pi", "prompts"), { recursive: true });
+	const templateFile = join(E2E_FIXTURE_REPO, ".raildesign", "prompts", "workspace-kickoff.md");
+	mkdirSync(join(E2E_FIXTURE_REPO, ".raildesign", "prompts"), { recursive: true });
 	writeFileSync(
 		templateFile,
 		`---

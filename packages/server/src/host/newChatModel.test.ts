@@ -17,7 +17,7 @@ function wireModel(provider: string, id: string): WireModel {
 function resolver(
 	config: Partial<AppConfig>,
 	models: WireModel[],
-	piDefault?: { provider: string; id: string },
+	configuredDefault?: { provider: string; id: string },
 ) {
 	const clampCalls: Array<{ provider: string; id: string; level: ThinkingLevel }> = [];
 	return {
@@ -26,7 +26,7 @@ function resolver(
 			resolveNewChatModel(requested, {
 				getConfig: () => ({ ...DEFAULT_CONFIG, ...config }),
 				listSettledModels: async () => models,
-				piDefaultModelRef: () => piDefault,
+				defaultModelRef: () => configuredDefault,
 				clampThinkingForModel: async (model, level) => {
 					clampCalls.push({ ...model, level });
 					return model.provider === "limited" && level === "high" ? "medium" : level;
@@ -95,21 +95,13 @@ test("a thinking-only request uses the resolved default model and clamps the req
 	expect(clampCalls).toEqual([{ provider: "limited", id: "saved", level: "high" }]);
 });
 
-test("new-chat model resolution prefers pi's provider default over catalog order", async () => {
-	const legacy = wireModel("openai", "gpt-4");
-	const current = wireModel("openai", "gpt-6.1-sol");
-	const { resolve } = resolver({}, [legacy, current]);
-
-	expect(await resolve()).toEqual({ model: current, thinkingLevel: "medium" });
-});
-
-test("new-chat model resolution uses pi's configured default when no default is saved", async () => {
+test("new-chat model resolution uses the configured endpoint default when no default is saved", async () => {
 	const { resolve } = resolver({}, [first, second], { provider: "second", id: "two" });
 
 	expect(await resolve()).toEqual({ model: second, thinkingLevel: "medium" });
 });
 
-test("a saved default wins over pi's configured default", async () => {
+test("a saved default wins over the configured endpoint default", async () => {
 	const { resolve } = resolver({ defaultModel: first }, [first, second], {
 		provider: "second",
 		id: "two",
@@ -118,7 +110,7 @@ test("a saved default wins over pi's configured default", async () => {
 	expect(await resolve()).toEqual({ model: first, thinkingLevel: "medium" });
 });
 
-test("an unavailable pi default falls through to the preferred model", async () => {
+test("an unavailable endpoint default falls through to the preferred model", async () => {
 	const { resolve } = resolver({}, [first, second], { provider: "missing", id: "gone" });
 
 	expect(await resolve()).toEqual({ model: first, thinkingLevel: "medium" });

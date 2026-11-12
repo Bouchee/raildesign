@@ -8,7 +8,7 @@ import {
 	openFixtureProject,
 	worktreeRow,
 } from "./fixtures/app";
-import { commitFile, gitAs } from "./fixtures/git";
+import { commitFile, gitAs, gitBare } from "./fixtures/git";
 import { writeGhScenario } from "./fixtures/github";
 import { E2E_FIXTURE_REPO } from "./fixtures/paths";
 
@@ -20,7 +20,7 @@ import { E2E_FIXTURE_REPO } from "./fixtures/paths";
 
 function bareRemote(): string {
 	const bare = mkdtempSync(join(tmpdir(), "thinkrail-ship-origin-"));
-	gitAs(bare, "init", "--bare");
+	gitBare(bare, "init", "--bare");
 	return bare;
 }
 
@@ -62,7 +62,7 @@ test("Remote publishes, then pushes new commits, with no PR involved", async ({
 	await remoteAction.click();
 	await expect(page.getByText("Branch published").first()).toBeVisible();
 	const branch = gitAs(workspace.worktreePath, "rev-parse", "--abbrev-ref", "HEAD");
-	expect(gitAs(bare, "rev-parse", `refs/heads/${branch}`)).toBe(
+	expect(gitBare(bare, "rev-parse", `refs/heads/${branch}`)).toBe(
 		gitAs(workspace.worktreePath, "rev-parse", "HEAD"),
 	);
 	await expect(remoteValue).toHaveAttribute("data-kind", "inSync");
@@ -86,7 +86,7 @@ test("Remote publishes, then pushes new commits, with no PR involved", async ({
 	await remoteAction.click();
 	await expect(page.getByText("Pushed 1 commit").first()).toBeVisible();
 	await expect
-		.poll(() => gitAs(bare, "rev-parse", `refs/heads/${branch}`), { timeout: 10_000 })
+		.poll(() => gitBare(bare, "rev-parse", `refs/heads/${branch}`), { timeout: 10_000 })
 		.toBe(second);
 	await expect(remoteValue).toHaveAttribute("data-kind", "inSync");
 	await expect(remote).toBeVisible();
@@ -111,12 +111,12 @@ test("pushing the Default workspace's own base branch asks first", async ({ page
 		await expect(confirm).toContainText("Push to main?");
 		await expect(confirm).toContainText("straight to origin/main");
 		await page.keyboard.press("Escape");
-		expect(gitAs(bare, "rev-parse", "refs/heads/main")).toBe(startSha);
+		expect(gitBare(bare, "rev-parse", "refs/heads/main")).toBe(startSha);
 
 		await push.click();
 		await page.getByTestId("ship-confirm-base-push").click();
 		await expect
-			.poll(() => gitAs(bare, "rev-parse", "refs/heads/main"), { timeout: 10_000 })
+			.poll(() => gitBare(bare, "rev-parse", "refs/heads/main"), { timeout: 10_000 })
 			.toBe(local);
 	} finally {
 		gitAs(E2E_FIXTURE_REPO, "reset", "-q", "--hard", startSha);
@@ -153,7 +153,7 @@ test("Try again after a failed base push never pushes a branch the user didn't c
 		rmSync(hook);
 		await page.getByTestId("open-pr-setup-retry").click();
 		await expect(page.getByText(/moved from "main" to "release"/).first()).toBeVisible();
-		expect(gitAs(bare, "for-each-ref", "--format=%(refname)", "refs/heads")).toBe(
+		expect(gitBare(bare, "for-each-ref", "--format=%(refname)", "refs/heads")).toBe(
 			"refs/heads/main",
 		);
 	} finally {
@@ -222,7 +222,7 @@ test("Open PR from the topbar composes from commits or the repository template",
 		expect(compare.searchParams.get("body")).toBe("## Problem\n\nThe topbar had no next step.");
 		await expect(page.getByText("Branch pushed").first()).toBeVisible();
 		const branch = gitAs(workspace.worktreePath, "rev-parse", "--abbrev-ref", "HEAD");
-		expect(gitAs(bare, "rev-parse", `refs/heads/${branch}`)).toBe(
+		expect(gitBare(bare, "rev-parse", `refs/heads/${branch}`)).toBe(
 			gitAs(workspace.worktreePath, "rev-parse", "HEAD"),
 		);
 	} finally {

@@ -4,7 +4,7 @@ import { dirname, join, win32 } from "node:path";
 import { windowsProductName } from "@thinkrail/shared/windowsIdentity";
 
 export function desktopAppUserModelId(channel: string): string {
-	return `JetBrains.${windowsProductName(channel).replaceAll(" ", ".")}`;
+	return `io.github.bouchee.${windowsProductName(channel).replaceAll(" ", ".").toLowerCase()}`;
 }
 
 export interface WindowsShortcut {

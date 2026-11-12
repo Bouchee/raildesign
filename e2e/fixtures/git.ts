@@ -22,6 +22,10 @@ export function gitAs(cwd: string, ...args: string[]): string {
 	).trim();
 }
 
+export function gitBare(gitDir: string, ...args: string[]): string {
+	return gitAs(gitDir, "--git-dir", gitDir, ...args);
+}
+
 export function commitFile(
 	worktree: string,
 	path: string,

@@ -2,7 +2,7 @@ import { realpathSync, utimesSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import { defaultWorkspaceRow, enterDefaultWorkspace, openFixtureProject } from "./fixtures/app";
 import { E2E_FIXTURE_REPO } from "./fixtures/paths";
-import { seedWorkspaceSession } from "./fixtures/sessions";
+import { completedFixtureState, seedWorkspaceSession } from "./fixtures/sessions";
 
 const BASE_TS = 1_700_300_000_000;
 const LONG_PROMPT =
@@ -21,6 +21,7 @@ test("unnamed chats read as their first prompt in the tab strip and Recently clo
 }) => {
 	await openFixtureProject(page);
 	const older = seedWorkspaceSession(repoCwd(), {
+		state: completedFixtureState("title-fallback-finished"),
 		messages: [
 			{ role: "user", text: LONG_PROMPT, timestamp: BASE_TS },
 			{ role: "assistant", text: "Refactored; tests green.", timestamp: BASE_TS + 1_000 },

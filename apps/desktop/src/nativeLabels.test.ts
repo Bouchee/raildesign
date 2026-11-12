@@ -11,14 +11,14 @@ import {
 
 test("dialog labels take the pushed translation and fall back to English per label", () => {
 	const labels = readDialogLabels({
-		"desktop.dialog.startFailed": "ThinkRail konnte nicht starten",
+		"desktop.dialog.startFailed": "RailDesign konnte nicht starten",
 		"desktop.dialog.quit": "   ",
 		"desktop.dialog.updateRestartFailed": "x".repeat(201),
 	});
-	expect(labels["desktop.dialog.startFailed"]).toBe("ThinkRail konnte nicht starten");
+	expect(labels["desktop.dialog.startFailed"]).toBe("RailDesign konnte nicht starten");
 	expect(labels["desktop.dialog.quit"]).toBe("Quit");
 	expect(labels["desktop.dialog.updateRestartFailed"]).toBe(
-		"ThinkRail could not restart to install the update",
+		"RailDesign could not restart to install the update",
 	);
 	expect(readDialogLabels(null)).toEqual(DEFAULT_DIALOG_LABELS);
 });

@@ -5,8 +5,8 @@
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",
-		"./react": "./src/react.tsx",
-		"./en.json": "./en.json"
+		"./en.json": "./en.json",
+		"./react": "./src/react.tsx"
 	},
 	"scripts": {
 		"test": "bun test",

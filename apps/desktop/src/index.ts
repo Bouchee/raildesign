@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { NativeCommand, NativeQuitHint, NativeWindowState } from "@thinkrail/contracts";
 import { resolveShellEnv } from "@thinkrail/shared/shellEnv";
-import { channel, posthogProjectKey, version } from "@thinkrail/shared/version";
+import { channel, version } from "@thinkrail/shared/version";
 import Electrobun, {
 	ApplicationMenu,
 	BrowserView,
@@ -19,8 +19,7 @@ import {
 	readMenuAction,
 	readMenuLabels,
 } from "./applicationMenu";
-import { attributionClaimOnFirstReadiness } from "./attributionReadiness";
-import { desktopError, setDesktopErrorReporter } from "./errorReporting";
+import { desktopError } from "./errorReporting";
 import { installExternalNavigation, windowNavigationRules } from "./externalNavigation";
 import { createKeyStateReader } from "./keyState";
 import {
@@ -303,13 +302,7 @@ async function start(): Promise<void> {
 		runtimeDir,
 		staticDir: join(PATHS.VIEWS_FOLDER, "web"),
 		appVersion: version,
-		channel,
-		posthogProjectKey,
-		...(Electrobun.app.isPackaged
-			? { openExternal: (url: string) => Utils.openExternal(url) }
-			: {}),
 	});
-	setDesktopErrorReporter(host.reportError);
 	const quitCoordinator = createElectrobunQuitCoordinator(
 		() => host.server.shutdown(),
 		() => dialogLabels,
@@ -452,7 +445,7 @@ async function start(): Promise<void> {
 					windowChromePreloadSeed(windowChrome),
 				);
 	mainWindow = new BrowserWindow({
-		title: "ThinkRail",
+		title: "RailDesign",
 		url: neutral ? "about:blank" : `${origin}/${initialRoute}`,
 		preload,
 		...(neutral ? {} : { rpc }),
@@ -564,15 +557,11 @@ async function start(): Promise<void> {
 	};
 
 	let ready = false;
-	const startAttributionClaim = attributionClaimOnFirstReadiness(() =>
-		host.server.startAttributionClaim(),
-	);
 	mainWindow.webview.on("dom-ready", () => {
 		if (ready) return;
 		ready = true;
 		releaseStartupSplash?.();
 		startupSplash = undefined;
-		startAttributionClaim();
 		updateController.start();
 		const readyPath = process.env.THINKRAIL_DESKTOP_READY_FILE;
 		if (readyPath) {

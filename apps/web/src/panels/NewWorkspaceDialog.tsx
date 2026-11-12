@@ -11,7 +11,6 @@ import {
 import {
 	type ModelDefault,
 	PROJECT_TEMPLATE_PREVIEW_PROTOCOL_VERSION,
-	type SlashCommandInfo,
 	type TemplateInfo,
 	type TemplateReadLocation,
 	type ThinkingLevel,
@@ -62,8 +61,6 @@ import {
 	finalizeTemplateSlotSession,
 	type ParsedTemplate,
 	SlashCommandMenu,
-	selectedSlashCommandValue,
-	slashCommandCatalogOrEmpty,
 	slashCommandQuery,
 	stepTemplateSlotSession,
 	TemplateSlotHint,
@@ -141,7 +138,6 @@ export function NewWorkspaceDialog({
 	const scopeProjectId = chat && chatsContainer ? chatsContainer.id : selectedProjectId;
 	const [baseRef, setBaseRef] = useState<string>("");
 	const [prompt, setPrompt] = useState("");
-	const [skillCommands, setSkillCommands] = useState<SlashCommandInfo[]>([]);
 	const [templates, setTemplates] = useState<TemplateInfo[]>([]);
 	const [slotSession, setSlotSession] = useState<TemplateSlotSessionState | null>(null);
 	const [model, setModel] = useState<WireModel | null>(null);
@@ -199,15 +195,9 @@ export function NewWorkspaceDialog({
 	});
 	const slashCompletion = useSlashCommandCompletion({
 		value: prompt,
-		commands: [...skillCommands, ...templates.map(templateToSlashCommand)],
+		commands: templates.map(templateToSlashCommand),
 		onSelect: (command) => {
-			if (command.source === "prompt") {
-				void pickTemplate(command.name);
-				return;
-			}
-			const next = selectedSlashCommandValue(command);
-			updatePromptDraft(next, null);
-			focusPromptSelection(next.length);
+			void pickTemplate(command.name);
 		},
 	});
 	const slashActive = slashCommandQuery(prompt) !== null;
@@ -264,18 +254,7 @@ export function NewWorkspaceDialog({
 	};
 
 	useEffect(() => {
-		if (!open) return;
-		let cancelled = false;
-		setSkillCommands([]);
-		setTemplates([]);
-		void slashCommandCatalogOrEmpty(() =>
-			getTransport().request("skill.list", { projectId: scopeProjectId }),
-		).then((commands) => {
-			if (!cancelled) setSkillCommands(commands);
-		});
-		return () => {
-			cancelled = true;
-		};
+		if (open) setTemplates([]);
 	}, [open, scopeProjectId]);
 
 	useEffect(() => {
@@ -525,10 +504,6 @@ export function NewWorkspaceDialog({
 				trustGrantParams(selectedProjectId, notice),
 			);
 			useAppStore.getState().applyProjectUpdated(updated);
-			const commands = await slashCommandCatalogOrEmpty(() =>
-				getTransport().request("skill.list", { projectId: selectedProjectId }),
-			);
-			setSkillCommands(commands);
 		};
 		await trust()
 			.catch((err: unknown) => toast.error(errorText(err), t("panels.newWorkspace.trustFailed")))

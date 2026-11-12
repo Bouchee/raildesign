@@ -1,37 +1,26 @@
-import { afterEach, beforeAll, beforeEach, expect, spyOn, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer as createTcpServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { HostUpdateNotice, ServerWelcome } from "@thinkrail/contracts";
 import { PROTOCOL_VERSION, WS_CHANNELS } from "@thinkrail/contracts";
 import { isPortFree } from "@thinkrail/shared/freePort";
-import {
-	configurePiRuntime,
-	configurePiRuntimeFactory,
-	refreshSubagentConcurrency,
-} from "../agent";
-import { delegationServiceFor, removeWorkspaceDelegation } from "../agent/delegation";
-import {
-	getAdditionalAnalyticsCapture,
-	initializeAnalytics,
-	resetAnalyticsForTests,
-} from "../analytics";
-import { resetJbcentralStateForTests } from "../auth";
-import { logger } from "../log";
-import { resetConfigCache, updateConfig } from "../settings";
+import { resetConfigCache } from "../settings";
 import { type BootedHost, bootHost } from "./boot";
 import { handleRequest } from "./handlers";
-
-const TEST_KEY = "phc_test";
 
 process.setMaxListeners(50);
 
 const booted: BootedHost[] = [];
 const tmpDirs: string[] = [];
 const originalDataDir = process.env.THINKRAIL_DATA_DIR;
-let testRuntime: ModelRuntime;
+const SHELL_ENV_KEYS = [
+	Symbol.for("raildesign.shellEnv.launchKeys"),
+	Symbol.for("raildesign.shellEnv.pending"),
+];
+const processState = globalThis as Record<symbol, unknown>;
+let originalShellEnv: Map<symbol, unknown>;
 
 interface Deferred<T> {
 	promise: Promise<T>;
@@ -129,19 +118,10 @@ async function socketBarrier(collector: SocketCollector, id: string): Promise<vo
 	expect(frame.ok).toBe(true);
 }
 
-beforeAll(async () => {
-	testRuntime = await ModelRuntime.create({
-		credentials: new InMemoryCredentialStore(),
-		modelsPath: null,
-		allowModelNetwork: false,
-	});
-});
-
 beforeEach(async () => {
+	originalShellEnv = new Map(SHELL_ENV_KEYS.map((key) => [key, processState[key]]));
+	for (const key of SHELL_ENV_KEYS) delete processState[key];
 	resetConfigCache();
-	await resetJbcentralStateForTests();
-	configurePiRuntime(null);
-	configurePiRuntimeFactory(async () => testRuntime);
 	const dir = mkdtempSync(join(tmpdir(), "thinkrail-boot-data-"));
 	tmpDirs.push(dir);
 	process.env.THINKRAIL_DATA_DIR = dir;
@@ -149,14 +129,14 @@ beforeEach(async () => {
 
 afterEach(async () => {
 	while (booted.length) await booted.pop()?.server.shutdown();
-	resetAnalyticsForTests();
+	for (const [key, value] of originalShellEnv) {
+		if (value === undefined) delete processState[key];
+		else processState[key] = value;
+	}
 	resetConfigCache();
 	while (tmpDirs.length) rmSync(tmpDirs.pop() as string, { recursive: true, force: true });
 	if (originalDataDir === undefined) delete process.env.THINKRAIL_DATA_DIR;
 	else process.env.THINKRAIL_DATA_DIR = originalDataDir;
-	await resetJbcentralStateForTests();
-	configurePiRuntimeFactory();
-	configurePiRuntime(null);
 });
 
 function grabFreePort(): number {
@@ -173,243 +153,13 @@ async function boot(options: Parameters<typeof bootHost>[0]): Promise<BootedHost
 	return b;
 }
 
-test("confirming consent observes current setup without another client read or provider refresh", async () => {
-	const dir = process.env.THINKRAIL_DATA_DIR;
-	if (!dir) throw new Error("missing fixture data directory");
-	writeFileSync(join(dir, "config.json"), JSON.stringify({ analyticsEnabled: true }));
-	writeFileSync(
-		join(dir, "projects.json"),
-		JSON.stringify([
-			{ id: "existing", name: "private", path: dir, slug: "existing", lastOpened: 1 },
-		]),
-	);
-	await boot({ port: 0, host: "127.0.0.1", portMode: "exact" });
-	const events: { event: string; properties: Record<string, unknown> }[] = [];
-	initializeAnalytics({
-		posthogApiKey: TEST_KEY,
-		additionalEnabled: false,
-		env: {},
-		fetchImpl: (async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
-			events.push(...JSON.parse(String(init?.body)).batch);
-			return new Response("{}");
-		}) as typeof fetch,
-	});
-	const refresh = spyOn(testRuntime, "refresh");
-	try {
-		updateConfig({ analyticsEnabled: true, analyticsConsentConfirmed: true });
-		const snapshots = () => events.filter((event) => event.event === "setup_state_observed");
-		const deadline = Date.now() + 2_000;
-		while (snapshots().length === 0 && Date.now() < deadline) await Bun.sleep(5);
-		expect(snapshots()).toHaveLength(1);
-		expect(snapshots()[0]?.properties).toMatchObject({
-			project_present: "yes",
-			provider_available: "no",
-			model_available: "no",
-		});
-		expect(JSON.stringify(events)).not.toContain("private");
-		updateConfig({ theme: "light" });
-		await Bun.sleep(20);
-		expect(snapshots()).toHaveLength(1);
-		expect(refresh).not.toHaveBeenCalled();
-	} finally {
-		refresh.mockRestore();
-	}
-});
-
-test("the dialog prime enables ordinary additional events but schedules attribution only after confirmation", async () => {
-	const scheduled: Array<() => void> = [];
-	await boot({
-		port: 0,
-		host: "127.0.0.1",
-		portMode: "exact",
-		analytics: {
-			posthogApiKey: TEST_KEY,
-			build: "binary",
-			env: {},
-			fetchImpl: (async () => new Response("{}")) as unknown as typeof fetch,
-			attributionEndpoint: "http://127.0.0.1:4567",
-			attributionFetch: (async () => {
-				throw new Error("scheduled attribution must not run in this host test");
-			}) as unknown as typeof fetch,
-			openExternal: () => {},
-			attributionSchedule: (run) => scheduled.push(run),
-		},
-	});
-
-	updateConfig({ analyticsEnabled: true });
-	expect(getAdditionalAnalyticsCapture()).not.toBeNull();
-	expect(scheduled).toEqual([]);
-	updateConfig({ theme: "light" });
-	expect(getAdditionalAnalyticsCapture()).not.toBeNull();
-	expect(scheduled).toEqual([]);
-	updateConfig({ analyticsEnabled: true, analyticsConsentConfirmed: true });
-	expect(scheduled).toHaveLength(1);
-});
-
-test("a saved confirmed-on choice waits beyond one second for explicit launcher readiness", async () => {
-	const dir = process.env.THINKRAIL_DATA_DIR;
-	if (!dir) throw new Error("missing fixture data directory");
-	writeFileSync(
-		join(dir, "config.json"),
-		JSON.stringify({ analyticsEnabled: true, analyticsConsentConfirmed: true }),
-	);
-	const scheduled: Array<() => void> = [];
-	let opens = 0;
-	const host = await boot({
-		port: 0,
-		host: "127.0.0.1",
-		portMode: "exact",
-		analytics: {
-			posthogApiKey: TEST_KEY,
-			build: "desktop",
-			env: {},
-			fetchImpl: (async () => new Response("{}")) as unknown as typeof fetch,
-			attributionEndpoint: "http://127.0.0.1:4567",
-			attributionFetch: (async () => {
-				throw new Error("scheduled attribution must not run in this host test");
-			}) as unknown as typeof fetch,
-			openExternal: () => {
-				opens++;
-			},
-			attributionSchedule: (run) => scheduled.push(run),
-		},
-	});
-	await Bun.sleep(1_100);
-	expect(scheduled).toEqual([]);
-	expect(opens).toBe(0);
-	expect(existsSync(join(dir, "attribution.json"))).toBe(false);
-	host.server.startAttributionClaim();
-	expect(scheduled).toHaveLength(1);
-	expect(opens).toBe(0);
-	expect(existsSync(join(dir, "attribution.json"))).toBe(false);
-});
-
-test("launcher readiness cannot start attribution before an unconfirmed prime is resolved", async () => {
-	const dir = process.env.THINKRAIL_DATA_DIR;
-	if (!dir) throw new Error("missing fixture data directory");
-	writeFileSync(
-		join(dir, "config.json"),
-		JSON.stringify({ analyticsEnabled: true, analyticsConsentConfirmed: false }),
-	);
-	const scheduled: Array<() => void> = [];
-	const host = await boot({
-		port: 0,
-		host: "127.0.0.1",
-		portMode: "exact",
-		analytics: {
-			posthogApiKey: TEST_KEY,
-			build: "desktop",
-			env: {},
-			fetchImpl: (async () => new Response("{}")) as unknown as typeof fetch,
-			attributionEndpoint: "http://127.0.0.1:4567",
-			attributionFetch: (async () => {
-				throw new Error("scheduled attribution must not run in this host test");
-			}) as unknown as typeof fetch,
-			openExternal: () => {},
-			attributionSchedule: (run) => scheduled.push(run),
-		},
-	});
-
-	host.server.startAttributionClaim();
-	expect(scheduled).toEqual([]);
-	updateConfig({ analyticsEnabled: true, analyticsConsentConfirmed: true });
-	expect(scheduled).toHaveLength(1);
-});
-
-test("the host forwards successful login generation metadata into the basic event", async () => {
-	await boot({ port: 0, host: "127.0.0.1", portMode: "exact" });
-	const events: { event: string; properties: Record<string, unknown> }[] = [];
-	initializeAnalytics({
-		posthogApiKey: TEST_KEY,
-		additionalEnabled: false,
-		env: {},
-		fetchImpl: (async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
-			events.push(...JSON.parse(String(init?.body)).batch);
-			return new Response("{}");
-		}) as typeof fetch,
-	});
-	const login = spyOn(testRuntime, "login").mockResolvedValue({
-		type: "oauth",
-		access: "private-token",
-		refresh: "private-refresh",
-		expires: Date.now() + 60_000,
-	});
-	try {
-		await handleRequest(
-			"provider.loginStart",
-			{ providerId: "anthropic", type: "oauth" },
-			{ clientKey: "client" },
-		);
-		const deadline = Date.now() + 2_000;
-		while (!events.some((event) => event.event === "provider_login") && Date.now() < deadline)
-			await Bun.sleep(5);
-		const logins = events.filter((event) => event.event === "provider_login");
-		expect(logins).toHaveLength(1);
-		expect(logins[0]?.properties).toMatchObject({
-			provider: "anthropic",
-			method: "oauth",
-			auth_method: "subscription",
-		});
-		expect(JSON.stringify(events)).not.toContain("private");
-	} finally {
-		login.mockRestore();
-	}
-});
-
-test("failed wire requests and logged host errors become sanitized exception reports", async () => {
-	const b = await boot({ port: 0, host: "127.0.0.1", portMode: "exact" });
-	const events: { event: string; properties: Record<string, unknown> }[] = [];
-	initializeAnalytics({
-		posthogApiKey: TEST_KEY,
-		additionalEnabled: false,
-		env: {},
-		fetchImpl: (async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
-			events.push(...JSON.parse(String(init?.body)).batch);
-			return new Response("{}");
-		}) as typeof fetch,
-	});
-	const missing = join(process.env.THINKRAIL_DATA_DIR ?? tmpdir(), "private-client-project");
-	const collector = await collectSocket(b.port, "error-reports");
-	try {
-		collector.socket.send(
-			JSON.stringify({ id: "fail", method: "project.open", params: { path: missing } }),
-		);
-		const frame = await collector.waitForFrame((candidate) => candidate.id === "fail");
-		expect(frame.ok).toBe(false);
-		logger("probe").warn("probe failed", new Error(`could not read ${missing}`));
-		const exceptions = () => events.filter((event) => event.event === "$exception");
-		const deadline = Date.now() + 2_000;
-		while (exceptions().length < 2 && Date.now() < deadline) await Bun.sleep(5);
-		expect(
-			exceptions()
-				.map((event) => event.properties.source)
-				.sort(),
-		).toEqual(["host_logged", "request"]);
-		expect(
-			exceptions().find((event) => event.properties.source === "request")?.properties,
-		).toMatchObject({ handled: true, request_method: "project.open" });
-		expect(
-			exceptions().find((event) => event.properties.source === "host_logged")?.properties.scope,
-		).toBe("probe");
-		expect(JSON.stringify(exceptions())).not.toContain("private-client-project");
-	} finally {
-		collector.socket.close();
-	}
-});
-
 test("boot applies the stored environment before serving, and launch variables win", async () => {
 	const dir = process.env.THINKRAIL_DATA_DIR;
 	if (!dir) throw new Error("missing fixture data directory");
-	const agentDir = mkdtempSync(join(tmpdir(), "thinkrail-boot-agent-"));
-	tmpDirs.push(agentDir);
-	const priorAgentDir = process.env.PI_CODING_AGENT_DIR;
-	delete process.env.PI_CODING_AGENT_DIR;
-	delete (globalThis as Record<symbol, unknown>)[Symbol.for("thinkrail.shellEnv.launchKeys")];
 	process.env.TR_BOOT_LAUNCH = "launch";
 	writeFileSync(
 		join(dir, "environment.json"),
 		JSON.stringify({
-			agentDir,
 			vars: [
 				{ name: "TR_BOOT_STORED", value: "stored" },
 				{ name: "TR_BOOT_LAUNCH", value: "stored" },
@@ -419,7 +169,6 @@ test("boot applies the stored environment before serving, and launch variables w
 	);
 	try {
 		await boot({ port: grabFreePort(), host: "localhost", portMode: "exact" });
-		expect(Bun.env.PI_CODING_AGENT_DIR).toBe(agentDir);
 		expect(process.env.TR_BOOT_STORED).toBe("stored");
 		expect(process.env.TR_BOOT_LAUNCH).toBe("launch");
 		expect(process.env.THINKRAIL_PORT).toBeUndefined();
@@ -427,13 +176,10 @@ test("boot applies the stored environment before serving, and launch variables w
 		expect(status).toMatchObject({
 			restartRequired: false,
 			launchOverridden: ["TR_BOOT_LAUNCH"],
-			effectiveAgentDir: agentDir,
 		});
 	} finally {
 		delete process.env.TR_BOOT_STORED;
 		delete process.env.TR_BOOT_LAUNCH;
-		if (priorAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = priorAgentDir;
 	}
 });
 
@@ -492,39 +238,36 @@ test("stop() releases the port", async () => {
 	expect(await isPortFree(b.port)).toBe(true);
 });
 
-test("stop() returns the resolvers createServer installed to their defaults", async () => {
-	const dir = process.env.THINKRAIL_DATA_DIR;
-	if (!dir) throw new Error("missing fixture data directory");
-	writeFileSync(join(dir, "config.json"), JSON.stringify({ subagentMaxConcurrent: 16 }));
-	const b = await boot({ port: 0, host: "127.0.0.1", portMode: "exact" });
-	const workspaceId = "boot-stopped-limit";
+test("boot refuses a second writer and releases ownership after shutdown", async () => {
+	const first = await boot({ port: grabFreePort(), host: "localhost", portMode: "exact" });
+	await expect(
+		boot({ port: grabFreePort(), host: "localhost", portMode: "exact" }),
+	).rejects.toMatchObject({ code: "ELOCKED" });
+	expect(await (await fetch(`http://localhost:${first.port}/health`)).text()).toBe("ok");
+	await first.server.shutdown();
+	const replacement = await boot({ port: grabFreePort(), host: "localhost", portMode: "exact" });
+	expect(await (await fetch(`http://localhost:${replacement.port}/health`)).text()).toBe("ok");
+});
+
+test("a bind failure releases ownership before the next startup", async () => {
+	const holder = createTcpServer();
+	await new Promise<void>((resolve) =>
+		holder.listen({ port: 0, host: "127.0.0.1", exclusive: true }, resolve),
+	);
+	const address = holder.address();
+	if (!address || typeof address === "string") throw new Error("Missing TCP fixture address");
 	try {
-		const service = delegationServiceFor(workspaceId);
-		const resized: number[] = [];
-		service.setMaxConcurrentPerParent = (slots) => {
-			resized.push(slots);
-		};
-		refreshSubagentConcurrency(workspaceId);
-		b.server.stop();
-		refreshSubagentConcurrency(workspaceId);
-		expect(resized).toEqual([16]);
+		await expect(
+			boot({ port: address.port, host: "127.0.0.1", portMode: "exact" }),
+		).rejects.toThrow();
+		const recovered = await boot({ port: grabFreePort(), host: "localhost", portMode: "exact" });
+		expect(await (await fetch(`http://localhost:${recovered.port}/health`)).text()).toBe("ok");
 	} finally {
-		removeWorkspaceDelegation(workspaceId);
+		await new Promise<void>((resolve, reject) =>
+			holder.close((error) => (error ? reject(error) : resolve())),
+		);
 	}
 });
-
-test("boot permits two hosts for the same data directory", async () => {
-	const first = await boot({ port: grabFreePort(), host: "localhost", portMode: "exact" });
-	const second = await boot({ port: grabFreePort(), host: "localhost", portMode: "exact" });
-
-	expect(second.port).not.toBe(first.port);
-	const responses = await Promise.all([
-		fetch(`http://localhost:${first.port}/health`),
-		fetch(`http://localhost:${second.port}/health`),
-	]);
-	expect(await Promise.all(responses.map((response) => response.text()))).toEqual(["ok", "ok"]);
-});
-
 test("welcome omits closed projects whose folders are gone", async () => {
 	const dir = process.env.THINKRAIL_DATA_DIR;
 	if (!dir) throw new Error("missing fixture data directory");
@@ -862,7 +605,6 @@ async function withFakeLoginShell(run: () => Promise<void>): Promise<void> {
 	process.env.SHELL = shell;
 	delete process.env.TERM;
 	delete process.env.BOOT_LOGIN_CANARY;
-	delete (globalThis as Record<symbol, unknown>)[Symbol.for("thinkrail.shellEnv.pending")];
 	try {
 		await run();
 	} finally {
@@ -875,8 +617,9 @@ test.skipIf(process.platform === "win32")(
 	"boot leaves the process environment alone unless the launcher opts in to the login shell",
 	async () => {
 		await withFakeLoginShell(async () => {
-			await boot({ port: 0, host: "127.0.0.1", portMode: "exact" });
+			const first = await boot({ port: 0, host: "127.0.0.1", portMode: "exact" });
 			expect(process.env.BOOT_LOGIN_CANARY).toBeUndefined();
+			await first.server.shutdown();
 			await boot({ port: 0, host: "127.0.0.1", portMode: "exact", resolveShellEnv: true });
 			expect(process.env.BOOT_LOGIN_CANARY).toBe("imported");
 		});

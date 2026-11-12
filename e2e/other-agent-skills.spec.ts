@@ -8,13 +8,12 @@ const SKILL = "e2e-other-agent-widget";
 const skillDir = join(E2E_HOME_DIR, ".claude", "skills", SKILL);
 
 async function setOtherAgentSkills(page: Page, enabled: boolean): Promise<void> {
-	await page.getByTestId("open-settings").click();
-	await page.getByTestId("settings-nav-extensions").click();
+	await page.getByTestId("open-skills").click();
 	const toggle = page.getByTestId("other-agent-skills-toggle");
-	if ((await toggle.getAttribute("data-active")) !== String(enabled)) await toggle.click();
-	await expect(toggle).toHaveAttribute("data-active", String(enabled));
+	if ((await toggle.getAttribute("aria-checked")) !== String(enabled)) await toggle.click();
+	await expect(toggle).toHaveAttribute("aria-checked", String(enabled));
 	await page.keyboard.press("Escape");
-	await expect(page.getByTestId("settings-dialog")).toBeHidden();
+	await expect(page.getByTestId("skills-dialog")).toBeHidden();
 }
 
 async function openSkills(page: Page) {

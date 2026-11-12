@@ -34,6 +34,15 @@ test("a pending ask surfaces on the rail as waiting_question glance, not paused"
 	const ack: ToolResponsePendingDetails = { kind: "ack" };
 	const session = seedWorkspaceSession(realpathSync(E2E_FIXTURE_REPO), {
 		name: "rail glance on pending ask",
+		state: {
+			execution: "idle",
+			runId: "ask-rail-run",
+			needsInput: { interactionId: "ask-rail", kind: "tool-response", toolCallId: "ask-rail" },
+			completion: null,
+			completionUnread: false,
+			queuedCount: 0,
+			backgroundWork: false,
+		},
 		messages: [
 			{ role: "user", text: "Ping.", timestamp: BASE_TS },
 			{
@@ -68,63 +77,6 @@ test("a pending ask surfaces on the rail as waiting_question glance, not paused"
 	}
 });
 
-test("a pending ask_user_question is answerable from the plan page", async ({ page }) => {
-	await openFixtureProject(page);
-	const args = {
-		questions: [
-			{
-				question: "Which rollout should we use?",
-				header: "Rollout",
-				options: [
-					{ label: "Blue", description: "the blue one" },
-					{ label: "Green", description: "the green one" },
-				],
-			},
-		],
-	} satisfies AskUserQuestionArgs;
-	const ack: ToolResponsePendingDetails = { kind: "ack" };
-	const session = seedWorkspaceSession(realpathSync(E2E_FIXTURE_REPO), {
-		name: "plan ask question",
-		messages: [
-			{ role: "user", text: "Ask me.", timestamp: BASE_TS },
-			{
-				role: "assistant",
-				content: [{ type: "toolCall", id: "ask-1", name: "ask_user_question", arguments: args }],
-				stopReason: "toolUse",
-				timestamp: BASE_TS + 1000,
-			},
-			{
-				role: "toolResult",
-				toolCallId: "ask-1",
-				toolName: "ask_user_question",
-				content: [{ type: "text", text: "awaiting" }],
-				details: ack,
-				isError: false,
-				timestamp: BASE_TS + 2000,
-			},
-		],
-	});
-	try {
-		await enterDefaultWorkspace(page);
-		await hideAuxiliaryWorkbench(page);
-		await openPersistedChat(page, "plan ask question");
-		await revealWorkbenchTool(page, "plan");
-		await page.getByTestId("plan-rail-pane").getByTestId("todo-open-plan").click();
-		const pane = page.getByTestId("plan-pane");
-		await expect(pane).toBeVisible();
-		const card = pane.getByTestId("plan-ask");
-		await expect(card.getByTestId("ask-question-text")).toHaveText("Which rollout should we use?");
-		await card.getByTestId("ask-option").filter({ hasText: "Green" }).click();
-		await card.getByTestId("ask-submit").click();
-		await expect(card).toHaveCount(0);
-		await page.locator('[data-testid="editor-tab"][data-kind="chat"]').first().click();
-		const record = page.locator('[data-testid="ask-user-question"][data-tone="answered"]');
-		await expect(record.getByTestId("ask-receipt-answer")).toHaveText("Green");
-	} finally {
-		rmSync(session.path, { force: true });
-	}
-});
-
 test("the plan shows the agent's latest message when it isn't asking or on a step", async ({
 	page,
 }) => {
@@ -147,7 +99,7 @@ test("the plan shows the agent's latest message when it isn't asking or on a ste
 			},
 		],
 	});
-	const todosDir = join(repo, ".thinkrail", "context", "todos");
+	const todosDir = join(repo, ".raildesign", "context", "todos");
 	mkdirSync(todosDir, { recursive: true });
 	const todosPath = join(todosDir, `${session.id}.json`);
 	writeFileSync(
@@ -187,7 +139,7 @@ test("a pending question's file preview renders on the plan page and opens in a 
 }) => {
 	await openFixtureProject(page);
 	const repo = realpathSync(E2E_FIXTURE_REPO);
-	const mockups = join(repo, ".thinkrail", "context", "mockups");
+	const mockups = join(repo, ".raildesign", "context", "mockups");
 	mkdirSync(mockups, { recursive: true });
 	writeFileSync(
 		join(mockups, "plan-today.html"),
@@ -198,7 +150,7 @@ test("a pending question's file preview renders on the plan page and opens in a 
 			{
 				question: "Does the plan page look right?",
 				header: "Plan page",
-				previewFile: ".thinkrail/context/mockups/plan-today.html",
+				previewFile: ".raildesign/context/mockups/plan-today.html",
 				options: [{ label: "Looks right", description: "accurate as written" }],
 			},
 		],
@@ -206,6 +158,19 @@ test("a pending question's file preview renders on the plan page and opens in a 
 	const ack: ToolResponsePendingDetails = { kind: "ack" };
 	const session = seedWorkspaceSession(repo, {
 		name: "plan ask preview",
+		state: {
+			execution: "idle",
+			runId: "ask-plan-preview-run",
+			needsInput: {
+				interactionId: "ask-plan-preview",
+				kind: "tool-response",
+				toolCallId: "ask-plan-preview",
+			},
+			completion: null,
+			completionUnread: false,
+			queuedCount: 0,
+			backgroundWork: false,
+		},
 		messages: [
 			{ role: "user", text: "Ask me.", timestamp: BASE_TS },
 			{
@@ -244,6 +209,6 @@ test("a pending question's file preview renders on the plan page and opens in a 
 		).toBeVisible();
 	} finally {
 		rmSync(session.path, { force: true });
-		rmSync(join(repo, ".thinkrail", "context", "mockups"), { recursive: true, force: true });
+		rmSync(join(repo, ".raildesign", "context", "mockups"), { recursive: true, force: true });
 	}
 });

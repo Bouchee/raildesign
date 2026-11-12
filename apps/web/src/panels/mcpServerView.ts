@@ -29,14 +29,6 @@ export interface McpRowView {
 	secondary?: McpRowAction;
 }
 
-const DISABLED_IN_PI_SETTINGS = "pi settings (-builtin:mcp)";
-
-export function mcpHandledElsewhereText(t: Translator, by: string): string {
-	return by === DISABLED_IN_PI_SETTINGS
-		? t("mcp.handledElsewhere.piSettings")
-		: t("mcp.handledElsewhere.by", { by });
-}
-
 export interface McpChatFailure {
 	chat: string;
 	error: string;
@@ -262,7 +254,7 @@ export function mcpSettingWrite(
 			params: { workspaceId, name: summary.name, ...change },
 		};
 	}
-	if (!projectEntry) throw new Error(`Read "${summary.name}" from .pi/mcp.json first.`);
+	if (!projectEntry) throw new Error(`Read "${summary.name}" from .raildesign/mcp.json first.`);
 	return {
 		method: "mcp.update",
 		params: mcpEntryUpdate(

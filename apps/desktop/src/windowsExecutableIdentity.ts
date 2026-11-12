@@ -33,7 +33,7 @@ export function brandWindowsExecutable(
 	originalFilename: string,
 ): Uint8Array {
 	const icon = ResEdit.Data.IconFile.from(iconData);
-	if (icon.icons.length === 0) throw new Error("ThinkRail Windows icon contains no images");
+	if (icon.icons.length === 0) throw new Error("RailDesign Windows icon contains no images");
 	const executable = ResEdit.NtExecutable.from(withoutSignature(executableData));
 	const resources = ResEdit.NtExecutableResource.from(executable);
 	resources.entries = resources.entries.filter(

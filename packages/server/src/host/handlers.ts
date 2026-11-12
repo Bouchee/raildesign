@@ -1,9 +1,7 @@
 import { mkdirSync } from "node:fs";
 import type {
-	Ack,
 	OpenBranchReview,
 	ReviewComment,
-	ReviewFixDetails,
 	ReviewSendResult,
 	TemplateReadLocation,
 	ThinkingLevel,
@@ -15,37 +13,25 @@ import type {
 } from "@thinkrail/contracts";
 import {
 	BRANCH_STATUS_PROTOCOL_VERSION,
-	isControlMessage,
 	isSpeechModel,
 	WORKSPACE_SETTLE_PROTOCOL_VERSION,
 } from "@thinkrail/contracts";
-import { CodedError } from "@thinkrail/shared/codedError";
+import { z } from "zod";
 import {
 	abortSession,
 	acknowledgeCompletion,
 	admissionContextFor,
-	applyPiResourceTrust,
 	cancelMcpProbe,
+	cancelMcpProbesForWorkspace,
 	clampThinkingForModel,
-	clearQueueSession,
-	compactSession,
+	closeWorkspaceMcpConnections,
 	deleteSession,
-	disableAnthropicExtraUsageWarning,
 	ensureSessionAttached,
-	followUpSession,
-	getResourceHistoryPage,
-	getSessionCommands,
 	getSessionMessages,
-	getSessionResources,
 	getSessionStats,
-	getSessionWorkspaceId,
-	hasSession,
-	isHostResourceId,
 	isMcpLoginId,
-	isPiSessionId,
 	listAvailableModels,
 	listCustomEndpoints,
-	listModelContextSettings,
 	listProjectAliasSkillNames,
 	listSessionStates,
 	listSessions,
@@ -54,77 +40,31 @@ import {
 	markWorkspaceRead,
 	markWorkspaceUnread,
 	notifyExtUi,
-	nudgeSession,
 	probeCustomEndpoint,
 	projectTrustSummary,
 	promptSession,
-	readBackgroundCommandOutput,
-	readCacheWarmingSetting,
-	readChildTranscript,
 	refreshAvailableModels,
-	refreshSubagentConcurrency,
-	refreshSubagentTools,
-	reloadSessionResources,
 	removeCustomEndpoint,
-	removeQueuedSession,
 	removeSession,
 	removeWorkspaceSessions,
 	renameSession,
 	replyMcpProbe,
 	resolveExtUi,
-	respondToTool,
 	saveCustomEndpoint,
-	sendReviewFixToSession,
-	setModelContextWindow,
 	setSessionModel,
 	setSessionThinkingLevel,
-	steerSession,
-	stopAllSubagents,
-	stopBackgroundCommand,
-	stopSubagent,
-	writeCacheWarmingMode,
 } from "../agent";
-import {
-	type AdditionalAnalyticsCapture,
-	captureSurveyResponse,
-	type ErrorReport,
-	reportClientError,
-	type SendMode,
-	track,
-} from "../analytics";
+
 import { suggestPrDescription } from "../assist";
-import {
-	cancelLogin,
-	connectJbcentral,
-	detectAccounts,
-	disconnectJbcentral,
-	getJbcentralQuota,
-	getProviderStatus,
-	jbcentralLogin,
-	logoutProvider,
-	resolveLogin,
-	startLogin,
-	startProxyJbcentral,
-	updateJbcentral,
-} from "../auth";
+import { getProviderStatus } from "../auth";
+
 import { providerFromRemoteUrl } from "../branch-review";
 import { forgetWorkspaceChanges, revertChange, undoChange } from "../changes";
 import { selectDirectory } from "../dialog";
 import { listAvailableEditors, openEditor, revealInFileManager } from "../editors";
 import { hostEnvironmentStatus, updateHostEnvironment } from "../environment";
 import { listExtensionCatalog } from "../extensions";
-import {
-	completeSurvey,
-	confirmInAppSurvey,
-	currentInAppSurvey,
-	localizeSurvey,
-	parseSurveySubmission,
-	recordAcceptedMessage,
-	refreshInAppSurvey,
-	respondToInvitation,
-	surveyIsCompleted,
-	surveyResponse,
-} from "../feedback";
+
 import { fontsDir, listInstalledFonts, readUserFonts } from "../fonts";
 import { readDir, readFile } from "../fs";
 import {
@@ -174,7 +114,6 @@ import {
 } from "../projects";
 import {
 	addComment,
-	buildReviewFixDetails,
 	buildSendPackage,
 	clearReview,
 	deleteComment,
@@ -217,10 +156,7 @@ import {
 	listTodos,
 	removeSessionTodoWindows,
 	removeTodo,
-	requestTodoFix,
-	rollbackTodoFix,
 	settleChangeArtifacts,
-	type TodoReviewRecord,
 	updateTodo,
 } from "../todos";
 import { forgetWorkspaceTurns, listTurns } from "../turns";
@@ -259,7 +195,7 @@ import {
 	workspaceDiffStats,
 } from "../workspaces";
 import { ackSend } from "./ackSend";
-import { sessionProviderAnalytics } from "./authAnalytics";
+
 import { startChatSession } from "./chatSession";
 import {
 	assertChatOpen,
@@ -271,11 +207,10 @@ import {
 	recoverChatSession,
 	seesChats,
 } from "./chats";
-import { continuationStatus, startContinuation } from "./continuations";
 import { nudgeBaseRefWorkspaces } from "./fsNudge";
 import { buildHistoryScope } from "./historyScope";
 import { provisionInitialTerminal } from "./initialTerminal";
-import { dropLogin, recordLoginStart } from "./loginAnalytics";
+
 import {
 	mcpAdd,
 	mcpApprove,
@@ -292,47 +227,40 @@ import {
 	mcpShareWithRepo,
 	mcpTestConnection,
 	mcpUpdate,
+	reloadLiveSessions,
 } from "./mcp";
 import { resolveNewChatModel } from "./newChatModel";
-import {
-	packagesCheckUpdates,
-	packagesInstall,
-	packagesList,
-	packagesRemove,
-	packagesReveal,
-	packagesSetResourceEnabled,
-	packagesUpdate,
-} from "./packages";
-import { planReviewRunning } from "./planReviewQueue";
-import {
-	additionalCapture,
-	captureAdditional,
-	captureReviewCommentAdded,
-	captureReviewCommentResolved,
-	captureReviewCommentsSent,
-	centralConnectOutcome,
-	directoryPickOutcome,
-	observePrAction,
-	observeSetupAction,
-	observeSetupRead,
-	providerAvailability,
-} from "./productAnalytics";
-import { startPlanReview } from "./requestReview";
+
 import { withChangeLock, withReviewLock } from "./reviewLock";
-import { runObservation } from "./runAnalytics";
+
 import { hostSearch, publishSearchText } from "./search";
 import { findWorkspaceReviewOutcome, scheduleLifecyclePass } from "./settledLifecycle";
-import { taskObservation } from "./taskAnalytics";
+
 import {
-	claimItemFix,
 	clearChangesRequestedIfResolved,
 	isItemUnderActiveReview,
-	itemFixFindings,
 	markClientStale,
-	releaseItemFix,
 } from "./todoReview";
 
 const log = logger("host");
+const clientErrorSchema = z
+	.object({
+		kind: z.enum(["render", "window", "rejection"]),
+		type: z.string().min(1).max(120),
+		stack: z.string().max(16_384).optional(),
+		boundary: z.string().max(120).optional(),
+	})
+	.strict();
+const CLIENT_ERROR_TYPES = new Set([
+	"Error",
+	"TypeError",
+	"SyntaxError",
+	"RangeError",
+	"ReferenceError",
+	"URIError",
+	"EvalError",
+	"UnhandledRejection",
+]);
 
 export interface RequestContext {
 	clientKey: string;
@@ -346,7 +274,7 @@ type WsHandler<M extends WsMethodName> = (
 	ctx: RequestContext,
 ) => WsResult<M> | Promise<WsResult<M>>;
 
-type WsHandlers = { [M in WsMethodName]: WsHandler<M> };
+type WsHandlers = { [M in WsMethodName]?: WsHandler<M> };
 
 async function archiveTeardown(ws: Workspace): Promise<void> {
 	try {
@@ -358,60 +286,24 @@ async function archiveTeardown(ws: Workspace): Promise<void> {
 	}
 }
 
-async function sendUserMessage(
-	mode: SendMode,
-	sessionId: string,
-	text: string,
-	clientKey: string,
-	operation: () => Promise<void>,
-): Promise<{ ok: true }> {
-	const control = isControlMessage(text);
-	const provider = control ? undefined : sessionProviderAnalytics(sessionId);
-	await ackSend(runObservation.send(sessionId, control ? "internal" : "user", operation));
-	if (provider) {
-		track({
-			name: "message_sent",
-			params: { mode, provider: provider.provider, auth_method: provider.auth_method },
-		});
-		recordAcceptedMessage(clientKey);
-	}
+async function sendUserMessage(operation: () => Promise<void>): Promise<{ ok: true }> {
+	await ackSend(operation());
 	return { ok: true };
 }
 
-const creationClients = new Map<string, string>();
-
-export const workspaceCreationHandoff: CreationHandoff = async (workspace, kickoff, origin) => {
-	const clientKey = creationClients.get(workspace.id) ?? "";
-	creationClients.delete(workspace.id);
+export const workspaceCreationHandoff: CreationHandoff = async (workspace, kickoff) => {
 	provisionInitialTerminal(workspace);
 	if (!kickoff) return {};
 	await ensureWatch(workspace.id, { prewarm: false });
-	const internal = origin === "agent";
-	const chat = await startChatSession(
-		workspace,
-		{
-			...(kickoff.model ? { model: kickoff.model } : {}),
-			...(kickoff.thinkingLevel ? { thinkingLevel: kickoff.thinkingLevel } : {}),
-		},
-		{ pick: !internal },
-	);
-	const { sessionId } = chat;
+	const chat = await startChatSession(workspace, kickoff, { pick: true });
 	if (!kickoff.text && !kickoff.images?.length) return chat;
-	let preflighted: () => void = () => {};
-	const preflight = new Promise<void>((resolve) => {
-		preflighted = resolve;
-	});
-	const send = () =>
-		promptSession(sessionId, kickoff.text, kickoff.images, { onPreflight: preflighted });
-	const sent = internal
-		? ackSend(runObservation.send(sessionId, "internal", send))
-		: sendUserMessage("prompt", sessionId, kickoff.text, clientKey, send);
-	sent.catch(() => {});
 	try {
-		await Promise.race([preflight, sent]);
+		void promptSession(chat.sessionId, kickoff.text, kickoff.images).catch((error) =>
+			log.warn("workspace kickoff failed", error),
+		);
 		return chat;
-	} catch (err) {
-		return { ...chat, kickoffError: err instanceof Error ? err.message : String(err) };
+	} catch (error) {
+		return { ...chat, kickoffError: error instanceof Error ? error.message : String(error) };
 	}
 };
 
@@ -438,64 +330,21 @@ function fireReviewPrompt(
 	comments: readonly ReviewComment[],
 	sessionId: string,
 	pkg: string,
-	capture: AdditionalAnalyticsCapture | null,
 	send: (sessionId: string, text: string) => Promise<void> = promptSession,
 ): void {
 	const ids = comments.map((c) => c.id);
-	void ackSend(runObservation.send(sessionId, "internal", () => send(sessionId, pkg)))
-		.then(
-			() => captureReviewCommentsSent(capture, comments),
-			(err) => {
-				rollbackSend(workspaceId, ids, sessionId);
-				notifyExtUi(
-					sessionId,
-					`Review send failed: ${err instanceof Error ? err.message : String(err)}`,
-					"error",
-				);
-			},
-		)
+	void ackSend(send(sessionId, pkg))
+		.catch((err) => {
+			rollbackSend(workspaceId, ids, sessionId);
+			notifyExtUi(
+				sessionId,
+				`Review send failed: ${err instanceof Error ? err.message : String(err)}`,
+				"error",
+			);
+		})
 		.catch(() => {
 			log.warn("review send rollback failed");
 		});
-}
-
-function fireTodoFixPrompt(
-	p: { workspaceId: string; sessionId: string; id: string },
-	pkg: string,
-	details: ReviewFixDetails,
-	previous: TodoReviewRecord | undefined,
-	requested: TodoReviewRecord,
-	findings: readonly ReviewComment[],
-	capture: AdditionalAnalyticsCapture | null,
-): void {
-	const findingIds = findings.map((c) => c.id);
-	void ackSend(
-		runObservation.send(p.sessionId, "internal", () =>
-			sendReviewFixToSession(p.sessionId, pkg, details),
-		),
-	)
-		.then(
-			() => {
-				captureAdditional(capture, {
-					name: "review_decided",
-					params: { actor: "user", verdict: "changes_requested" },
-				});
-				captureReviewCommentsSent(capture, findings);
-			},
-			(err) => {
-				rollbackTodoFix(p, previous, requested);
-				if (findingIds.length > 0) rollbackSend(p.workspaceId, findingIds, p.sessionId);
-				notifyExtUi(
-					p.sessionId,
-					`Fix request send failed: ${err instanceof Error ? err.message : String(err)}`,
-					"error",
-				);
-			},
-		)
-		.catch((err) => {
-			log.warn("todo fix rollback failed", err);
-		})
-		.finally(() => releaseItemFix(p.sessionId, p.id));
 }
 
 function reviewSendGroups(
@@ -516,7 +365,6 @@ async function sendToFileChat(
 	workspaceId: string,
 	comments: ReviewComment[],
 	opts: { model?: WireModel; thinkingLevel?: ThinkingLevel; sessionId?: string },
-	capture: AdditionalAnalyticsCapture | null,
 ): Promise<ReviewSendResult> {
 	const ids = comments.map((c) => c.id);
 	const pkg = await buildSendPackage(workspaceId, comments);
@@ -526,7 +374,7 @@ async function sendToFileChat(
 	const existing = opts.sessionId ?? (await fileReviewSession(workspaceId, path));
 	if (existing && (await ensureSessionAttached(existing, workspaceId, ws.worktreePath))) {
 		await markCommentsSent(workspaceId, ids, existing);
-		fireReviewPrompt(workspaceId, comments, existing, pkg, capture, followUpSession);
+		fireReviewPrompt(workspaceId, comments, existing, pkg);
 		return {
 			sessionId: existing,
 			model: null,
@@ -541,7 +389,7 @@ async function sendToFileChat(
 	}
 	const created = await startChatSession(ws, opts);
 	await markCommentsSent(workspaceId, ids, created.sessionId);
-	fireReviewPrompt(workspaceId, comments, created.sessionId, pkg, capture);
+	fireReviewPrompt(workspaceId, comments, created.sessionId, pkg);
 	return { ...created, reused: false };
 }
 
@@ -562,86 +410,18 @@ function repositoryWorkspace(workspaceId: string, action: string): Workspace {
 	return workspace;
 }
 
-function resourceCwd(workspaceId: string): string {
-	try {
-		return getWorkspace(workspaceId).worktreePath;
-	} catch {
-		throw new CodedError("RESOURCE_UNAVAILABLE", "Session resources unavailable");
-	}
-}
-
-function resourceParams<K extends string>(params: unknown, keys: K[]): Record<K, string> {
-	if (!params || typeof params !== "object" || Array.isArray(params))
-		throw new Error("Invalid resource ids");
-	if (Object.keys(params).some((key) => !keys.some((allowed) => allowed === key)))
-		throw new Error("Invalid resource ids");
-	const result = {} as Record<K, string>;
-	for (const key of keys) {
-		const value: unknown = Reflect.get(params, key);
-		const sessionId = key === "sessionId" || key === "parentSessionId" || key === "childSessionId";
-		if (typeof value !== "string" || !(sessionId ? isPiSessionId(value) : isHostResourceId(value)))
-			throw new Error("Invalid resource ids");
-		result[key] = value;
-	}
-	return result;
-}
-
-function resourceHistoryParams(params: unknown): WsParams<"session.resourceHistory"> {
-	if (!params || typeof params !== "object" || Array.isArray(params))
-		throw new Error("Invalid resource history request");
-	const { kind, before, limit, ...scope } = params as Record<string, unknown>;
-	const { workspaceId, sessionId } = resourceParams(scope, ["workspaceId", "sessionId"]);
-	if (kind !== "command" && kind !== "subagent") throw new Error("Invalid resource history kind");
-	if (limit !== undefined && (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1))
-		throw new Error("Invalid resource history limit");
-	const request: WsParams<"session.resourceHistory"> = {
-		workspaceId,
-		sessionId,
-		kind,
-		...(limit === undefined ? {} : { limit }),
-	};
-	if (before === undefined) return request;
-	if (!before || typeof before !== "object" || Array.isArray(before))
-		throw new Error("Invalid resource history cursor");
-	const { at, id, ...extra } = before as Record<string, unknown>;
-	if (
-		Object.keys(extra).length > 0 ||
-		typeof at !== "number" ||
-		!Number.isFinite(at) ||
-		typeof id !== "string" ||
-		!(kind === "subagent" ? isPiSessionId(id) : isHostResourceId(id))
-	)
-		throw new Error("Invalid resource history cursor");
-	return { ...request, before: { at, id } };
-}
-
-async function deliverToolResponse(
-	sessionId: string,
-	toolCallId: string,
-	response: unknown,
-): Promise<Ack> {
-	if (!hasSession(sessionId)) throw new Error(`Unknown session: ${sessionId}`);
-	if (response === undefined) throw new Error("A tool response must carry a value");
-	await ackSend(respondToTool(sessionId, toolCallId, response));
-	return { ok: true };
-}
-
-function invalidSurveyOnThrow<T>(build: () => T): T {
-	try {
-		return build();
-	} catch {
-		throw new CodedError("SURVEY_INVALID", "Invalid survey submission");
-	}
-}
-
 const handlers: WsHandlers = {
-	"project.open": (params) => observeSetupAction("project_open", () => openProject(params.path)),
+	"client.reportError": (params) => {
+		const report = clientErrorSchema.parse(params);
+		const type = CLIENT_ERROR_TYPES.has(report.type) ? report.type : "Error";
+		log.warn(`client ${report.kind} error (${type})`);
+		return { ok: true };
+	},
+	"project.open": (params) => (() => openProject(params.path))(),
 	"project.inspect": (params) => inspectProjectPath(params.path),
-	"project.init": (params) => observeSetupAction("project_init", () => initProject(params.path)),
+	"project.init": (params) => (() => initProject(params.path))(),
 	"project.create": (params) =>
-		observeSetupAction("project_create", () =>
-			createProject(params.parentPath, params.name, params.displayName),
-		),
+		(() => createProject(params.parentPath, params.name, params.displayName))(),
 	"project.cloneDestination": (params) => ({
 		path: inspectCloneDestination(params.parentPath, params.name),
 	}),
@@ -651,22 +431,23 @@ const handlers: WsHandlers = {
 		return { ok: true };
 	},
 	"project.list": (_params, ctx) =>
-		observeSetupRead(
-			() =>
-				listProjects().filter(
-					(project) => seesChats(ctx.protocolVersion) || !isChatsContainer(project),
-				),
-			(projects) => ({
-				project_present: projects.some((project) => !isChatsContainer(project)) ? "yes" : "no",
-			}),
-		),
+		(() =>
+			listProjects().filter(
+				(project) => seesChats(ctx.protocolVersion) || !isChatsContainer(project),
+			))(),
 	"project.hasSpecs": (params) => {
 		const { projectId } = params;
 		const project = listProjects().find((p) => p.id === projectId);
 		return { hasSpecs: project ? projectHasSpecs(project.path) : false };
 	},
-	"project.close": (params) => {
+	"project.close": async (params) => {
 		repositoryProject(params.id);
+		await Promise.all(
+			listWorkspaceRecords(params.id).map(async (workspace) => {
+				await cancelMcpProbesForWorkspace(workspace.id);
+				await closeWorkspaceMcpConnections(workspace.id);
+			}),
+		);
 		closeProject(params.id);
 		return { ok: true } as const;
 	},
@@ -674,49 +455,39 @@ const handlers: WsHandlers = {
 		repositoryProject(params.id);
 		return renameProject(params.id, params.name);
 	},
+
 	"project.setTrust": async (p) => {
-		const project = repositoryProject(p.id);
+		const input = z
+			.object({ id: z.string(), trusted: z.boolean(), resources: z.boolean().optional() })
+			.parse(p);
+		const project = repositoryProject(input.id);
 		const acknowledged =
-			p.trusted && project.trusted !== true
+			input.trusted && project.trusted !== true
 				? await listProjectAliasSkillNames(project.path)
 				: undefined;
-		const updated = setProjectTrust(p.id, p.trusted, acknowledged, {
-			resources: p.resources === true,
+		const updated = setProjectTrust(input.id, input.trusted, acknowledged, {
+			resources: input.resources === true,
 		});
-		const reloads = await applyPiResourceTrust(
-			listWorkspaceRecords(p.id).map((workspace) => workspace.id),
-		);
-		const failed = Object.values(reloads).filter((disposition) => disposition === "failed").length;
-		if (failed > 0) {
-			throw new Error(
-				`Trust was ${p.trusted ? "granted" : "revoked"}, but ${failed} open ${failed === 1 ? "chat" : "chats"} could not reload and still ${failed === 1 ? "runs" : "run"} with the previous trust — close or reload ${failed === 1 ? "it" : "them"}.`,
-			);
-		}
+		await reloadLiveSessions(listWorkspaceRecords(input.id).map((workspace) => workspace.id));
 		return updated;
 	},
-	"workspace.create": (p) =>
-		observeSetupAction("worktree_create", () => createWorkspace(p.projectId, p.name, p.baseRef)),
-	"workspace.startCreate": (p, ctx) => {
+	"workspace.create": (p) => (() => createWorkspace(p.projectId, p.name, p.baseRef))(),
+	"workspace.startCreate": (p) => {
 		const creation = startWorkspaceCreation(p.projectId, {
 			...(p.name ? { name: p.name } : {}),
 			...(p.baseRef ? { baseRef: p.baseRef } : {}),
 			...(p.kickoff ? { kickoff: p.kickoff } : {}),
 		});
-		creationClients.set(creation.id, ctx.clientKey);
-		void observeSetupAction("worktree_create", () => awaitWorkspaceCreation(creation.id)).catch(
-			() => {},
-		);
+		void (() => awaitWorkspaceCreation(creation.id))().catch(() => {});
 		return creation;
 	},
 	"workspace.listCreations": () => listWorkspaceCreations(),
-	"workspace.retryCreation": (p, ctx) => {
+	"workspace.retryCreation": (p) => {
 		const creation = retryWorkspaceCreation(p.id);
-		creationClients.set(creation.id, ctx.clientKey);
 		return creation;
 	},
 	"workspace.dismissCreation": async (p) => {
 		const dismissed = await dismissWorkspaceCreation(p.id);
-		creationClients.delete(p.id);
 		return dismissed;
 	},
 	"workspace.listExisting": (params) => {
@@ -724,9 +495,7 @@ const handlers: WsHandlers = {
 		return listExistingWorktrees(params.projectId);
 	},
 	"workspace.openExisting": async (p) => {
-		return provisionInitialTerminal(
-			await observeSetupAction("worktree_attach", () => openExistingWorktree(p.projectId, p.path)),
-		);
+		return provisionInitialTerminal(await (() => openExistingWorktree(p.projectId, p.path))());
 	},
 	"workspace.rename": (p) => {
 		return renameWorkspace(p.id, p.name).workspace;
@@ -814,8 +583,10 @@ const handlers: WsHandlers = {
 	"workspace.markRead": async (params) => ({
 		records: await markWorkspaceRead(sessionStateWorkspace(getWorkspace(params.id))),
 	}),
-	"workspace.remove": (params) => {
+	"workspace.remove": async (params) => {
 		const id = params.id;
+		await cancelMcpProbesForWorkspace(id);
+		await closeWorkspaceMcpConnections(id);
 		const ws = forgetWorkspace(id);
 		if (ws) {
 			evictSpecIndex(ws.id);
@@ -836,8 +607,6 @@ const handlers: WsHandlers = {
 		return { ok: true } as const;
 	},
 	"chat.inspect": (params) => inspectChat(params.workspaceId),
-	"chat.continue": (params) => startContinuation(params.workspaceId, params.projectId),
-	"chat.continuationStatus": (params) => continuationStatus(params.operationId),
 	"workspace.openIn": (p) => {
 		openEditor(p.editor, getWorkspace(p.id).worktreePath);
 		return { ok: true } as const;
@@ -884,7 +653,7 @@ const handlers: WsHandlers = {
 	},
 	"pr.open": async (p) => {
 		recordWorkspaceActivity(p.workspaceId);
-		const { branch, ...result } = await observePrAction(() => openPr(p), p.source ?? "other");
+		const { branch, ...result } = await (() => openPr(p))();
 		if (result.review) {
 			setWorkspaceReview(
 				p.workspaceId,
@@ -898,8 +667,7 @@ const handlers: WsHandlers = {
 		}
 		return result;
 	},
-	"dialog.selectDirectory": () =>
-		observeSetupAction("directory_pick", selectDirectory, directoryPickOutcome),
+	"dialog.selectDirectory": () => selectDirectory(),
 	"fs.readDir": async (p) => {
 		void ensureWatch(p.workspaceId);
 		const nodes = readDir(p.workspaceId, p.path);
@@ -926,130 +694,26 @@ const handlers: WsHandlers = {
 		return specGraph(p.workspaceId);
 	},
 	"todo.list": (p) => {
-		if (p.opened)
-			captureAdditional(additionalCapture(), {
-				name: "plan_opened",
-				params: { surface: p.opened },
-			});
 		return listTodos(p);
 	},
 	"todo.add": async (p) => {
-		const capture = additionalCapture();
 		const result = await addTodo(p);
-		captureAdditional(capture, {
-			name: "plan_item_added",
-			params: { surface: p.surface ?? "chat" },
-		});
+
 		return result;
 	},
 	"todo.update": async (p) => {
-		const observeCompletion = taskObservation.begin(p.workspaceId, p.sessionId);
 		const result = await updateTodo(p);
-		if (p.status === "done") await observeCompletion();
 		return result;
 	},
 	"todo.remove": (p) => removeTodo(p, () => isItemUnderActiveReview(p.sessionId, p.id)),
 	"todo.review": (params) => {
-		const capture = additionalCapture();
 		const result = approveTodoReview(params);
-		captureAdditional(capture, {
-			name: "review_decided",
-			params: { actor: "user", verdict: "approved" },
-		});
+
 		return result;
 	},
-	"todo.startReview": async (p) => {
-		const ws = getWorkspace(p.workspaceId);
-		if (!(await ensureSessionAttached(p.sessionId, p.workspaceId, ws.worktreePath)))
-			throw new Error("This plan's chat is no longer on disk — can't review.");
-		if (!startPlanReview(p.workspaceId, p.sessionId, p.id))
-			throw new Error("This step is already being reviewed.");
-		return { ok: true };
-	},
-	"todo.reviewAll": async (p) => {
-		const ws = getWorkspace(p.workspaceId);
-		if (!(await ensureSessionAttached(p.sessionId, p.workspaceId, ws.worktreePath)))
-			throw new Error("This plan's chat is no longer on disk — can't review.");
-		const plan = await listTodos({ workspaceId: p.workspaceId, sessionId: p.sessionId });
-		const items = [
-			...plan.todos,
-			...plan.groups.flatMap((g) => g.todos),
-			...(plan.adoptedCommits ?? []),
-		];
-		const targets = items.filter((it) => {
-			const r = it.review;
-			return (
-				r !== undefined &&
-				!(r.state === "reviewed" && (r.unreviewedShas?.length ?? 0) === 0) &&
-				r.reviewing !== true
-			);
-		});
-		const started = targets.filter((it) => startPlanReview(p.workspaceId, p.sessionId, it.id));
-		if (started.length === 0 && planReviewRunning(p.workspaceId, p.sessionId))
-			return { ok: true, total: 0, alreadyRunning: true };
-		return { ok: true, total: started.length };
-	},
+
 	"todo.generateSummary": (params) => generateTodoSummary(params),
-	"todo.requestFix": async (p) => {
-		const capture = additionalCapture();
-		if (!claimItemFix(p.sessionId, p.id))
-			throw new Error(`A fix request is already active for ${p.id}.`);
-		try {
-			const ws = getWorkspace(p.workspaceId);
-			if (!(await ensureSessionAttached(p.sessionId, p.workspaceId, ws.worktreePath))) {
-				throw new Error("This plan's chat is no longer on disk — can't send the fix request.");
-			}
-			const prepared = await withReviewLock(p.workspaceId, async () => {
-				const request = requestTodoFix(p);
-				try {
-					const reviewId = (await getReviewSnapshot(p.workspaceId)).review.id;
-					const findings = await itemFixFindings(p);
-					const details = buildReviewFixDetails({
-						itemId: p.id,
-						itemTitle: request.itemTitle,
-						reviewId,
-						note: p.feedback.trim(),
-						comments: findings,
-					});
-					if (findings.length === 0) return { ...request, fixText: request.pkg, details, findings };
-					const fixText = `${request.pkg}\n\n${await buildSendPackage(p.workspaceId, findings)}`;
-					await markCommentsSent(
-						p.workspaceId,
-						findings.map((c) => c.id),
-						p.sessionId,
-					);
-					return { ...request, fixText, details, findings };
-				} catch (error) {
-					rollbackTodoFix(p, request.previous, request.requested);
-					throw error;
-				}
-			});
-			try {
-				fireTodoFixPrompt(
-					p,
-					prepared.fixText,
-					prepared.details,
-					prepared.previous,
-					prepared.requested,
-					prepared.findings,
-					capture,
-				);
-			} catch (error) {
-				if (prepared.findings.length > 0)
-					rollbackSend(
-						p.workspaceId,
-						prepared.findings.map((c) => c.id),
-						p.sessionId,
-					);
-				rollbackTodoFix(p, prepared.previous, prepared.requested);
-				throw error;
-			}
-			return { ok: true } as const;
-		} catch (error) {
-			releaseItemFix(p.sessionId, p.id);
-			throw error;
-		}
-	},
+
 	"git.status": (p) => {
 		void ensureWatch(p.workspaceId);
 		return gitStatus(p.workspaceId, p.scope);
@@ -1094,6 +758,7 @@ const handlers: WsHandlers = {
 	"terminal.close": (p) => {
 		return closeTerminalTab(p.workspaceId, p.tabKey, p.force ?? false);
 	},
+
 	"skill.list": (params) => {
 		const { projectId } = params;
 		const project = listProjects().find((candidate) => candidate.id === projectId);
@@ -1101,6 +766,7 @@ const handlers: WsHandlers = {
 		return listSkillCommands(
 			project.path,
 			admissionContextFor(project, {}, getConfig().otherAgentSkills),
+			{ disabledExtensions: new Set(getConfig().disabledExtensions) },
 		);
 	},
 	"skills.state": (params) => {
@@ -1110,16 +776,11 @@ const handlers: WsHandlers = {
 		return listSkillCatalog(
 			ws.worktreePath,
 			admissionContextFor(project, ws.skillOverrides ?? {}, getConfig().otherAgentSkills),
+			{ disabledExtensions: new Set(getConfig().disabledExtensions) },
 		);
 	},
 	"extension.list": () => listExtensionCatalog(new Set(getConfig().disabledExtensions)),
-	"packages.list": (p) => packagesList(p),
-	"packages.install": (p) => packagesInstall(p),
-	"packages.remove": (p) => packagesRemove(p),
-	"packages.update": (p) => packagesUpdate(p),
-	"packages.checkUpdates": (p) => packagesCheckUpdates(p),
-	"packages.setResourceEnabled": (p) => packagesSetResourceEnabled(p),
-	"packages.reveal": (p) => packagesReveal(p),
+
 	"locales.list": () => readLocalLocales(),
 	"locales.reveal": () => revealDataFolder(localesDir()),
 	"themes.list": () => readUserThemes(),
@@ -1140,13 +801,16 @@ const handlers: WsHandlers = {
 		await removeSpeech();
 		return { ok: true };
 	},
+
 	"project.acknowledgeSkills": (p) => {
-		repositoryProject(p.id);
-		return acknowledgeProjectSkills(p.id, p.names);
+		const input = z.object({ id: z.string(), names: z.array(z.string()) }).parse(p);
+		repositoryProject(input.id);
+		return acknowledgeProjectSkills(input.id, input.names);
 	},
 	"project.setSkillEnabled": (p) => {
-		repositoryProject(p.id);
-		return setProjectSkillEnabled(p.id, p.name, p.enabled);
+		const input = z.object({ id: z.string(), name: z.string(), enabled: z.boolean() }).parse(p);
+		repositoryProject(input.id);
+		return setProjectSkillEnabled(input.id, input.name, input.enabled);
 	},
 	"project.aliasSkills": (params) => {
 		const { projectId } = params;
@@ -1161,8 +825,9 @@ const handlers: WsHandlers = {
 		return projectTrustSummary(project.path);
 	},
 	"project.setGroupEnabled": (p) => {
-		repositoryProject(p.id);
-		return setProjectGroupEnabled(p.id, p.group, p.enabled);
+		const input = z.object({ id: z.string(), group: z.string(), enabled: z.boolean() }).parse(p);
+		repositoryProject(input.id);
+		return setProjectGroupEnabled(input.id, input.group, input.enabled);
 	},
 	"project.skills": (params) => {
 		const { projectId } = params;
@@ -1171,20 +836,20 @@ const handlers: WsHandlers = {
 		return listSkillCatalog(
 			project.path,
 			admissionContextFor(project, {}, getConfig().otherAgentSkills),
+			{ disabledExtensions: new Set(getConfig().disabledExtensions) },
 		);
 	},
 	"workspace.setSkillOverride": (p) => {
-		return setWorkspaceSkillOverride(p.id, p.name, p.override);
+		const input = z
+			.object({ id: z.string(), name: z.string(), override: z.enum(["on", "off"]).nullable() })
+			.parse(p);
+		return setWorkspaceSkillOverride(input.id, input.name, input.override);
 	},
 	"workspace.setSubagentsOverride": (p) => {
-		const workspace = setWorkspaceSubagentsOverride(p.id, p.override);
-		refreshSubagentTools(p.id);
-		return workspace;
+		return setWorkspaceSubagentsOverride(p.id, p.override);
 	},
 	"workspace.setSubagentMaxConcurrent": (p) => {
-		const workspace = setWorkspaceSubagentMaxConcurrent(p.id, p.value);
-		refreshSubagentConcurrency(p.id);
-		return workspace;
+		return setWorkspaceSubagentMaxConcurrent(p.id, p.value);
 	},
 	"workspace.setDiffBase": (p) => {
 		return setWorkspaceDiffBase(p.id, p.ref);
@@ -1192,10 +857,7 @@ const handlers: WsHandlers = {
 	"workspace.watchReady": (p) => {
 		return ensureWatch(p.workspaceId, { prewarm: p.prewarm === true });
 	},
-	"session.reloadResources": async (params) => {
-		await reloadSessionResources(params.sessionId);
-		return { ok: true } as const;
-	},
+
 	"session.create": async (p) => {
 		const ws = getWorkspace(p.workspaceId);
 		if (isChatWorkspace(ws)) {
@@ -1204,47 +866,18 @@ const handlers: WsHandlers = {
 		}
 		return startChatSession(ws, p, { pick: true });
 	},
-	"session.prompt": (p, ctx) => {
-		return sendUserMessage("prompt", p.sessionId, p.text, ctx.clientKey, () =>
-			promptSession(p.sessionId, p.text, p.images),
-		);
+	"session.prompt": (p) => {
+		return sendUserMessage(() => promptSession(p.sessionId, p.text, p.images));
 	},
-	"session.steer": (p, ctx) => {
-		return sendUserMessage("steer", p.sessionId, p.text, ctx.clientKey, () =>
-			steerSession(p.sessionId, p.text, p.images),
-		);
-	},
-	"session.followUp": (p, ctx) => {
-		return sendUserMessage("follow_up", p.sessionId, p.text, ctx.clientKey, () =>
-			followUpSession(p.sessionId, p.text, p.images),
-		);
-	},
-	"session.clearQueue": (p) => {
-		const cleared = clearQueueSession(p.sessionId, p.requireTextOnly);
-		runObservation.clearQueue(p.sessionId);
-		return cleared;
-	},
-	"session.removeQueued": async (p) => {
-		const result = await removeQueuedSession(p.sessionId, p.kind, p.index);
-		if (result.queue.steering.length === 0 && result.queue.followUp.length === 0) {
-			runObservation.clearQueue(p.sessionId);
-		}
-		return result;
-	},
+
 	"session.abort": async (p) => {
-		const stopping = abortSession(p.sessionId, p.restoreQueue);
-		if (p.restoreQueue) runObservation.clearQueue(p.sessionId);
-		const restoredQueue = await stopping;
-		return {
-			ok: true,
-			...(restoredQueue ? { restoredQueue } : {}),
-		} as const;
+		await abortSession(p.sessionId);
+		return { ok: true };
 	},
 	"session.dispose": async (params) => {
 		const { sessionId } = params;
 		await removeSession(sessionId);
-		runObservation.forget(sessionId);
-		taskObservation.forget(sessionId);
+
 		return { ok: true } as const;
 	},
 	"session.delete": async (p) => {
@@ -1270,12 +903,9 @@ const handlers: WsHandlers = {
 		setSessionThinkingLevel(p.sessionId, p.level);
 		return { ok: true } as const;
 	},
-	"session.compact": async (p) => {
-		await compactSession(p.sessionId, p.instructions);
-		return { ok: true } as const;
-	},
+
 	"session.getStats": (params) => getSessionStats(params.sessionId),
-	"session.getCommands": (params) => getSessionCommands(params.sessionId),
+
 	"session.list": async (params, ctx) => {
 		const { workspaceId } = params;
 		if (!seesChats(ctx.protocolVersion) && isChatWorkspaceId(workspaceId)) {
@@ -1302,27 +932,7 @@ const handlers: WsHandlers = {
 	"session.acknowledgeCompletion": (p) => {
 		return acknowledgeCompletion(p.sessionId, p.completionId);
 	},
-	"session.nudge": async (p) => {
-		const workspace = getWorkspace(p.workspaceId);
-		const attachedWorkspaceId = getSessionWorkspaceId(p.sessionId);
-		if (
-			(attachedWorkspaceId !== undefined && attachedWorkspaceId !== p.workspaceId) ||
-			(attachedWorkspaceId === undefined &&
-				!(await ensureSessionAttached(p.sessionId, p.workspaceId, workspace.worktreePath)))
-		) {
-			throw new Error(`Unknown session: ${p.sessionId}`);
-		}
-		if (!isControlMessage(p.text)) throw new Error("Session nudge must be a control message");
-		const nudge = nudgeSession(p.sessionId, p.text, p.images);
-		if (nudge.disposition !== "needs_input") {
-			await ackSend(runObservation.send(p.sessionId, "internal", nudge.send));
-		}
-		return { disposition: nudge.disposition };
-	},
-	"session.activityList": () => [],
-	"session.getMessages": (p) => {
-		return getSessionMessages(p.sessionId, p.workspaceId, getWorkspace(p.workspaceId).worktreePath);
-	},
+
 	"mcp.list": (params) => mcpList(params),
 	"mcp.add": (params) => mcpAdd(params),
 	"mcp.update": (params) => mcpUpdate(params),
@@ -1338,141 +948,42 @@ const handlers: WsHandlers = {
 	"mcp.readOutput": (params) => mcpReadOutput(params),
 	"mcp.readLog": (params) => mcpReadLog(params),
 	"mcp.testConnection": (params, ctx) => mcpTestConnection(params, ctx.clientKey),
-	"session.resources": (params) => {
-		const p = resourceParams(params, ["workspaceId", "sessionId"]);
-		return getSessionResources(p.workspaceId, p.sessionId, resourceCwd(p.workspaceId));
+	"session.getMessages": (p) => {
+		return getSessionMessages(p.sessionId, p.workspaceId, getWorkspace(p.workspaceId).worktreePath);
 	},
-	"session.resourceHistory": (params) => {
-		const { workspaceId, sessionId, ...request } = resourceHistoryParams(params);
-		return getResourceHistoryPage(workspaceId, sessionId, resourceCwd(workspaceId), request);
-	},
-	"backgroundCommand.output": (params) => {
-		const p = resourceParams(params, ["workspaceId", "sessionId", "commandId"]);
-		return readBackgroundCommandOutput(
-			p.workspaceId,
-			p.sessionId,
-			p.commandId,
-			resourceCwd(p.workspaceId),
-		);
-	},
-	"backgroundCommand.stop": async (params) => {
-		const p = resourceParams(params, ["workspaceId", "sessionId", "commandId"]);
-		await stopBackgroundCommand(
-			p.workspaceId,
-			p.sessionId,
-			p.commandId,
-			resourceCwd(p.workspaceId),
-		);
-		return { ok: true } as const;
-	},
-	"subagent.stop": async (params) => {
-		const p = resourceParams(params, ["workspaceId", "parentSessionId", "childSessionId"]);
-		await stopSubagent(
-			p.workspaceId,
-			p.parentSessionId,
-			p.childSessionId,
-			resourceCwd(p.workspaceId),
-		);
-		return { ok: true } as const;
-	},
-	"subagent.stopAll": async (params) => {
-		const p = resourceParams(params, ["workspaceId", "parentSessionId"]);
-		const targeted = await stopAllSubagents(
-			p.workspaceId,
-			p.parentSessionId,
-			resourceCwd(p.workspaceId),
-		);
-		return { ok: true, targeted } as const;
-	},
-	"subagent.getTranscript": (p) => {
-		getWorkspace(p.workspaceId);
-		return readChildTranscript(p.workspaceId, p.parentSessionId, p.childSessionId);
-	},
+
 	"session.extUiReply": (params) => {
 		resolveExtUi(params.response);
 		return { ok: true } as const;
 	},
-	"session.respondToTool": (p) => deliverToolResponse(p.sessionId, p.toolCallId, p.response),
-	"session.answerQuestion": (p) => deliverToolResponse(p.sessionId, p.toolCallId, p.result),
-	"model.list": () =>
-		observeSetupRead(listAvailableModels, (models) => ({
-			model_available: models.length > 0 ? "yes" : "no",
-		})),
+
+	"model.list": () => listAvailableModels(),
 	"model.clampThinking": async (p) => {
 		return { level: await clampThinkingForModel({ provider: p.provider, id: p.id }, p.level) };
 	},
-	"model.refresh": (p) => {
-		return observeSetupRead(
-			() => refreshAvailableModels(p.force === true),
-			(result) => ({
-				model_available: result.models.length > 0 ? "yes" : result.complete ? "no" : "unknown",
-			}),
-		);
+	"model.refresh": () => {
+		return (() => refreshAvailableModels())();
 	},
-	"model.contextSettings": () => listModelContextSettings(),
-	"model.setContextWindow": (p) => {
-		return setModelContextWindow(p.target, p.contextWindow);
-	},
-	"cacheWarming.get": () => readCacheWarmingSetting(),
-	"cacheWarming.set": (p) => writeCacheWarmingMode(p.mode),
+
 	"customEndpoints.list": () => listCustomEndpoints(),
 	"customEndpoints.probe": (p) => probeCustomEndpoint(p),
 	"customEndpoints.save": (p) => saveCustomEndpoint(p),
 	"customEndpoints.remove": (p) => removeCustomEndpoint(p.id),
-	"model.default": () =>
-		observeSetupRead(
-			() => resolveNewChatModel({}),
-			(result) => (result.model ? { model_available: "yes" } : {}),
-		),
-	"provider.status": () =>
-		observeSetupRead(getProviderStatus, (report) => ({
-			provider_available: providerAvailability(report),
-		})),
-	"provider.detect": async () => ({ accounts: await detectAccounts() }),
-	"provider.loginStart": (p) => {
-		const type = p.type ?? "oauth";
-		const capture = additionalCapture();
-		const handle = startLogin(p.providerId, type, dropLogin);
-		recordLoginStart(handle.loginId, type, capture);
-		return handle;
-	},
-	"provider.loginReply": (reply, ctx) => {
-		if (isMcpLoginId(reply.loginId)) replyMcpProbe(reply.loginId, ctx.clientKey, reply.value);
-		else resolveLogin(reply);
+	"model.default": () => (() => resolveNewChatModel({}))(),
+	"provider.loginReply": (p, ctx) => {
+		const input = z.object({ loginId: z.string(), value: z.string() }).parse(p);
+		if (!isMcpLoginId(input.loginId)) throw new Error("Unknown MCP login");
+		replyMcpProbe(input.loginId, ctx.clientKey, input.value);
 		return { ok: true } as const;
 	},
-	"provider.loginCancel": (params, ctx) => {
-		const { loginId } = params;
-		if (isMcpLoginId(loginId)) {
-			cancelMcpProbe(loginId, ctx.clientKey);
-			return { ok: true } as const;
-		}
-		dropLogin(loginId);
-		cancelLogin(loginId);
+	"provider.loginCancel": (p, ctx) => {
+		const input = z.object({ loginId: z.string() }).parse(p);
+		if (!isMcpLoginId(input.loginId)) throw new Error("Unknown MCP login");
+		cancelMcpProbe(input.loginId, ctx.clientKey);
 		return { ok: true } as const;
 	},
-	"provider.logout": async (params) => {
-		await logoutProvider(params.providerId);
-		return { ok: true } as const;
-	},
-	"provider.disableWarning": async () => {
-		await disableAnthropicExtraUsageWarning();
-		return { ok: true } as const;
-	},
-	"provider.jbcentralConnect": () =>
-		observeSetupAction("provider_connect", connectJbcentral, centralConnectOutcome),
-	"provider.jbcentralDisconnect": () => disconnectJbcentral(),
-	"provider.jbcentralStartProxy": () => startProxyJbcentral(),
-	"provider.jbcentralLogin": () => jbcentralLogin(),
-	"provider.jbcentralUpdate": () => updateJbcentral(),
-	"provider.jbcentralQuota": (params) => {
-		const config = getConfig();
-		if (!config.jbcentralQuotaEnabled) return { state: "hidden" } as const;
-		return getJbcentralQuota({
-			maxAgeMs: config.jbcentralQuotaRefreshSeconds * 1_000,
-			force: params.force === true,
-		});
-	},
+	"provider.status": () => getProviderStatus(),
+
 	"host.update": (_params, ctx) => {
 		if (!ctx.runHostUpdate) throw new Error("Host update is unavailable.");
 		ctx.runHostUpdate();
@@ -1484,50 +995,7 @@ const handlers: WsHandlers = {
 	},
 	"environment.get": () => hostEnvironmentStatus(),
 	"environment.update": (params) => updateHostEnvironment(params.environment),
-	"feedback.respond": (params) => {
-		respondToInvitation(params.action);
-		return { ok: true } as const;
-	},
-	"feedback.survey": async (params) => {
-		await refreshInAppSurvey();
-		const survey = currentInAppSurvey();
-		if (!survey || surveyIsCompleted(survey.id, survey.iteration)) return { survey: null };
-		const language =
-			typeof params?.language === "string" && params.language.length <= 35
-				? params.language
-				: undefined;
-		return { survey: localizeSurvey(survey, language) };
-	},
-	"feedback.survey.submit": async (params) => {
-		const submission = invalidSurveyOnThrow(() => parseSurveySubmission(params));
-		const survey = await confirmInAppSurvey().catch(() => {
-			throw new CodedError("SURVEY_NOT_SENT", "Survey could not be confirmed");
-		});
-		if (!survey || surveyIsCompleted(survey.id, survey.iteration)) {
-			throw new CodedError("SURVEY_UNAVAILABLE", "Survey is unavailable");
-		}
-		if (
-			survey.id !== submission.surveyId ||
-			survey.iteration !== submission.iteration ||
-			localizeSurvey(survey, submission.language).language !== submission.language
-		) {
-			throw new CodedError("SURVEY_CHANGED", "Survey changed");
-		}
-		const properties = invalidSurveyOnThrow(() => surveyResponse(survey, submission));
-		if (!captureSurveyResponse(properties)) {
-			throw new CodedError("SURVEY_NOT_SENT", "Survey answers were not sent");
-		}
-		try {
-			completeSurvey(survey.id, survey.iteration);
-		} catch (error) {
-			log.warn("survey completion was not persisted", error);
-		}
-		return { ok: true } as const;
-	},
-	"client.reportError": (params) => {
-		reportClientError(typeof params === "object" && params !== null ? params : {});
-		return { ok: true } as const;
-	},
+
 	"history.search": (p, ctx) => {
 		const { filter, labels } = buildHistoryScope(
 			p.scope,
@@ -1553,23 +1021,16 @@ const handlers: WsHandlers = {
 		return markClientStale(await getReviewSnapshot(p.workspaceId), p.workspaceId);
 	},
 	"review.commentAdd": (p) => {
-		const capture = additionalCapture();
 		return withReviewLock(p.workspaceId, async () => {
 			const comment = await addComment(p);
-			captureReviewCommentAdded(capture, comment);
+
 			return comment;
 		});
 	},
 	"review.commentUpdate": (p) => {
-		const capture = additionalCapture();
 		return withReviewLock(p.workspaceId, async () => {
-			const terminal = p.status === "resolved" || p.status === "dismissed" ? p.status : null;
-			const before = terminal
-				? (await getReviewSnapshot(p.workspaceId)).comments.find((c) => c.id === p.id)?.status
-				: undefined;
 			const updated = await updateComment(p);
-			if (terminal && before !== terminal && updated.status === terminal)
-				captureReviewCommentResolved(capture, "user", terminal);
+
 			// Resolving/dismissing the item's last open finding must clear its changes_requested verdict
 			// too (no-op while findings remain), the same invariant as commentDelete.
 			if (updated.origin?.todoId)
@@ -1611,18 +1072,16 @@ const handlers: WsHandlers = {
 		});
 	},
 	"review.sendComment": (p) => {
-		const capture = additionalCapture();
 		return withReviewLock(p.workspaceId, async () =>
-			sendToFileChat(p.workspaceId, await sendableComments(p.workspaceId, [p.id]), p, capture),
+			sendToFileChat(p.workspaceId, await sendableComments(p.workspaceId, [p.id]), p),
 		);
 	},
 	"review.sendBatch": (p) => {
-		const capture = additionalCapture();
 		return withReviewLock(p.workspaceId, async () => {
 			const comments = await sendableComments(p.workspaceId, p.commentIds);
 			const sessions: ReviewSendResult[] = [];
 			for (const group of reviewSendGroups(comments, p.sessionId)) {
-				sessions.push(await sendToFileChat(p.workspaceId, group, p, capture));
+				sessions.push(await sendToFileChat(p.workspaceId, group, p));
 			}
 			if (sessions.length === 0) throw new Error("No draft comments to send.");
 			return { sessions };
@@ -1650,19 +1109,13 @@ function isWsMethod(method: string): method is WsMethodName {
 }
 
 function dispatch<M extends WsMethodName>(method: M, params: WsParams<M>, ctx: RequestContext) {
-	return handlers[method](params, ctx);
+	const handler = handlers[method];
+	if (!handler) throw new Error(`Unavailable method: ${method}`);
+	return handler(params, ctx);
 }
 
 export function requestMethodDiagnostic(method: string): string {
 	return isWsMethod(method) ? method : "unknown method";
-}
-
-export function requestErrorReport(method: string): ErrorReport {
-	return {
-		source: "request",
-		handled: true,
-		...(isWsMethod(method) ? { requestMethod: method } : {}),
-	};
 }
 
 function supportsBranchStatus(protocolVersion: number | undefined): boolean {

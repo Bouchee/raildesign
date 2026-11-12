@@ -4,7 +4,7 @@ export type { SkillDecision };
 
 export interface SkillAdmissionContext {
 	trusted: boolean;
-	piResourceTrusted: boolean;
+	resourceTrusted: boolean;
 	acknowledged: readonly string[];
 	disabled: readonly string[];
 	disabledGroups: readonly string[];
@@ -18,7 +18,7 @@ export function admissionContextFor(
 		| Pick<
 				Project,
 				| "trusted"
-				| "piResourceTrust"
+				| "resourceTrust"
 				| "acknowledgedSkills"
 				| "disabledSkills"
 				| "disabledGroups"
@@ -30,7 +30,7 @@ export function admissionContextFor(
 ): SkillAdmissionContext {
 	return {
 		trusted: project?.trusted === true,
-		piResourceTrusted: project?.piResourceTrust === "granted",
+		resourceTrusted: project?.resourceTrust === "granted",
 		acknowledged: project?.acknowledgedSkills ?? [],
 		disabled: project?.disabledSkills ?? [],
 		disabledGroups: project?.disabledGroups ?? [],

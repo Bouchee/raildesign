@@ -303,7 +303,7 @@ test("no baseline (bundled done, pending→done direct): no artifacts, no commit
 	}
 });
 
-test("app-state paths (.thinkrail/…) are never attributed — the todos JSON is not a produced change", async () => {
+test("app-state paths (.raildesign/…) are never attributed — the todos JSON is not a produced change", async () => {
 	const { store, root } = tempStore();
 	try {
 		const todo = store.add({ title: "step" });
@@ -312,7 +312,7 @@ test("app-state paths (.thinkrail/…) are never attributed — the todos JSON i
 		store.update(todo.id, { status: "done" });
 		await reconcileChangeArtifacts(store, root, SESSION, async () => [
 			STORE_PATH,
-			".thinkrail",
+			".raildesign",
 			"src/impl.ts",
 		]);
 		expect(store.get(todo.id)?.artifacts).toEqual([{ kind: "change", path: "src/impl.ts" }]);
@@ -1049,7 +1049,7 @@ test("unattributedChanges keeps only what no item claims — change paths and ap
 		const rows: GitFileChange[] = [
 			{ path: "claimed.ts", status: "modified" },
 			{ path: "loose.ts", status: "modified" },
-			{ path: ".thinkrail/context/todos/x.json", status: "modified" },
+			{ path: ".raildesign/context/todos/x.json", status: "modified" },
 		];
 		expect(unattributedChanges(rows, store.read(), readBaselines(root, SESSION))).toEqual([
 			{ path: "loose.ts", status: "modified" },

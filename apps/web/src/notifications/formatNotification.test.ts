@@ -46,10 +46,10 @@ describe("formatNotification", () => {
 		expect(formatNotification([])).toBeNull();
 	});
 
-	test("single → ThinkRail title, worktree subtitle, reason body, targeting the chat", () => {
+	test("single → RailDesign title, worktree subtitle, reason body, targeting the chat", () => {
 		const spec = formatNotification([event()]);
 		expect(spec).toEqual({
-			title: "ThinkRail",
+			title: "RailDesign",
 			subtitle: "feature-branch",
 			body: "Waiting for your input",
 			tag: "attention:s1",
@@ -59,7 +59,7 @@ describe("formatNotification", () => {
 
 	test("single with a blank name drops the subtitle and keeps the reason", () => {
 		const spec = formatNotification([event({ worktreeName: "   " })]);
-		expect(spec?.title).toBe("ThinkRail");
+		expect(spec?.title).toBe("RailDesign");
 		expect(spec?.subtitle).toBeUndefined();
 		expect(spec?.body).toBe("Waiting for your input");
 	});
@@ -71,9 +71,9 @@ describe("formatNotification", () => {
 			event({ sessionId: "s3" }),
 		]);
 		expect(spec).toEqual({
-			title: "ThinkRail",
+			title: "RailDesign",
 			body: "3 worktrees need your attention",
-			tag: "thinkrail-attention",
+			tag: "raildesign-attention",
 			target: { kind: "search" },
 		});
 	});
@@ -94,7 +94,7 @@ describe("formatNotification", () => {
 	test("exactly two sessions aggregate with plural wording and a fixed tag", () => {
 		const spec = formatNotification([event({ sessionId: "s1" }), event({ sessionId: "s2" })]);
 		expect(spec?.body).toBe("2 worktrees need your attention");
-		expect(spec?.tag).toBe("thinkrail-attention");
+		expect(spec?.tag).toBe("raildesign-attention");
 		expect(spec?.target).toEqual({ kind: "search" });
 	});
 

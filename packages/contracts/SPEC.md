@@ -9,6 +9,10 @@ references: [central-integration, module-pi-background-commands]
 tags: [wire]
 ---
 
+## RailDesign stage 1
+
+The application owns message, tool, usage and event types in `sessionProtocol.ts`. `session.event` carries `{sessionId,runId,seq,event}` with increasing per-session sequence numbers. Initial transcript hydration buffers events and applies only events above `SessionSummary.eventSeq`. Stable IDs join streamed and final messages. SDK details, routing credentials and checkpoints stay on the host. Basic confirmations carry session, run, interaction and revision ownership, and remain visible on reply failure. Stage 1 exposes read/search/command/edit, approval and Stop; continuous-input, compaction and advanced execution controls wait for their respective implementation stages. RailDesign does not offer upstream analytics consent, surveys, Central or old Pi configuration folders.
+
 ## Responsibility
 
 The browser↔host wire spine: the single source of truth for the protocol. Types plus a small
@@ -160,56 +164,9 @@ the palette ranks with — kept here so host-side search can rank with the same 
 
 ## Contents
 
-- **piProtocol.ts** — `import type` re-exports from the pi package roots (type-only → erased at build):
-  - `@earendil-works/pi-ai`: `Model`, `Message`, `UserMessage`, `AssistantMessage`,
-    `ToolResultMessage`, `TextContent`, `ThinkingContent`, `ImageContent`, `ToolCall`,
-    `AssistantMessageEvent`, `Usage`, `StopReason`;
-  - **`WireModel`** = `Pick<Model<string>, "id"|"name"|"provider"|"contextWindow"|"reasoning">` **+ the one
-    computed field `thinkingLevels`** (pi-ai `getSupportedThinkingLevels`, mapped host-side in `toWireModel`;
-    client→host params carry it inert) **+ three optional picker-metadata projections** — `cost`
-    (`{input, output}` list prices per Mtok, a subset of pi's `ModelCost`), `input` (accepted modalities) and
-    **`auth`** (`WireModelAuth`: the provider's `ProviderAuthKind` plus pi's `detail` label — the same
-    vocabulary `provider.status` reports, projected per model so a picker can say "plan" instead of a
-    per-token price without the heavyweight status call) — optional because a host older than
-    **`MODEL_PICKER_PROTOCOL_VERSION`** (v77) omits them; the shape a model takes **on the wire**
-    (`model.list`/`model.refresh`/`model.default`, the `session.create` result + params,
-    `session.setModel` params, `SessionSummary.model`). An **allowlist** of exactly what the UI renders, *not*
-    an `Omit`: extension/provider `Model.baseUrl` and `headers` can carry routing credentials, and an allowlist
-    **fails closed** — a future `Model` field (secret
-    or not) is excluded by default. The host re-resolves the real `Model` from `{provider,id}` — so a client
-    can neither read the secret nor inject a `baseUrl` for the agent to call (see the `agent` module SPEC).
-    **`sameModel(a, b)`** is the one identity test — `{provider, id}` — every ring uses; no other field is
-    identity, since name, context, prices and levels are catalog snapshots that may lag a refresh;
-  - `@earendil-works/pi-agent-core`: `AgentEvent`, `AgentMessage`, `ThinkingLevel` (the
-    `off`-inclusive one);
-  - the local render union **`PiEvent`** — the real superset `AgentSessionEvent` lives in the Node-only
-    `pi-coding-agent`, so it's **mirrored** here (the `agent_end.willRetry` + `agent_settled` /
-    `queue_update` / `compaction_*` / `auto_retry_*` / `summarization_retry_*` /
-    `session_info_changed` / `thinking_level_changed` / host-projected `entry_appended { entryType }`
-    members, plus `bash_execution_update` — mirrored
-    for union fidelity only; the host never calls `executeBash`, so the UI never receives it).
-    Every message an event carries (`message_*`, `turn_end`, `agent_end.messages`) is typed as
-    **`WireAgentMessage`** — `TranscriptMessage` plus the `WireBranchSummary` / `WireBashExecution`
-    mirrors — never pi-agent-core's `AgentMessage`. That type is `Message` plus whatever
-    `CustomAgentMessages` augmentation the compilation happens to include: pi-coding-agent adds the
-    custom roles only in Node builds, and pi-agent-core itself no longer adds them, so the same
-    `PiEvent` would otherwise mean two different unions on the server and in the browser (where the
-    custom-message guards narrowed to `never`).
-    `agent_settled` is a host projection carrying the final attempt's reported terminal metadata
-    (`stopReason` + optional `errorMessage`): `agent_end.willRetry` covers provider auto-retry only and
-    is not an automatic-work terminal when compaction or a queued continuation follows.
-    `compaction_end.result` is typed as **`CompactionEndResult`** — an allowlist mirror of pi's
-    Node-only `CompactionResult` carrying exactly what the compaction notice renders
-    (`tokensBefore` + optional `estimatedTokensAfter`); the host constructs this projection rather than
-    casting pi's richer object wholesale, and wire data remains untrusted, so the reducer guards the field
-    shapes rather than assuming them;
-  - **`SessionEventPayload`** (`{ sessionId, event: PiEvent }`) — the `pi.event` push frame.
-  - the cheap-win mirrors (declared in the Node-only `pi-coding-agent`): **`SessionStats`** + **`ContextUsage`**
-    (tokens/cost/context bar — display only) and **`SlashCommandInfo`** + **`SlashCommandSourceInfo`** (the
-    command autocomplete rows, returned by live `session.getCommands`, skill-only pre-session `skill.list`,
-    and mapped prompt-template listings), and **`SkillCatalogEntry`** + **`SkillDecision`** (`load`/`untrusted`/`pending-ack`/
-    `disabled`) — the workspace Skills manager's `skills.state` rows; the additive optional `manualOnly`
-    marks pi's `disable-model-invocation` skills, which pi never lists in the prompt (an older host omits it).
+- **sessionProtocol.ts** — application-owned content, usage, model-picker metadata, transcript, session-state and event types. `WireModel` allowlists display fields and `sameModel` compares `{provider,id}`. The host assigns stable core message/tool IDs and emits only application projections. `SessionStats.cost` is `null` when billing is not verified; unknown context limits are omitted from the UI.
+  - `SessionEventPayload` carries `{sessionId,runId,seq,event}` on `session.event`; `SessionSummary.eventSeq` is the snapshot watermark.
+  - `SessionStats`, `ContextUsage`, `SlashCommandInfo`, `SlashCommandSourceInfo`, `SkillCatalogEntry` and `SkillDecision` describe application display and command data.
   - **`ExtensionCatalogEntry`** (`{ name, title, description?, enabled, tools, hasChildExtensions, settings? }`) — one
     host-registry ThinkRail extension as `extension.list` reports it; `name` is the identity the
     `AppConfig.disabledExtensions` list keys on, `tools` the names its parent factories register, and
@@ -268,7 +225,7 @@ the palette ranks with — kept here so host-side search can rank with the same 
     it into the session, and an older host simply omits it (the client shows its generic label).
   - the **extension-UI frames** **`ExtUiRequest`** / **`ExtUiResponse`** — our wire shape for pi's in-process
     `uiContext` calls (`select`/`confirm`/`input`/`editor` round-trip; `notify`/`setStatus`/`setWidget`/
-    `setTitle`/`dismiss` are fire-and-forget), carried on the `pi.extensionUi` channel. One member is
+    `setTitle`/`dismiss` are fire-and-forget), carried on the `session.interaction` channel. One member is
     host-authored, not pi's: `notice` (v99) carries a closed `ProviderWarning` code for a session, such
     as the Anthropic extra-usage warning. It has no text, so the client localizes it, and older clients
     ignore the unknown kind. A round-trip
@@ -414,41 +371,7 @@ the palette ranks with — kept here so host-side search can rank with the same 
   and the optional **`Workspace.diffBase`** is the *review
   target* (`workspace.setDiffBase`); every read resolves `diffBase ?? baseBranch` **server-side, in one
   place** — collapsing them into one field would make a re-pointed target lie about where the branch came
-  from; **`ProviderStatus`/`ProviderStatusReport`**
-  — the auth-provider status rows the Welcome strip renders (per-provider `configured` + auth `kind`:
-  oauth / api-key / env / central / other — never credential values; `central` marks a built-in provider
-  whose registration the JetBrains AI (Central) extension replaced, derived from registration identity
-  alone, never from Central's configuration; plus `canOAuth`/`canApiKey`/`canLogout`,
-  which gate the strip's in-app Sign-in / Sign-out affordances — `canLogout` is true only for a removable
-  auth.json credential, false for env / runtime / models.json auth the host can't unset; optional
-  `warnings`, v99: pi's global `warnings.*` switches keyed by the closed **`ProviderWarning`** code
-  (`anthropicExtraUsage`), absent from older hosts, where the client treats them as on); the **in-app login wire** — **`LoginFrame`** (the streamed
-  flow updates: `authUrl` / `deviceCode` / `select` / `prompt` / `progress` / `success` / `error`, which
-  **accumulate** client-side, never a credential value), **`LoginPush`** (the `provider.login` frame,
-  `{ loginId, providerId, frame }`) and **`LoginReply`** (`{ loginId, value }` — the browser's answer to a
-  `select`/`prompt`); the JetBrains AI wire (protocol v43) — **`JbcentralStatus`**, nested on
-  `ProviderStatusReport`, is the closed host-authored lifecycle: `absent`, `outdated`, `supported`,
-  `configured`, `malformed-version`, `probe-failed`, `configuring`, or `load-failed`. Auth rides as a
-  **`signedOut` flag on `supported`/`configured`**, and configured status also carries the closed
-  **`proxyStopped`** observation; neither is a state of its own because credentials, proxy process health,
-  and configuration are independent axes. Both flags are *positively observed negative
-  facts* — unavailable or unreadable probes report `false`, so a client never renders a recovery demand the host did not
-  substantiate. No proxy port, PID, URL, status text, or diagnostics cross the wire. Only
-  parseable safe versions, closed probe/failure reasons, and the current action appear where relevant.
-  `configuring` covers both a reviewed CLI action and the coalesced candidate rebuild for the newest watched
-  artifact state; `configured` means the **current runtime for new work** applied that artifact.
-  `load-failed.configured` says whether the latest observed global state requested Central, so the client can
-  offer the closed Retry/Disconnect actions without receiving an artifact path. Historical live sessions may
-  retain an older runtime and are deliberately outside this status. **`JbcentralInstall`**
-  carries the host's per-OS `{platform,shell,command}` official install plan. **`JbcentralActionResult`** is
-  the closed `applied` / `failed` union; failure reasons distinguish installation, version probe/support,
-  Central action, artifact postcondition, and closed runtime-load failure without carrying messages. There
-  are no pending, restart, blocked-session, recovery, migration, compensation, or reattachment outcomes. Raw
-  stdout/stderr, generated extension content or paths, proxy URLs/secrets, diagnostics, affected-session ids,
-  and raw PI models are structurally absent; server and web map codes to their own generic copy). Protocol
-  v59 adds **`JbcentralQuotaSnapshot`**, the separate closed quota read: `hidden`, `available`, `stale`, or
-  `unavailable`; only available/stale carry finite recurring `remaining` / `total` numbers and an observation
-  timestamp. No account/plan/used/top-up/refill field or raw failure text exists;
+  from; **`ProviderStatus`/`ProviderStatusReport`** describe configured SDK endpoints without credential values. The report contains only `providers`. Generic `LoginFrame`/`LoginPush`/`LoginReply` types remain for separately owned interaction flows; provider OAuth and Central service methods are removed.
   the **theme/config selection** — **`ThemeId`** is an open string on the wire, because the host persists
   opaque selections while the independently shipped web client owns the available manifest catalog;
   **`ThemeMode`** is the closed `"fixed" | "system"` behavior and **`SystemThemePair`** carries one opaque
@@ -476,11 +399,11 @@ the palette ranks with — kept here so host-side search can rank with the same 
   a bare ack, and its detached failure arrives on the additive `review.failed` push (`ReviewFailedPayload`)
   since the review has no chat to carry it. An older client reads the dropped fields as absent, so the pin
   is what lets a client tell "this host has no reviewer chat" from "this host is older" rather than inferring it;
-  **`AppConfig`** (`{ theme, themeMode, systemThemePair?, analyticsEnabled, analyticsConsentConfirmed, terminalReplayKb,
+  **`AppConfig`** (`{ theme, themeMode, systemThemePair?, terminalReplayKb,
   terminalWindowsShell, composerGrowthLimit, questionPanelHeight, chatLineWidth, fileLineWidth, chatLineWidthBounded,
   fileLineWidthBounded, voiceInputEnabled, customLayoutPresets, defaultModel?, defaultEffort?, reviewModel?, reviewEffort?,
   favoriteModels, recentModels, reviewAutoFix, agentReviewEnabled, subagentsEnabled, subagentMaxConcurrent,
-  jbcentralQuotaEnabled, jbcentralQuotaRefreshSeconds, disabledExtensions, extensionSettings, otherAgentSkills,
+  disabledExtensions, extensionSettings, otherAgentSkills,
   onboardingDismissed, interfaceFont, codeFont, codeFontSize, codeLigatures, fontWeightOffset }` — an extensible
   bag; the five font fields join at v102 and normalize together through `normalizeFontSettings` (host load, web
   store, fonts runtime); the line-width fields join the wire at protocol v61, `terminalWindowsShell` at v62, and
@@ -527,24 +450,15 @@ the palette ranks with — kept here so host-side search can rank with the same 
   an `ExtensionCatalogEntry` declares — an absent key means the descriptor's `default`, and
   `settings.update { extensionSettings }` merges per key; `customLayoutPresets` is the bounded
   resource-free catalog and is the **only** layout value synchronized by the host; current/default preset
-  and group limits are web-local); `analyticsEnabled` is the additional-data preference and host gate,
-  default `false`, while `analyticsConsentConfirmed` defaults `false` and records completion of the initial
-  choice. `ANALYTICS_CONSENT_PROTOCOL_VERSION` pins this v65 contract so newer clients do not show a consent
-  flow against older hosts that cannot persist it. The initial dialog first writes the enabled preference
-  alone, then completion and the current preference together; Privacy Settings writes both together. An older
-  client's preference-only write cannot create the new confirmation. The installation id remains entirely
-  server-side; basic events are not controlled by either flag, see [[submodule-server-analytics]]) carries
-  it with the **`DEFAULT_CONFIG`** fallback (persisted host-side
+  and group limits are web-local). The host carries it with the **`DEFAULT_CONFIG`** fallback (persisted host-side
   as `config.json`, delivered in
   `server.welcome`, mutated via `settings.update`). Every new user chat receives the resolved model and
   effort explicitly, so the session agrees with `model.default`; explicit request fields win individually,
   while an effort-only request uses the configured or fallback model. Plan-review subagents keep their own model policy.
-  **`SurveyInvitationResponse`** is the closed `"postpone" | "never"` action accepted from the automatic
-  survey invitation. No usage count, eligibility, dismissal state, or client identity crosses the wire.
   Contracts deliberately exports no theme catalog enum/list/labels: a future manifest can mint an id
   unknown when the host was built, and a client missing it resolves a same-appearance bundled fallback;
   **`SpecGraphNode`/`SpecGraphSnapshot`** — the
-  Specs-viewer read DTOs, **mirrored** (like `PiEvent`), never imported from `pi-spec-graph` — the wire
+  Specs-viewer read DTOs, **projected**, never imported from `pi-spec-graph` — the wire
   carries only what the panel renders (`type`/`status` stay `string`: tolerate whatever is on disk);
   **`TodoItem`/`TodoGroupItem`/`TodoPlan`/`TodoArtifact`** + the **`TodoStatus`/`TodoOrigin`/
   `TodoArtifactKind`** unions — the in-chat plan
@@ -774,21 +688,7 @@ the palette ranks with — kept here so host-side search can rank with the same 
   **`model.clampThinking`** (pi's
   `clampThinkingLevel` for a `{model, level}` pair — the pre-session picker's effort adjustment, so no
   client re-derives pi's policy) / **`provider.status`**
-(the auth-provider status report; every read revalidates host-side) / **`provider.detect`** (v94: the
-  **`DetectedAccount`** list — accounts other local tools are already signed in to, each naming the pi
-  provider whose own sign-in it suggests plus an optional plan label; a hint only, never a credential) /
-  the **`provider.*` in-app login**
-  (**`loginStart`** — mints a `loginId` and runs pi's login flow **detached** (`type` `"oauth"` |
-  `"api_key"`, issue #97 — both auth routes ride one channel; a flow can take minutes and must
-  not sit on the request nor block the WS pump) / **`loginReply`** — answers a live `select`/`prompt`,
-  correlated by `loginId` / **`loginCancel`** / **`logout`** / **`disableWarning`** (v99,
-  **`PROVIDER_WARNINGS_PROTOCOL_VERSION`**: `{ warning: ProviderWarning }` turns off pi's global
-  `warnings.<warning>`, the chat notice's "Don't warn again"; no client-side way to turn it back on) /
-  the **JetBrains AI** set **`jbcentralConnect`** / **`jbcentralDisconnect`** /
-  **`jbcentralStartProxy`** / **`jbcentralUpdate`** / **`jbcentralLogin`** (native global Central actions
-  returning `JbcentralActionResult`; none accepts an executable, artifact path, output, URL, or secret from
-  the client) / **`jbcentralQuota`** (v59; optional `force` bypasses completed-cache age but still joins an
-  in-flight read; disabled/unhealthy returns `hidden` without invoking quota)) /
+(configured SDK endpoint metadata; no key values) /
   the **background-creation set** (v104, **`WORKSPACE_CREATION_PROTOCOL_VERSION`**; a client facing an
   older host falls back to `workspace.create`): **`workspace.startCreate`** (`{ projectId, name?, baseRef?,
   kickoff? }` → a **`WorkspaceCreation`** as soon as the host has reserved its branch and path — the
@@ -895,28 +795,9 @@ the palette ranks with — kept here so host-side search can rank with the same 
   `systemThemePair` are complete replacements; entering system mode requires a complete existing-or-incoming
   pair. A legacy `{ theme }` mutation without explicit `themeMode` means a fixed-theme selection and exits
   system mode; returns the merged config) /
-  **`environment.get`** / **`environment.update`** (`HOST_ENVIRONMENT_PROTOCOL_VERSION`, v91; the stored host environment — optional pi config folder
-  plus ordered `{ name, value }` variables — outside `AppConfig`, never broadcast or in `server.welcome`
-  because values may be secrets; `get` → `HostEnvironmentStatus` with `restartRequired`, `launchOverridden`
-  names and the `effectiveAgentDir`; `update` replaces the whole record and returns
-  `{ ok: false, issues }` per field/row index instead of saving anything when it is invalid) /
-  **`feedback.respond`** (`{ action: SurveyInvitationResponse }` → ack; persists postpone or the permanent
-  dismissal; neither stops message counting) /
-  **`feedback.survey`** (`{ language? }`, the client's UI language → `{ survey: AppSurvey | null }`; the
-  launched survey named `in-app-feedback` in the PostHog translation that language matches, with
-  `AppSurvey.language` naming it, or the original text without `language`; null when it is off or this id
-  and iteration were already submitted) /
-  **`feedback.survey.submit`** (`SurveySubmitParams { submissionId, surveyId, iteration, language?, answers, others? }` → ack;
-  `language` echoes `AppSurvey.language`; `answers` hold only picked choices (as shown), ratings and open text,
-  while a choice question's typed **Other** text travels in `others`, so it is never read as a choice;
-  one call when the user presses Send, whatever the analytics setting; fails with `SURVEY_INVALID`,
-  `SURVEY_UNAVAILABLE`, `SURVEY_CHANGED` (the survey moved to another id or iteration — the client reloads
-  and restarts) or `SURVEY_NOT_SENT`; `FEEDBACK_SURVEY_PROTOCOL_VERSION` pins both methods and the
-  invitation channel to v97; `SURVEY_TRANSLATIONS_PROTOCOL_VERSION` pins `language` and `others` to v98 —
-  a client sends a pre-v98 host the older shape, Other text inline in `answers` and no `language`, and a
-  submission without `others` is read in that shape) /
+  **`environment.get`** / **`environment.update`** manage ordered host `{name,value}` variables outside `AppConfig`. Secret values are never broadcast or included in welcome. Reads report restart requirements and launch-overridden variable names; invalid writes return row issues without saving. There is no old agent-directory selector. /
   **`client.reportError`** (`ClientErrorReport { kind: render | window | rejection, type, stack?,
-  boundary?, chunkIds? }` → ack; `chunkIds` maps stack URLs to PostHog source-map chunk ids; a fire-and-forget UI error for host error tracking — the payload is raw and untrusted,
+  boundary? }` → ack; a fire-and-forget UI error for local host diagnostics — the payload is raw and untrusted,
   the host is the only sanitizer; `CLIENT_ERROR_REPORT_PROTOCOL_VERSION` pins its v90 introduction so a
   newer client never sends it to an older host) / the **`chat.*` set** from `CHATS_PROTOCOL_VERSION` (v109) —
   **`create`** (`{ model?, thinkingLevel? }` → `ChatCreateResult`: the `kind: "chat"` workspace plus the
@@ -977,22 +858,12 @@ the palette ranks with — kept here so host-side search can rank with the same 
   published when a launcher finds a newer release, then replaced as a v70 host-run moves through
   running/succeeded/failed; absent on discovery failure/no-update / **`project.updated`** — the
   full persisted `Project` snapshot after open/reopen/close, including `closed` membership, so every client
-  atomically converges its rail + Recents without optimistic removal / `pi.event` / `pi.extensionUi` /
+  atomically converges its rail + Recents without optimistic removal / `session.event` / `session.interaction` /
   **`session.created`** (the initial `SessionSummary`, broadcast when a new host-owned session registers so
   other frontends can list it in history without opening local placement) / **`session.deleted`** (workspace +
   session id; a non-replayable domain event broadcast after permanent deletion so every client removes the chat
   and blocks stale hydration) / **`settings.changed`** (the full `AppConfig`, including custom preset definitions, broadcast so every
-  client converges) / **`feedback.interview`** (an empty, addressed invitation sent only to a protocol v97
-  client when the launched in-app survey is eligible; not broadcast, subscribed, or replayed) / **`feedback.githubStar`**
-  (`GithubStarAsk { stars: number | null }`, the addressed one-time GitHub star ask with the host-read star count, sent
-  only to a client at `GITHUB_STAR_PROTOCOL_VERSION`, v103; not
-  broadcast, subscribed, or replayed) / **`provider.login`** — the session-less
-  in-app login stream (a `LoginPush`
-  per frame, keyed by `loginId`; the sibling of `pi.extensionUi`, since a login runs on the Welcome screen
-  before any session exists) / **`provider.changed`** — a data-free invalidation broadcast after a watched
-  Central state/rebuild result changes the host-authoritative provider status or current model generation,
-  or a provider login (not an MCP sign-in) succeeds;
-  clients re-read `provider.status` and invalidate `model.list`, so no raw provider/model data rides the push /
+  client converges) / **`provider.changed`** invalidates endpoint/model metadata after configuration changes; clients re-read `provider.status` and `model.list`. /
   `terminal.data` + **`terminal.exit`** + **`terminal.detached`** (the addressed terminal channels — sent to
   the single *attached* client rather than broadcast, so a shell's bytes never
   reach another browser; `terminal.data` may carry `truncated` when the host had to drop held output,
@@ -1120,7 +991,7 @@ the pi-level resource grant. A client talking to an older host sends neither.
 
 - `project.trustSummary { projectId }` returns `ProjectTrustSummary` for the generalized trust notice: the
   project checkout's alias skill names and the kinds of its own pi resources a pi-level grant would load
-  (`piResources: ProjectResourceKind[]`, empty when none), so the notice names exactly what is there and
+  (`applicationResources: ProjectResourceKind[]`, empty when none), so the notice names exactly what is there and
   says it runs code only when `extensions` or `settings` are among them, plus how many `.pi/mcp.json`
   entries would then await approval (`mcpServers`).
   An older host only answers `project.aliasSkills`, which the client reads as "aliases only". It reads the
@@ -1128,7 +999,7 @@ the pi-level resource grant. A client talking to an older host sends neither.
   it (the Welcome notice and New Workspace) run before the workspace they lead to exists; the Skills dialog
   adds its worktree catalog's untrusted aliases client-side.
 - `project.setTrust` takes an optional `resources: true`: the grant then also trusts the project's own pi
-  resources (`Project.piResourceTrust` — settings and extensions run code). Without it a grant sets the
+  resources (`Project.resourceTrust` — settings and extensions run code). Without it a grant sets the
   alias trust only, so a surface that does not name what pi-level trust loads (an older client) never
   enables it; `trusted: false` revokes both.
 
@@ -1398,4 +1269,4 @@ so an already-loaded old client clears retired markers after reconnect. No activ
 ## Consumed by
 
 `web` (types + the runtime exports listed above) and `server` (same, + mapping `session.*` to `AgentSession` methods). The
-shell panels need `domain` + `wsProtocol`; the `pi` types + `PiEvent` are the wire for the agent session.
+shell panels need `domain` + `wsProtocol`; application types + `SessionEvent` are the wire for the agent session.

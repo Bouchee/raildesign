@@ -44,8 +44,8 @@ beforeEach(() => {
 	process.env.PATH = LAUNCHD_DEFAULT_PATH;
 });
 afterEach(() => {
-	delete (globalThis as Record<symbol, unknown>)[Symbol.for("thinkrail.shellEnv.pending")];
-	delete (globalThis as Record<symbol, unknown>)[Symbol.for("thinkrail.shellEnv.launchKeys")];
+	delete (globalThis as Record<symbol, unknown>)[Symbol.for("raildesign.shellEnv.pending")];
+	delete (globalThis as Record<symbol, unknown>)[Symbol.for("raildesign.shellEnv.launchKeys")];
 	rmSync(shellDir, { recursive: true, force: true });
 	if (originalPath === undefined) delete process.env.PATH;
 	else process.env.PATH = originalPath;

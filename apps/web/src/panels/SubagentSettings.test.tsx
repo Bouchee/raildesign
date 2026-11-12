@@ -30,15 +30,18 @@ function render({
 	globalEnabled = true,
 	globalLimit = 4,
 	activeWorkspace,
+	disabled = false,
 }: {
 	protocolVersion?: number;
 	globalEnabled?: boolean;
 	globalLimit?: number;
 	activeWorkspace?: Workspace;
+	disabled?: boolean;
 } = {}): string {
 	return renderToStaticMarkup(
 		<TooltipProvider>
 			<SubagentSettings
+				disabled={disabled}
 				protocolVersion={protocolVersion}
 				globalEnabled={globalEnabled}
 				globalLimit={globalLimit}
@@ -122,4 +125,22 @@ test("a workspace forced off disables its limit even when the global column is o
 	expect(element(markup, "subagents-workspace-toggle")).toContain('aria-checked="false"');
 	expect(element(markup, "subagent-limit-workspace-input")).toContain('disabled=""');
 	expect(element(markup, "subagent-limit-global-input")).not.toContain('disabled=""');
+});
+
+test("unavailable execution preserves inherited settings and disables every control", () => {
+	const markup = render({ disabled: true, activeWorkspace: workspace("on", 2) });
+	expect(markup).toContain(
+		"Sub-agent execution is not available yet. These settings are preserved for when execution is enabled.",
+	);
+	for (const testId of [
+		"subagents-global-toggle",
+		"subagents-workspace-toggle",
+		"subagent-limit-global-input",
+		"subagent-limit-workspace-input",
+		"subagents-workspace-source",
+		"subagent-limit-workspace-source",
+	]) {
+		expect(element(markup, testId)).toContain('disabled=""');
+	}
+	expect(element(markup, "subagent-limit-workspace-input")).toContain('value="2"');
 });

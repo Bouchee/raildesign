@@ -1,12 +1,39 @@
-import { defaultSessionDirFor, writeFixtureSession } from "@thinkrail/server/history-test-fixtures";
-import { E2E_PI_AGENT_DIR } from "./paths";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import type { SessionState, Workspace } from "@thinkrail/contracts";
+import { sessionDirFor, writeFixtureSession } from "@thinkrail/server/history-test-fixtures";
+import { E2E_DATA_DIR } from "./paths";
 
 export const E2E_EXTERNAL_CWD = "/tmp/thinkrail-e2e-external";
 
 const BASE_TS = 1_700_000_000_000;
 
-export function seedExternalCwdSessions(agentDir: string = E2E_PI_AGENT_DIR): void {
-	const dir = defaultSessionDirFor(agentDir, E2E_EXTERNAL_CWD);
+export function completedFixtureState(completionId: string): SessionState {
+	return {
+		execution: "idle",
+		runId: null,
+		needsInput: null,
+		completion: { completionId, outcome: "succeeded" },
+		completionUnread: true,
+		queuedCount: 0,
+		backgroundWork: false,
+	};
+}
+
+export function pendingToolFixtureState(toolCallId: string): SessionState {
+	return {
+		execution: "idle",
+		runId: `fixture-run-${toolCallId}`,
+		needsInput: { kind: "tool-response", interactionId: toolCallId, toolCallId },
+		completion: null,
+		completionUnread: false,
+		queuedCount: 0,
+		backgroundWork: false,
+	};
+}
+
+export function seedExternalCwdSessions(dataDirectory: string = E2E_DATA_DIR): void {
+	const dir = sessionDirFor(dataDirectory);
 
 	writeFixtureSession(dir, {
 		id: "e2e-fixture-deploy-docs",
@@ -38,6 +65,21 @@ export function seedWorkspaceSession(
 	worktreePath: string,
 	opts: Omit<Parameters<typeof writeFixtureSession>[1], "cwd">,
 ): { id: string; path: string } {
-	const dir = defaultSessionDirFor(E2E_PI_AGENT_DIR, worktreePath);
-	return writeFixtureSession(dir, { ...opts, cwd: worktreePath });
+	const workspaces = ["workspaces.json", "chats.json"].flatMap((file): Workspace[] => {
+		try {
+			const record = JSON.parse(readFileSync(join(E2E_DATA_DIR, file), "utf8"));
+			return file === "chats.json" ? record.chats : record;
+		} catch (error) {
+			if (error instanceof Error && "code" in error && error.code === "ENOENT") return [];
+			throw error;
+		}
+	});
+	const workspaceId =
+		opts.workspaceId ?? workspaces.find((workspace) => workspace.worktreePath === worktreePath)?.id;
+	if (!workspaceId) throw new Error(`No fixture workspace registered for ${worktreePath}`);
+	return writeFixtureSession(sessionDirFor(E2E_DATA_DIR), {
+		...opts,
+		workspaceId,
+		cwd: worktreePath,
+	});
 }

@@ -6,7 +6,6 @@ import { basename, dirname, join, relative } from "node:path";
 import { removeTree } from "@thinkrail/shared/removeTree";
 import { channel, version } from "@thinkrail/shared/version";
 import { windowsFileIdentity } from "@thinkrail/shared/windowsIdentity";
-import { runDesktopAnalyticsProbe } from "./src/analyticsProbe";
 import { locateDesktopLauncher, repoRoot } from "./src/artifact";
 import {
 	type ArtifactHostAdapter,
@@ -16,6 +15,7 @@ import {
 } from "./src/artifactProbes";
 import { readSettledJson } from "./src/documents";
 import { pollUntil, terminateProcess, within } from "./src/lifecycle";
+import { runTelemetryProbe } from "./src/telemetryProbe";
 import { windowsIdentityMismatches } from "./src/windowsIdentity";
 
 const root = mkdtempSync(join(tmpdir(), "thinkrail-desktop-smoke-"));
@@ -237,11 +237,11 @@ function copyApplication(launcher: string): string {
 	return join(copiedRoot, relative(bundleRoot, launcher));
 }
 
-const analyticsOnly = process.argv.includes("--analytics");
+const privacyOnly = process.argv.includes("--privacy");
 const launcher = copyApplication(
 	locateDesktopLauncher(
 		undefined,
-		process.argv.slice(2).find((arg) => arg !== "--analytics"),
+		process.argv.slice(2).find((arg) => arg !== "--privacy"),
 	),
 );
 
@@ -376,7 +376,6 @@ async function launchDesktop(
 			mode: ready.mode,
 			applicationMenuInstalled: ready.applicationMenuInstalled,
 			resources: {
-				skillsDir: join(ready.runtimeDir, "skills"),
 				trashHelpers: {
 					macos: join(ready.runtimeDir, "macos-trash"),
 					windows: join(ready.runtimeDir, "windows-trash.exe"),
@@ -466,8 +465,11 @@ async function runMutedSmoke(): Promise<void> {
 }
 
 try {
-	if (analyticsOnly) await runDesktopAnalyticsProbe(adapter);
-	else await runMutedSmoke();
+	if (privacyOnly) await runTelemetryProbe(adapter);
+	else {
+		await runMutedSmoke();
+		await runTelemetryProbe(adapter);
+	}
 } catch (error) {
 	console.error(`desktop smoke FAILED: ${error instanceof Error ? error.message : error}`);
 	process.exitCode = 1;

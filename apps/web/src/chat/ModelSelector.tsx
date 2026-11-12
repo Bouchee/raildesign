@@ -40,7 +40,10 @@ import {
 import type { ModelPreferences } from "./useModelPreferences";
 
 function subLine(t: Translator, model: WireModel): string {
-	const parts = [t("chat.modelPicker.context", { size: formatContext(model.contextWindow) })];
+	const parts =
+		model.contextWindow > 0
+			? [t("chat.modelPicker.context", { size: formatContext(model.contextWindow) })]
+			: [];
 	if (model.reasoning) parts.push(t("chat.modelPicker.reasoning"));
 	return parts.join(" · ");
 }

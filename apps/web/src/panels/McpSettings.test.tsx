@@ -24,7 +24,7 @@ function row(overrides: Partial<McpServerRow> = {}, summary: Partial<McpServerSu
 		summary: {
 			name: "fixture",
 			scope: "user",
-			source: "/home/.pi/agent/mcp.json",
+			source: "/data/mcp.json",
 			fingerprint: "rendered",
 			transport: "stdio",
 			endpoint: "bun stdioServer.ts",
@@ -302,9 +302,9 @@ test("a row lists its always-allowed tools, each with its own way to ask again",
 	).toMatch(/data-testid="mcp-always-allowed-revoke"[^>]*disabled=""/);
 });
 
-test("the banner states the in-chat confirm and the empty state offers import and the host notice", () => {
+test("the banner states saved approval policy and connection process behavior and the empty state offers import and the host notice", () => {
 	expect(renderToStaticMarkup(<McpConfirmBanner />)).toContain(
-		"ThinkRail asks in the chat before MCP calls that may change data. Always allow trusts a tool in every chat of this project; those tools are listed on their server below.",
+		"Per-tool approval preferences are saved for future model calls. Connection tests can start servers on this machine.",
 	);
 	const empty = renderToStaticMarkup(
 		<McpEmptyState disabled={false} onAdd={() => {}} onImport={() => {}} onPreset={() => {}} />,
@@ -320,9 +320,9 @@ test("file-level config problems render one error notice per file with its path 
 	const html = renderToStaticMarkup(
 		<McpConfigFileErrors
 			errors={[
-				{ source: "/home/u/.pi/agent/mcp.json", message: "JSON Parse error: Expected '}'" },
+				{ source: "/data/mcp.json", message: "JSON Parse error: Expected '}'" },
 				{
-					source: "/repo/.pi/mcp.json",
+					source: "/repo/.raildesign/mcp.json",
 					message: 'expected an object with an "mcpServers" object',
 				},
 			]}
@@ -330,8 +330,8 @@ test("file-level config problems render one error notice per file with its path 
 	);
 	expect(html.match(/data-testid="mcp-config-error"/g)).toHaveLength(2);
 	expect(html).toContain('role="alert"');
-	expect(html).toContain("Problem in /home/u/.pi/agent/mcp.json");
-	expect(html).toContain('data-source="/repo/.pi/mcp.json"');
+	expect(html).toContain("Problem in /data/mcp.json");
+	expect(html).toContain('data-source="/repo/.raildesign/mcp.json"');
 	expect(html).toContain("JSON Parse error: Expected &#x27;}&#x27;");
 	expect(html.match(/Edit the file directly to fix it/g)).toHaveLength(2);
 });

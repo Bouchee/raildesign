@@ -68,6 +68,33 @@ test("captures output larger than a pipe buffer", async () => {
 	expect(result.out.length).toBe(300_000);
 });
 
+test("output budgets bound both streams and stop an unlimited writer", async () => {
+	const result = await runBounded(
+		bun(
+			'setInterval(() => { process.stdout.write("x".repeat(4096)); process.stderr.write("y".repeat(4096)); }, 0);',
+		),
+		{ timeoutMs: 10000, maxOutputBytes: 10000 },
+	);
+	expect(result.ok).toBe(false);
+	expect(result.outputLimitExceeded).toBe(true);
+	expect(Buffer.byteLength(result.out) + Buffer.byteLength(result.err)).toBeLessThanOrEqual(10000);
+	expect(result.waitedMs).toBeLessThan(2000);
+});
+
+test("binary output budgets retain exact allowed bytes and invalid budgets launch nothing", async () => {
+	const result = await runBounded(bun("process.stdout.write(new Uint8Array(100000).fill(255));"), {
+		timeoutMs: 10000,
+		stdout: "bytes",
+		maxOutputBytes: 123,
+	});
+	expect(result.out).toEqual(new Uint8Array(123).fill(255));
+	expect(result.outputLimitExceeded).toBe(true);
+	expect(result.ok).toBe(false);
+	await expect(
+		runBounded(bun('throw new Error("must not launch")'), { timeoutMs: 10000, maxOutputBytes: -1 }),
+	).rejects.toThrow("non-negative integer");
+});
+
 test("the bytes mode preserves stdout that is not valid UTF-8", async () => {
 	const result = await runBounded(
 		bun("process.stdout.write(Uint8Array.from([0, 255, 128, 65])); process.stderr.write('err');"),

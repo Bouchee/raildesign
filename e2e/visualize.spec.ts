@@ -73,7 +73,7 @@ async function openVisualizationSession(
 	return { card, sessionId };
 }
 
-const MOCKUP_DIR = ".thinkrail/context/mockups";
+const MOCKUP_DIR = ".raildesign/context/mockups";
 
 function writeMockups(files: Record<string, string>): () => void {
 	const dir = join(E2E_FIXTURE_REPO, MOCKUP_DIR);
@@ -82,7 +82,7 @@ function writeMockups(files: Record<string, string>): () => void {
 		mkdirSync(dirname(join(dir, name)), { recursive: true });
 		writeFileSync(join(dir, name), content);
 	}
-	return () => rmSync(join(E2E_FIXTURE_REPO, ".thinkrail"), { recursive: true, force: true });
+	return () => rmSync(join(E2E_FIXTURE_REPO, ".raildesign"), { recursive: true, force: true });
 }
 
 const mockupHtml = (label: string) =>

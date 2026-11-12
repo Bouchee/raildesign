@@ -1,7 +1,6 @@
 import type {
 	AppConfig,
 	AppConfigUpdate,
-	AppSurvey,
 	BackgroundCommandCompletionDetails,
 	BackgroundCommandOutputResult,
 	BranchList,
@@ -25,10 +24,6 @@ import type {
 	HostEnvironmentStatus,
 	HostEnvironmentUpdateResult,
 	InstalledFontsResult,
-	JbcentralActionResult,
-	JbcentralConnectResult,
-	JbcentralLoginResult,
-	JbcentralQuotaSnapshot,
 	LocalLocalesSnapshot,
 	LoginReply,
 	McpExposure,
@@ -74,8 +69,6 @@ import type {
 	SpecGraphSnapshot,
 	SubagentCompletionDetails,
 	SubagentOverride,
-	SurveyInvitationResponse,
-	SurveySubmitParams,
 	Template,
 	TemplateInfo,
 	TemplateScope,
@@ -105,7 +98,7 @@ import type {
 	TranscriptMessage,
 	WireCustomMessage,
 	WireModel,
-} from "./piProtocol";
+} from "./sessionProtocol";
 import type { SpeechErrorCode, SpeechModel, SpeechStatus } from "./speech";
 
 export interface TerminalDataPush {
@@ -141,7 +134,8 @@ export type TemplateReadLocation =
 	| { projectId: string; workspaceId?: never }
 	| { workspaceId?: never; projectId?: never };
 
-export const PROTOCOL_VERSION = 114;
+export const PROTOCOL_VERSION = 115;
+export const SDK_SESSION_PROTOCOL_VERSION = 115;
 export const QUESTION_PANEL_PROTOCOL_VERSION = 114;
 export const SPEC_SECTIONS_PROTOCOL_VERSION = 113;
 export const TEXT_SEARCH_PROTOCOL_VERSION = 112;
@@ -154,12 +148,10 @@ export const SEARCH_PROTOCOL_VERSION = 106;
 export const WORKSPACE_CREATION_PROTOCOL_VERSION = 104;
 export const EXTENSION_SETTINGS_PROTOCOL_VERSION = 105;
 export const ASK_DISCUSS_PROTOCOL_VERSION = 105;
-export const GITHUB_STAR_PROTOCOL_VERSION = 103;
 export const FONTS_PROTOCOL_VERSION = 102;
 export const CUSTOM_ENDPOINTS_PROTOCOL_VERSION = 101;
 export const PI_PACKAGES_PROTOCOL_VERSION = 100;
 export const PROVIDER_WARNINGS_PROTOCOL_VERSION = 99;
-export const SURVEY_TRANSLATIONS_PROTOCOL_VERSION = 98;
 export const RESOURCE_HISTORY_PROTOCOL_VERSION = 96;
 export const PROJECT_CLONE_PROTOCOL_VERSION = 95;
 export const ONBOARDING_PROTOCOL_VERSION = 94;
@@ -192,7 +184,6 @@ export const PLAN_REVIEW_SUBAGENT_PROTOCOL_VERSION = 67;
 export const AGENT_REVIEW_SETTING_PROTOCOL_VERSION = 68;
 export const PLAN_SUMMARY_GENERATION_PROTOCOL_VERSION = 69;
 export const SESSION_STATE_PROTOCOL_VERSION = 73;
-export const ANALYTICS_CONSENT_PROTOCOL_VERSION = 65;
 export const SESSION_RENAME_PROTOCOL_VERSION = 66;
 export const SESSION_TITLE_MAX_LENGTH = 80;
 
@@ -206,9 +197,7 @@ export const WINDOWS_SHELL_SETTINGS_PROTOCOL_VERSION = 62;
 export const PROJECT_TEMPLATE_PREVIEW_PROTOCOL_VERSION = 63;
 export const THEME_SYSTEM_PROTOCOL_VERSION = 58;
 export const SUBAGENT_SETTINGS_PROTOCOL_VERSION = 57;
-export const JBCENTRAL_QUOTA_PROTOCOL_VERSION = 59;
 export const WORKSPACE_RENAME_PROTOCOL_VERSION = 55;
-export const FEEDBACK_SURVEY_PROTOCOL_VERSION = 97;
 
 export type HostPlatform = "darwin" | "linux" | "win32";
 
@@ -537,19 +526,10 @@ export const WS_METHODS = {
 	providerLoginCancel: "provider.loginCancel",
 	providerLogout: "provider.logout",
 	providerDisableWarning: "provider.disableWarning",
-	providerJbcentralConnect: "provider.jbcentralConnect",
-	providerJbcentralDisconnect: "provider.jbcentralDisconnect",
-	providerJbcentralStartProxy: "provider.jbcentralStartProxy",
-	providerJbcentralLogin: "provider.jbcentralLogin",
-	providerJbcentralUpdate: "provider.jbcentralUpdate",
-	providerJbcentralQuota: "provider.jbcentralQuota",
 	hostUpdate: "host.update",
 	settingsUpdate: "settings.update",
 	environmentGet: "environment.get",
 	environmentUpdate: "environment.update",
-	feedbackRespond: "feedback.respond",
-	feedbackSurvey: "feedback.survey",
-	feedbackSurveySubmit: "feedback.survey.submit",
 	clientReportError: "client.reportError",
 	historySearch: "history.search",
 	searchQuery: "search.query",
@@ -587,8 +567,8 @@ export const WS_METHODS = {
 export const WS_CHANNELS = {
 	serverWelcome: "server.welcome",
 	projectUpdated: "project.updated",
-	piEvent: "pi.event",
-	piExtensionUi: "pi.extensionUi",
+	sessionEvent: "session.event",
+	sessionExtensionUi: "session.interaction",
 	sessionCreated: "session.created",
 	sessionDeleted: "session.deleted",
 	sessionResourcesChanged: "session.resourcesChanged",
@@ -609,8 +589,6 @@ export const WS_CHANNELS = {
 	searchTextResults: "search.textResults",
 	settingsChanged: "settings.changed",
 	hostUpdateAvailable: "host.updateAvailable",
-	feedbackInterview: "feedback.interview",
-	feedbackGithubStar: "feedback.githubStar",
 	reviewChanged: "review.changed",
 	reviewFailed: "review.failed",
 	turnChanged: "turn.changed",
@@ -759,7 +737,6 @@ export interface ClientErrorReport {
 	type: string;
 	stack?: string;
 	boundary?: string;
-	chunkIds?: Record<string, string>;
 }
 
 export interface Ack {
@@ -1312,12 +1289,6 @@ export interface WsMethodMap {
 	"provider.loginCancel": { params: { loginId: string }; result: Ack };
 	"provider.logout": { params: { providerId: string }; result: Ack };
 	"provider.disableWarning": { params: { warning: ProviderWarning }; result: Ack };
-	"provider.jbcentralConnect": { params: Record<string, never>; result: JbcentralConnectResult };
-	"provider.jbcentralDisconnect": { params: Record<string, never>; result: JbcentralActionResult };
-	"provider.jbcentralStartProxy": { params: Record<string, never>; result: JbcentralActionResult };
-	"provider.jbcentralLogin": { params: Record<string, never>; result: JbcentralLoginResult };
-	"provider.jbcentralUpdate": { params: Record<string, never>; result: JbcentralActionResult };
-	"provider.jbcentralQuota": { params: { force?: boolean }; result: JbcentralQuotaSnapshot };
 	"host.update": { params: Record<string, never>; result: Ack };
 	"settings.update": { params: { config: AppConfigUpdate }; result: AppConfig };
 	"environment.get": { params: Record<string, never>; result: HostEnvironmentStatus };
@@ -1325,12 +1296,6 @@ export interface WsMethodMap {
 		params: { environment: HostEnvironment };
 		result: HostEnvironmentUpdateResult;
 	};
-	"feedback.respond": { params: { action: SurveyInvitationResponse }; result: Ack };
-	"feedback.survey": {
-		params: { language?: string };
-		result: { survey: AppSurvey | null };
-	};
-	"feedback.survey.submit": { params: SurveySubmitParams; result: Ack };
 	"client.reportError": { params: ClientErrorReport; result: Ack };
 	"history.search": {
 		params: { query: string; scope: HistoryScope; limit?: number };

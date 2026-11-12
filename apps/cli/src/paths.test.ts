@@ -11,21 +11,21 @@ import {
 } from "./paths";
 
 test("installMetaFile is where both installers write install.json", () => {
-	expect(installMetaFile("/home/u")).toBe(join("/home/u", ".config", "thinkrail", "install.json"));
-	expect(installConfigDir("/home/u")).toBe(join("/home/u", ".config", "thinkrail"));
+	expect(installMetaFile("/home/u")).toBe(join("/home/u", ".config", "raildesign", "install.json"));
+	expect(installConfigDir("/home/u")).toBe(join("/home/u", ".config", "raildesign"));
 });
 
 test("normalizes native and legacy Windows install prefixes", () => {
-	expect(normalizeWindowsInstallPrefix("C:\\tools\\thinkrail")).toBe("C:/tools/thinkrail");
-	expect(normalizeWindowsInstallPrefix("/c/tools/thinkrail")).toBe("C:/tools/thinkrail");
-	expect(normalizeWindowsInstallPrefix("/cygdrive/c/tools/thinkrail")).toBe("C:/tools/thinkrail");
-	expect(normalizeWindowsInstallPrefix("//nas/share/thinkrail")).toBe("//nas/share/thinkrail");
+	expect(normalizeWindowsInstallPrefix("C:\\tools\\raildesign")).toBe("C:/tools/raildesign");
+	expect(normalizeWindowsInstallPrefix("/c/tools/raildesign")).toBe("C:/tools/raildesign");
+	expect(normalizeWindowsInstallPrefix("/cygdrive/c/tools/raildesign")).toBe("C:/tools/raildesign");
+	expect(normalizeWindowsInstallPrefix("//nas/share/raildesign")).toBe("//nas/share/raildesign");
 	expect(normalizeWindowsInstallPrefix("/home/u/.local")).toBeUndefined();
-	expect(sameWindowsPath("c:/TOOLS/thinkrail/", "C:\\tools\\thinkrail")).toBe(true);
+	expect(sameWindowsPath("c:/TOOLS/raildesign/", "C:\\tools\\raildesign")).toBe(true);
 });
 
 test("readInstallMeta reads the installers' file and degrades to {} on anything else", () => {
-	const home = mkdtempSync(join(tmpdir(), "thinkrail-paths-"));
+	const home = mkdtempSync(join(tmpdir(), "raildesign-paths-"));
 	try {
 		expect(readInstallMeta(home)).toEqual({});
 

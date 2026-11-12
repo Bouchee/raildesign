@@ -4,6 +4,7 @@ type BoundedRunBase = {
 	timedOut: boolean;
 	launchFailed: boolean;
 	aborted?: true;
+	outputLimitExceeded?: true;
 	waitedMs: number;
 };
 
@@ -18,6 +19,7 @@ export type BoundedRunOptions = {
 	signal?: AbortSignal;
 	idleTimeoutMs?: number;
 	onStderr?: (text: string) => void;
+	maxOutputBytes?: number;
 };
 
 export type BoundedBytesRunOptions = Omit<BoundedRunOptions, "stdout"> & {
@@ -26,7 +28,7 @@ export type BoundedBytesRunOptions = Omit<BoundedRunOptions, "stdout"> & {
 
 export type BoundedStreamOptions = Omit<
 	BoundedRunOptions,
-	"stdout" | "signal" | "idleTimeoutMs" | "onStderr"
+	"stdout" | "signal" | "idleTimeoutMs" | "onStderr" | "maxOutputBytes"
 >;
 export type BoundedStream = {
 	stdout: ReadableStream<Uint8Array>;
@@ -63,21 +65,29 @@ function drain(stream: ReadableStream<Uint8Array>, chunk: (value: Uint8Array) =>
 	};
 }
 
-function textSink(stream: ReadableStream<Uint8Array>, onText?: (text: string) => void): TextSink {
+function textSink(
+	stream: ReadableStream<Uint8Array>,
+	onText?: (text: string) => void,
+	take: (chunk: Uint8Array) => Uint8Array = (chunk) => chunk,
+): TextSink {
 	const decoder = new TextDecoder();
 	let text = "";
 	return {
 		kind: "text",
 		value: () => text,
 		...drain(stream, (chunk) => {
-			const decoded = decoder.decode(chunk, { stream: true });
+			const decoded = decoder.decode(take(chunk), { stream: true });
 			text += decoded;
 			onText?.(decoded);
 		}),
 	};
 }
 
-function bytesSink(stream: ReadableStream<Uint8Array>, onChunk?: () => void): BytesSink {
+function bytesSink(
+	stream: ReadableStream<Uint8Array>,
+	onChunk?: () => void,
+	take: (chunk: Uint8Array) => Uint8Array = (chunk) => chunk,
+): BytesSink {
 	const chunks: Uint8Array[] = [];
 	let length = 0;
 	return {
@@ -92,6 +102,7 @@ function bytesSink(stream: ReadableStream<Uint8Array>, onChunk?: () => void): By
 			return bytes;
 		},
 		...drain(stream, (chunk) => {
+			chunk = take(chunk);
 			chunks.push(chunk.slice());
 			length += chunk.byteLength;
 			onChunk?.();
@@ -277,6 +288,26 @@ export async function runBounded(
 ): Promise<BoundedRun | BoundedBytesRun> {
 	const startedAt = performance.now();
 	const waitedMs = () => performance.now() - startedAt;
+	if (
+		opts.maxOutputBytes !== undefined &&
+		(!Number.isSafeInteger(opts.maxOutputBytes) || opts.maxOutputBytes < 0)
+	)
+		throw new Error("maxOutputBytes must be a non-negative integer");
+	let remaining = opts.maxOutputBytes ?? Number.POSITIVE_INFINITY;
+	let exceeded = false;
+	let overflow: (() => void) | undefined;
+	const outputExceeded = new Promise<"output-limit">((resolve) => {
+		overflow = () => resolve("output-limit");
+	});
+	const take = (chunk: Uint8Array): Uint8Array => {
+		const count = Math.min(chunk.byteLength, remaining);
+		remaining -= count;
+		if (count < chunk.byteLength) {
+			exceeded = true;
+			overflow?.();
+		}
+		return chunk.subarray(0, count);
+	};
 
 	if (opts.signal?.aborted) {
 		const aborted: BoundedRunBase = {
@@ -303,14 +334,18 @@ export async function runBounded(
 	const idle = idleDeadline(opts.idleTimeoutMs);
 	const out =
 		opts.stdout === "bytes"
-			? bytesSink(proc.stdout, idle.touch)
-			: textSink(proc.stdout, idle.touch);
-	const err = textSink(proc.stderr, (text) => {
-		idle.touch();
-		try {
-			opts.onStderr?.(text);
-		} catch {}
-	});
+			? bytesSink(proc.stdout, idle.touch, take)
+			: textSink(proc.stdout, idle.touch, take);
+	const err = textSink(
+		proc.stderr,
+		(text) => {
+			idle.touch();
+			try {
+				opts.onStderr?.(text);
+			} catch {}
+		},
+		take,
+	);
 	const drained = Promise.all([out.done, err.done]);
 	const deadline = delay(boundedTimeout(opts.timeoutMs));
 
@@ -325,6 +360,7 @@ export async function runBounded(
 		deadline.promise.then(() => "timed-out" as const),
 		idle.promise.then(() => "timed-out" as const),
 		aborted,
+		outputExceeded,
 	]);
 	deadline.cancel();
 	idle.cancel();
@@ -340,11 +376,12 @@ export async function runBounded(
 	err.cancel();
 
 	const result = {
-		ok: outcome === "exited" && proc.exitCode === 0,
+		ok: outcome === "exited" && proc.exitCode === 0 && !exceeded,
 		err: err.value(),
 		timedOut: outcome === "timed-out",
 		launchFailed: false,
 		...(outcome === "aborted" && { aborted: true as const }),
+		...(exceeded ? { outputLimitExceeded: true as const } : {}),
 		waitedMs: waitedMs(),
 	};
 	return out.kind === "bytes" ? { ...result, out: out.value() } : { ...result, out: out.value() };

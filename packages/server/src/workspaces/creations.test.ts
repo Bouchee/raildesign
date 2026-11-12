@@ -372,7 +372,7 @@ posix(
 			]),
 		);
 		retryWorkspaceCreation(creation.id);
-		await expect(awaitWorkspaceCreation(creation.id)).rejects.toThrow("already open in ThinkRail");
+		await expect(awaitWorkspaceCreation(creation.id)).rejects.toThrow("already open in RailDesign");
 		const [record] = listWorkspaceCreations();
 		expect(record?.failure?.code).toBe("WORKSPACE_PATH_TAKEN");
 		expect(record?.failure?.cleanedUp).toBeUndefined();
@@ -440,7 +440,7 @@ posix(
 				{ id: "p2", name: "taken", path, slug: "taken", lastOpened: 2 },
 			]),
 		);
-		await expect(awaitWorkspaceCreation(creation.id)).rejects.toThrow("already open in ThinkRail");
+		await expect(awaitWorkspaceCreation(creation.id)).rejects.toThrow("already open in RailDesign");
 		expect(listWorkspaceCreations()[0]?.failure?.code).toBe("WORKSPACE_PATH_TAKEN");
 		expect(existsSync(join(path, "README.md"))).toBe(true);
 		expect(() => retryWorkspaceCreation(creation.id)).toThrow("Edit & retry");

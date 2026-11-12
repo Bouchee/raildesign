@@ -1,4 +1,3 @@
-import "./env";
 import { completeOnce } from "@thinkrail/server/agent";
 
 export type JudgeVerdict = "pass" | "fail" | "unclear";

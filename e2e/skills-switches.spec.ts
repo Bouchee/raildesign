@@ -22,6 +22,8 @@ test("Skills renders existing controls as explicit switches without making rows 
 
 	const dialog = page.getByTestId("skills-dialog");
 	const groupSwitch = page.getByTestId("group-toggle").first();
+	await expect(dialog.getByTestId("skills-execution-unavailable")).toBeVisible();
+	await expect(dialog.getByTestId("skills-reload")).toBeDisabled();
 	await expect(groupSwitch).toHaveRole("switch");
 	await expect(groupSwitch).toHaveAttribute("aria-checked", /true|false/);
 	await expect(groupSwitch).toHaveText("");
@@ -70,7 +72,7 @@ test("Skills renders existing controls as explicit switches without making rows 
 	expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 });
 
-test("a chat's Skills dialog names the project's Pi resources and grants them with its trust", async ({
+test("a chat's Skills dialog names the project's RailDesign resources and grants them with its trust", async ({
 	page,
 }) => {
 	const trustRequests: Array<Record<string, unknown>> = [];
@@ -87,7 +89,7 @@ test("a chat's Skills dialog names the project's Pi resources and grants them wi
 			} catch {}
 		});
 	});
-	const prompts = join(E2E_FIXTURE_REPO, ".pi", "prompts");
+	const prompts = join(E2E_FIXTURE_REPO, ".raildesign", "prompts");
 	mkdirSync(prompts, { recursive: true });
 	writeFileSync(join(prompts, "e2e-kickoff.md"), "---\ndescription: Kick off\n---\nGo\n");
 	try {
@@ -96,12 +98,12 @@ test("a chat's Skills dialog names the project's Pi resources and grants them wi
 		await page.getByTestId("open-skills").click();
 
 		const banner = page.getByTestId("skills-trust-all");
-		await expect(banner).toContainText("1 skill and its own Pi resources");
-		await expect(banner).toContainText("Trust loads its prompts.");
+		await expect(banner).toContainText("1 skill and its own RailDesign resources");
+		await expect(banner).toContainText("Trust allows reading its prompts.");
 		await banner.getByRole("button", { name: "Trust project" }).click();
 		await expect(banner).toHaveCount(0);
 		expect(trustRequests.at(-1)).toMatchObject({ trusted: true, resources: true });
 	} finally {
-		rmSync(join(E2E_FIXTURE_REPO, ".pi"), { recursive: true, force: true });
+		rmSync(join(E2E_FIXTURE_REPO, ".raildesign"), { recursive: true, force: true });
 	}
 });

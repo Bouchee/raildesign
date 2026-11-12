@@ -17,7 +17,7 @@ import {
 import type { CollapsibleRegion } from "./useCollapsibleRegion";
 
 export const PROJECT_HOME_PROJECTS_REGION_ID = "welcome-left";
-const PROJECT_HOME_AUTOSAVE_ID = "thinkrail-shell-welcome";
+const PROJECT_HOME_AUTOSAVE_ID = "raildesign-shell-welcome";
 const PROJECTS_PANE_ID = "project-home-projects";
 const PROJECTS_RAIL_ENTRY_KEY = "projects";
 const PROJECTS_PANE_DEFAULT_PERCENT =

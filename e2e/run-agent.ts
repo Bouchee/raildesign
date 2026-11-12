@@ -1,6 +1,7 @@
 import { rmSync } from "node:fs";
 import { createAgentRunPlan, WEB_BUILD_READY_ENV } from "./agentRunPlan";
 import { E2E_DATA_DIR } from "./fixtures/paths";
+import { readLiveAgentKey } from "./fixtures/sdkAgent";
 import { holdE2eIdleSleep } from "./idleSleep";
 import { PARENT_SIGNAL_OWNER_ENV, runE2eProcess } from "./processRunner";
 
@@ -15,6 +16,12 @@ async function main(): Promise<number> {
 	if (plan.buildCommand) {
 		const { exitCode } = await runE2eProcess(plan.buildCommand);
 		if (exitCode !== 0) return exitCode;
+	}
+	if (!playwrightArgs.includes("--list")) {
+		const configPath = process.env.RAILDESIGN_E2E_CONFIG;
+		if (!configPath)
+			throw new Error("Set RAILDESIGN_E2E_CONFIG to the protected live acceptance configuration");
+		plan.env.RAILDESIGN_E2E_API_KEY = readLiveAgentKey(configPath);
 	}
 	if (!playwrightArgs.includes("--list")) rmSync(E2E_DATA_DIR, { recursive: true, force: true });
 	delete plan.env[PARENT_SIGNAL_OWNER_ENV];

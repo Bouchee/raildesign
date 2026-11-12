@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import type { PlanReviewResult } from "@thinkrail/contracts";
-import { composeText, parseVerdict } from "./requestReview";
+import type { PlanReviewResult, TodoItem, TodoPlan } from "@thinkrail/contracts";
+import { composeText, itemTitleOf, parseVerdict } from "./requestReview";
 
 const ID = "t_1";
 const TITLE = "Wire login redirect";
@@ -117,4 +117,31 @@ test("parseVerdict defaults a finding's kind and drops absent location fields", 
 		TITLE,
 	);
 	expect(result?.findings[0]).toEqual({ id: "f1", kind: "inline", body: "no location" });
+});
+
+test("itemTitleOf resolves stored, grouped and adopted items while retaining an unknown id", async () => {
+	const item = (id: string): TodoItem => ({
+		id,
+		title: `Title ${id}`,
+		status: "done",
+		origin: "agent",
+		createdAt: "",
+		updatedAt: "",
+	});
+	const plan: TodoPlan = {
+		todos: [item("stored")],
+		groups: [{ id: "g", title: "Group", status: "done", todos: [item("grouped")] }],
+		adoptedCommits: [item("commit:abc")],
+	};
+	const scopes: Array<{ workspaceId: string; sessionId: string }> = [];
+	for (const id of ["stored", "grouped", "commit:abc", "missing"]) {
+		const title = await itemTitleOf("workspace", "session", id, async (scope) => {
+			scopes.push(scope);
+			return plan;
+		});
+		expect(title).toBe(id === "missing" ? id : `Title ${id}`);
+	}
+	expect(scopes).toEqual(
+		Array.from({ length: 4 }, () => ({ workspaceId: "workspace", sessionId: "session" })),
+	);
 });

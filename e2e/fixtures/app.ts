@@ -1,38 +1,20 @@
-import {
-	copyFileSync,
-	existsSync,
-	mkdirSync,
-	readFileSync,
-	renameSync,
-	rmSync,
-	writeFileSync,
-} from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Locator, Page } from "@playwright/test";
 import { expect } from "@playwright/test";
-import type { SessionSummary, Workspace } from "@thinkrail/contracts";
+import type { Workspace } from "@thinkrail/contracts";
 import { removeTree } from "@thinkrail/shared/removeTree";
-import {
-	isRealCentralE2e,
-	preserveStagedCentralArtifact,
-	removeCentralModeLocalSeeds,
-	writeE2eAgentSettings,
-} from "./centralAgent";
 import { git, gitQuiet, gitText } from "./git";
 import {
-	E2E_CENTRAL_ARTIFACT,
-	E2E_CENTRAL_LOG,
-	E2E_CENTRAL_STATE,
 	E2E_DATA_DIR,
 	E2E_FIXTURE_REPO,
 	E2E_GH_LOG,
 	E2E_GH_SCENARIO,
-	E2E_PI_AGENT_DIR,
-	E2E_PI_MODELS_SEED,
 	E2E_PICK_DIR_POINTER,
 	E2E_PLAIN_DIR,
 } from "./paths";
 import { fixtureRepoHealthy, seedFixtureRepo } from "./repo";
+import { seedAgentConfiguration } from "./sdkAgent";
 import { E2eWire } from "./wire";
 
 export const PHONE_VIEWPORT = { width: 390, height: 780 } as const;
@@ -61,20 +43,8 @@ function resetState(): void {
 	removeTree(join(E2E_DATA_DIR, "reviews"));
 	removeTree(join(E2E_DATA_DIR, "resource-history"));
 	removeTree(join(E2E_DATA_DIR, "worktrees"));
-	removeTree(join(E2E_PI_AGENT_DIR, "sessions"));
-	if (isRealCentralE2e()) {
-		preserveStagedCentralArtifact();
-		writeE2eAgentSettings();
-		removeCentralModeLocalSeeds();
-	} else {
-		rmSync(E2E_CENTRAL_ARTIFACT, { force: true });
-		const modelsPath = join(E2E_PI_AGENT_DIR, "models.json");
-		if (existsSync(E2E_PI_MODELS_SEED)) copyFileSync(E2E_PI_MODELS_SEED, modelsPath);
-		else rmSync(modelsPath, { force: true });
-		rmSync(`${modelsPath}.bak`, { force: true });
-	}
-	writeFileSync(E2E_CENTRAL_STATE, "");
-	rmSync(E2E_CENTRAL_LOG, { force: true });
+	removeTree(join(E2E_DATA_DIR, "sessions"));
+	seedAgentConfiguration();
 
 	if (!fixtureRepoHealthy()) seedFixtureRepo();
 
@@ -157,26 +127,24 @@ export function loadPersistedWorkspaces(): Workspace[] {
 }
 
 async function disposeLiveSessions(page: Page): Promise<void> {
-	const workspaces = loadPersistedWorkspaces();
-	if (workspaces.length === 0) return;
+	let sessionIds: string[];
+	try {
+		sessionIds = readdirSync(join(E2E_DATA_DIR, "sessions"))
+			.filter((name) => /^[A-Za-z0-9_-]{1,200}\.json$/.test(name))
+			.map((name) => name.slice(0, -5));
+	} catch (error) {
+		if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
+		throw error;
+	}
+	if (sessionIds.length === 0) return;
 	const health = await page.request.get("/health");
 	const hostUrl = new URL(health.url());
 	await health.dispose();
 	const port = Number(hostUrl.port) || (hostUrl.protocol === "https:" ? 443 : 80);
 	const wire = await E2eWire.connect(port);
 	try {
-		for (const workspace of workspaces) {
-			const sessions: SessionSummary[] = await wire.request(
-				"session.list",
-				{ workspaceId: workspace.id },
-				30_000,
-			);
-			for (const session of sessions) {
-				if (session.live) {
-					await wire.request("session.dispose", { sessionId: session.sessionId }, 30_000);
-				}
-			}
-		}
+		for (const sessionId of sessionIds)
+			await wire.request("session.dispose", { sessionId }, 30_000);
 	} finally {
 		wire.close();
 	}

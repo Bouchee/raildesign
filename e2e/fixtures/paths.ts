@@ -64,12 +64,6 @@ export const E2E_FAKE_BIN_DIR = join(E2E_DATA_DIR, ".bun", "bin");
 export const E2E_GH_SCENARIO = join(E2E_DATA_DIR, "gh-scenario.json");
 export const E2E_GH_LOG = join(E2E_DATA_DIR, "gh.log");
 
-export const E2E_CENTRAL_EXTENSION_SOURCE = join(E2E_DATA_DIR, "synthetic-central-extension.ts");
-export const E2E_CENTRAL_BAD_EXTENSION_SOURCE = join(
-	E2E_DATA_DIR,
-	"synthetic-central-extension-error.ts",
-);
-
 export const E2E_CENTRAL_ARTIFACT = join(
 	E2E_HOME_DIR,
 	".pi",
@@ -77,8 +71,6 @@ export const E2E_CENTRAL_ARTIFACT = join(
 	"extensions",
 	"jetbrains-central.ts",
 );
-
-export const E2E_CENTRAL_ARTIFACT_SEED = join(E2E_DATA_DIR, "real-central-extension.seed.ts");
 
 export const E2E_FIXTURE_REPO = join(E2E_DATA_DIR, "sample-project");
 
@@ -102,17 +94,11 @@ export const E2E_SPEECH_MANIFEST = join(E2E_SPEECH_FIXTURE_DIR, "manifest.json")
 
 export const E2E_PLAIN_DIR = join(E2E_DATA_DIR, "plain-folder");
 
-export const E2E_CENTRAL_STATE = join(E2E_DATA_DIR, "central-state");
-
-export const E2E_CENTRAL_LOG = join(E2E_DATA_DIR, "central-invocations.log");
-
 export const E2E_SCREENSHOT_DIR = join(repoRoot, "e2e", "screenshots");
 
 export const E2E_EDITOR_LOG = join(E2E_DATA_DIR, "editor-invocations.log");
 
 export const E2E_PI_AGENT_DIR = join(E2E_DATA_DIR, "pi-agent");
-
-export const E2E_PI_MODELS_SEED = join(E2E_DATA_DIR, "pi-agent-models.seed.json");
 
 export const E2E_RESTART_DATA_DIR = join(tmpdir(), `thinkrail-e2e-restart-${E2E_STATE_KEY}`);
 

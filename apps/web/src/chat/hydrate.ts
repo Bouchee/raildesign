@@ -31,6 +31,7 @@ function transcriptTurnId(
 	index: number,
 	options: HydrationOptions,
 ): string {
+	if (message.id) return message.id;
 	return options.idScope
 		? `${options.idScope}:${message.role}:${message.timestamp}:${index}`
 		: crypto.randomUUID();

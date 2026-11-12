@@ -35,7 +35,7 @@ core/SPEC.md), not an async wrapper — that would still block the loop in one p
   calls it on `workspace.remove` so an archived workspace's parse cache doesn't outlive it (a later
   read would just rebuild). **`projectHasSpecs(root) → boolean`** — whether a repo **root** (not a
   worktree) carries any **durable** spec (any node whose `type` isn't `task-spec` — an ephemeral scratch
-  task-spec, e.g. under `.thinkrail/context/`, must never signal "set up"), through a per-root reused `SpecIndex`; the
+  task-spec, e.g. under `.raildesign/context/`, must never signal "set up"), through a per-root reused `SpecIndex`; the
   project-level signal behind the Welcome screen's "Set up project" suggestion. Degrades to `false` on a
   glob/parse failure so it can never break `project.open` / `project.list`.
   **`specSnapshot(root) → SpecSnapshot`** — the search palette's read: every spec of a repo

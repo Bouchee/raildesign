@@ -1,4 +1,4 @@
-import { appendFileSync, realpathSync, utimesSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import {
 	defaultWorkspaceRow,
@@ -16,51 +16,40 @@ const IMAGE_DATA =
 
 const repoCwd = () => realpathSync(E2E_FIXTURE_REPO);
 
-function appendToolImageResult(path: string, sessionId: string): void {
-	const toolCallId = `${sessionId}-read-image`;
-	const entries = [
+function imageResultMessages(): Parameters<typeof seedWorkspaceSession>[1]["messages"] {
+	const toolCallId = "image-read";
+	return [
 		{
-			type: "message",
-			id: `${sessionId}-m1`,
-			parentId: `${sessionId}-m0`,
-			timestamp: new Date(BASE_TS + 1_000).toISOString(),
-			message: {
-				role: "assistant",
-				content: [
-					{ type: "toolCall", id: toolCallId, name: "read", arguments: { path: IMAGE_PATH } },
-				],
-				timestamp: BASE_TS + 1_000,
-			},
+			role: "assistant",
+			content: [
+				{ type: "toolCall", id: toolCallId, name: "read", arguments: { path: IMAGE_PATH } },
+			],
+			stopReason: "toolUse",
+			timestamp: BASE_TS + 1_000,
 		},
 		{
-			type: "message",
-			id: `${sessionId}-m2`,
-			parentId: `${sessionId}-m1`,
-			timestamp: new Date(BASE_TS + 2_000).toISOString(),
-			message: {
-				role: "toolResult",
-				toolCallId,
-				toolName: "read",
-				content: [
-					{ type: "text", text: `${IMAGE_PATH}\nRead image file [image/png]` },
-					{ type: "image", data: IMAGE_DATA, mimeType: "image/png" },
-				],
-				isError: false,
-				timestamp: BASE_TS + 2_000,
-			},
+			role: "toolResult",
+			toolCallId,
+			toolName: "read",
+			content: [
+				{ type: "text", text: `${IMAGE_PATH}\nRead image file [image/png]` },
+				{ type: "image", data: IMAGE_DATA, mimeType: "image/png" },
+			],
+			isError: false,
+			timestamp: BASE_TS + 2_000,
 		},
 	];
-	appendFileSync(path, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
-	utimesSync(path, new Date(BASE_TS), new Date(BASE_TS));
 }
 
 test("an image tool result previews inline and opens full screen", async ({ page }) => {
 	await openFixtureProject(page);
-	const chat = seedWorkspaceSession(repoCwd(), {
+	seedWorkspaceSession(repoCwd(), {
 		name: "image result",
-		messages: [{ role: "user", text: "read the mockup image", timestamp: BASE_TS }],
+		messages: [
+			{ role: "user", text: "read the mockup image", timestamp: BASE_TS },
+			...imageResultMessages(),
+		],
 	});
-	appendToolImageResult(chat.path, chat.id);
 
 	await expect(defaultWorkspaceRow(page)).toBeVisible();
 	await enterDefaultWorkspace(page);

@@ -10,12 +10,11 @@ depends-on: [module-contracts]
 ## Responsibility
 
 The server-synchronized app config: opaque fixed-theme selection, fixed/system mode and optional light/dark
-pair, additional-analytics preference and first-run dialog completion marker, host-owned new-chat model and
+pair, host-owned new-chat model and
 effort defaults, terminal replay budget and Windows shell preference, chat composer growth preset, chat/file
-visual line widths plus independent pane bounds, bounded custom layout-preset catalog, JetBrains quota
-display/cadence, the host-wide subagent default, plan-review policy, the host-registry extensions the
+visual line widths plus independent pane bounds, bounded custom layout-preset catalog, the host-wide subagent default, plan-review policy, the host-registry extensions the
 user turned off, and the UI language preference (`locale`). `defaultModel` / `defaultEffort`
-select the defaults every new chat receives (unset model means pi's `settings.json` default when available, else the preferred available model — pi's provider default, else the first; unset effort means medium);
+select the defaults every new chat receives (unset model means the configured verified model; unset effort means medium);
 `reviewModel` / `reviewEffort`
 select the reviewer runtime (unset means that same new-chat default); `reviewAutoFix: false` records a `request_changes`
 verdict and waits instead of auto-sending a fix. **`favoriteModels`** is the picker's starred list in display
@@ -32,8 +31,7 @@ Current workbench frame, workspace resource placement, current/default preset se
 A numeric setting is bounded by its consumer when that domain owns the safety cap—for example `terminal`
 clamps `terminalReplayKb`, so a hand-edited config cannot exhaust memory. Settings validates the shared
 40–240 line-width contract and custom layout presets because it owns their cross-frontend storage contract.
-It also validates the global `jbcentralQuotaEnabled` boolean and whole `jbcentralQuotaRefreshSeconds`
-interval (`1–3600`, default 30), because those values govern host process cadence across every frontend.
+
 
 ## Boundary
 

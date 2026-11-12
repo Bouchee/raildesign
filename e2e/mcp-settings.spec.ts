@@ -5,16 +5,17 @@ import { expect, type Page, test } from "@playwright/test";
 import type { WsRequest } from "@thinkrail/contracts";
 import { enterDefaultWorkspace, openFixtureProject, openPersistedChat } from "./fixtures/app";
 import { resolveBunExecutable } from "./fixtures/executables";
-import { E2E_FIXTURE_REPO, E2E_PI_AGENT_DIR } from "./fixtures/paths";
+import { E2E_DATA_DIR, E2E_FIXTURE_REPO } from "./fixtures/paths";
 import { seedWorkspaceSession } from "./fixtures/sessions";
+import { E2eWire } from "./fixtures/wire";
 
 const BUN = resolveBunExecutable();
 const STDIO_SERVER = fileURLToPath(
 	new URL("../packages/server/src/agent/mcp/fixtures/stdioServer.ts", import.meta.url),
 );
-const USER_CONFIG = join(E2E_PI_AGENT_DIR, "mcp.json");
-const MCP_LOG = join(E2E_PI_AGENT_DIR, "mcp.log");
-const PROJECT_CONFIG_DIR = join(E2E_FIXTURE_REPO, ".pi");
+const USER_CONFIG = join(E2E_DATA_DIR, "mcp.json");
+const MCP_LOG = join(E2E_DATA_DIR, "mcp.log");
+const PROJECT_CONFIG_DIR = join(E2E_FIXTURE_REPO, ".raildesign");
 
 async function openMcpSettings(page: Page): Promise<void> {
 	await page.getByTestId("open-settings").click();
@@ -204,7 +205,7 @@ test("a stdio server added through the form connects in a chat, is disabled ther
 		await openMcpSettings(page);
 		const settings = page.getByTestId("settings-mcp");
 		await expect(settings.getByTestId("mcp-confirm-banner")).toHaveText(
-			"ThinkRail asks in the chat before MCP calls that may change data. Always allow trusts a tool in every chat of this project; those tools are listed on their server below.",
+			"Per-tool approval preferences are saved for future model calls. Connection tests can start servers on this machine.",
 		);
 		await settings.getByTestId("mcp-empty-add").click();
 		const dialog = page.getByTestId("mcp-add-dialog");
@@ -223,7 +224,7 @@ test("a stdio server added through the form connects in a chat, is disabled ther
 		await dialog.getByTestId("mcp-add-confirm").click();
 		await expect(dialog).toBeHidden();
 		await expect(settings.getByTestId("mcp-feedback")).toHaveText(
-			"Saved — applies to open chats as they reload; a busy chat waits until it is idle.",
+			"Saved — server connections will refresh.",
 		);
 
 		const row = serverRow(page, "fixture");
@@ -234,18 +235,35 @@ test("a stdio server added through the form connects in a chat, is disabled ther
 		});
 		await closeSettings(page);
 
-		await page.getByTestId("resources-trigger").click();
-		const inspector = page.getByTestId("resources-inspector");
-		const chatRow = inspector.locator('[data-testid="resource-mcp"][data-name="fixture"]');
-		await expect(chatRow.getByTestId("resource-mcp-state")).toHaveText("Connected · 4 tools", {
-			timeout: 30_000,
-		});
-		await chatRow.getByTestId("resource-mcp-disable").click();
-		await expect(chatRow).toHaveAttribute("data-state", "disabled-in-chat", { timeout: 30_000 });
-		await expect(chatRow.getByTestId("resource-mcp-state")).toHaveText("Disabled in this chat");
-		await expect(chatRow.getByTestId("resource-mcp-enable")).toBeVisible();
-		await inspector.getByTestId("resources-inspector-close").click();
-
+		const wire = await E2eWire.connect();
+		try {
+			const [project] = await wire.request("project.list", {});
+			if (!project) throw new Error("Missing fixture project");
+			const workspace = (await wire.request("workspace.list", { projectId: project.id })).find(
+				(item) => item.kind === "default",
+			);
+			if (!workspace) throw new Error("Missing fixture workspace");
+			const session = (await wire.request("session.list", { workspaceId: workspace.id })).find(
+				(item) => item.title === "MCP chat",
+			);
+			if (!session) throw new Error("Missing fixture session");
+			await wire.request("mcp.setSessionOverride", {
+				workspaceId: workspace.id,
+				sessionId: session.sessionId,
+				name: "fixture",
+				enabled: false,
+			});
+			await expect
+				.poll(async () => {
+					const result = await wire.request("mcp.list", { workspaceId: workspace.id });
+					return result.statuses
+						.find((status) => status.sessionId === session.sessionId)
+						?.servers.find((server) => server.name === "fixture")?.state;
+				})
+				.toBe("disabled-in-chat");
+		} finally {
+			wire.close();
+		}
 		await openMcpSettings(page);
 		await row.getByTestId("mcp-server-menu").click();
 		const edit = page.getByTestId("mcp-menu-edit");
@@ -296,16 +314,17 @@ test("a not-running server opens a chat; a failed one reconnects per chat and sh
 		const reconnect = row.getByTestId("mcp-server-action");
 		await expect(reconnect).toHaveAttribute("data-action", "reconnect");
 		await reconnect.click();
-		await expect(row.getByRole("alert")).toContainText("failed to connect", { timeout: 30_000 });
+		await expect(row.getByRole("alert")).toContainText("Connection closed", { timeout: 30_000 });
 
 		const showLog = row.getByTestId("mcp-server-secondary");
 		await expect(showLog).toHaveAttribute("data-action", "show-log");
 		await showLog.click();
 		const log = page.getByTestId("mcp-log-dialog");
-		await expect(log.getByTestId("mcp-log-report")).toContainText("fixture boom");
-		await expect(log.getByTestId("mcp-log-text")).toHaveText(
+		await expect(log.getByTestId("mcp-log-report")).toContainText("Connection closed");
+		await expect(log.getByTestId("mcp-log-text")).toContainText(
 			"2026-10-08T09:00:00.000Z [broken] error fixture log line api_key=***",
 		);
+		await expect(log.getByTestId("mcp-log-text")).toContainText("fixture boom");
 		await expect(log).toContainText(MCP_LOG);
 		await expect(log).not.toContainText("fixture-log-secret");
 		await expect(log).not.toContainText("unrelated line");
@@ -334,7 +353,7 @@ test("an unreadable user mcp.json is named in Settings with an edit hint while n
 	}
 });
 
-test("a repository-defined server flags the chat, waits for approval and starts once approved", async ({
+test("a repository-defined server needs trust and individual approval before it connects", async ({
 	page,
 }) => {
 	mkdirSync(PROJECT_CONFIG_DIR, { recursive: true });
@@ -358,7 +377,7 @@ test("a repository-defined server flags the chat, waits for approval and starts 
 		await openFixtureProject(page);
 		const notice = page.getByTestId("project-trust-notice");
 		await expect(notice.getByTestId("project-trust-enables")).toContainText(
-			"Its 1 MCP server still needs your approval one by one.",
+			"Its 1 MCP server still needs individual approval.",
 		);
 		await notice.getByTestId("project-trust-button").click();
 		await expect(notice).toHaveAttribute("data-state", "trusted");
@@ -374,10 +393,7 @@ test("a repository-defined server flags the chat, waits for approval and starts 
 		await enterDefaultWorkspace(page);
 		await openPersistedChat(page, "Repo MCP chat");
 
-		const attention = page.getByTestId("resources-mcp-attention");
-		await expect(attention).toHaveAttribute("data-count", "1", { timeout: 30_000 });
-		await attention.click();
-		await expect(page.getByTestId("settings-mcp")).toBeVisible();
+		await openMcpSettings(page);
 		const row = serverRow(page, "repo-fixture");
 		await expect(row).toHaveAttribute("data-state", "pending-approval");
 		await expect(row.getByTestId("mcp-server-scope")).toHaveText("Project");
@@ -411,7 +427,6 @@ test("a repository-defined server flags the chat, waits for approval and starts 
 		await editor.getByRole("button", { name: "Cancel" }).click();
 		await expect(editor).toBeHidden();
 		await closeSettings(page);
-		await expect(attention).toHaveCount(0, { timeout: 30_000 });
 	} finally {
 		rmSync(PROJECT_CONFIG_DIR, { recursive: true, force: true });
 	}

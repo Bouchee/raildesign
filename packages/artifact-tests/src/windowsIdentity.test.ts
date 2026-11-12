@@ -89,11 +89,11 @@ test("reads the group the shell picks first: Bun's named group before numbered o
 	const read = readWindowsExecutableIdentity(bunLayout(frames));
 	expect(read.defaultIconFrames).toHaveLength(1);
 	expect(read.defaultIconFrames[0]).toEqual(frames[0]?.bytes);
-	expect(read.strings.FileDescription).toBe("ThinkRail Nightly");
+	expect(read.strings.FileDescription).toBe("RailDesign Nightly");
 	expect(read.fileVersion).toBe("0.3.0.6");
 });
 
-test("accepts an executable whose default group shows ThinkRail's largest frame", () => {
+test("accepts an executable whose default group shows RailDesign's largest frame", () => {
 	expect(windowsIdentityMismatches(bunLayout(frames), identity, icon)).toEqual([]);
 	const allFrames = executable(
 		frames.map(({ bytes }) => bytes),
@@ -117,12 +117,12 @@ test("names a stretched small frame, a foreign icon and wrong properties", () =>
 	);
 	expect(windowsIdentityMismatches(foreign, identity, icon)).toEqual([
 		"the shell's default icon group lacks the ICO's largest frame",
-		"the shell's default icon group holds frames that are not ThinkRail's",
+		"the shell's default icon group holds frames that are not RailDesign's",
 	]);
 	const stable = windowsFileIdentity({ version: "0.3.0", channel: "stable" });
 	expect(windowsIdentityMismatches(bunLayout(frames), stable, icon)).toEqual([
-		'FileDescription is "ThinkRail Nightly", expected "ThinkRail"',
-		'ProductName is "ThinkRail Nightly", expected "ThinkRail"',
+		'FileDescription is "RailDesign Nightly", expected "RailDesign"',
+		'ProductName is "RailDesign Nightly", expected "RailDesign"',
 		'FileVersion is "0.3.0.6", expected "0.3.0.0"',
 		'ProductVersion is "0.3.0.6", expected "0.3.0.0"',
 		"fixed file version is 0.3.0.6, expected 0.3.0.0",

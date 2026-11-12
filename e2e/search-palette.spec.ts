@@ -19,7 +19,11 @@ import {
 	pressPlatformShortcut,
 } from "./fixtures/app";
 import { E2E_FIXTURE_REPO } from "./fixtures/paths";
-import { seedWorkspaceSession } from "./fixtures/sessions";
+import {
+	completedFixtureState,
+	pendingToolFixtureState,
+	seedWorkspaceSession,
+} from "./fixtures/sessions";
 import { E2eWire } from "./fixtures/wire";
 
 const BASE_TS = 1_704_000_000_000;
@@ -84,6 +88,7 @@ function seedAttention(repo: string) {
 	return [
 		seedWorkspaceSession(repo, {
 			name: "Needs input chat",
+			state: pendingToolFixtureState("q"),
 			messages: [
 				{ role: "user", text: "ask", timestamp: BASE_TS },
 				{
@@ -96,6 +101,7 @@ function seedAttention(repo: string) {
 		}),
 		seedWorkspaceSession(repo, {
 			name: "Unread result chat",
+			state: completedFixtureState("search-unread-result"),
 			messages: [
 				{ role: "user", text: "do", timestamp: BASE_TS + 10 },
 				{ role: "assistant", text: "done", timestamp: BASE_TS + 11 },
@@ -211,6 +217,7 @@ test("a chat in a workspace this window never opened is found by its title, rena
 	await openFixtureProject(page);
 	const seeded = seedWorkspaceSession(repo, {
 		name: "Zebra migration plan",
+		state: completedFixtureState("search-zebra-completion"),
 		messages: [
 			{ role: "user", text: "move the tables", timestamp: BASE_TS + 20 },
 			{ role: "assistant", text: "moved", timestamp: BASE_TS + 21 },
@@ -259,6 +266,7 @@ test("picking a chat or a workspace puts the cursor in the chat input, unless th
 	await openFixtureProject(page);
 	const seeded = seedWorkspaceSession(repo, {
 		name: "Zebra migration plan",
+		state: completedFixtureState("search-zebra-completion"),
 		messages: [
 			{ role: "user", text: "move the tables", timestamp: BASE_TS + 20 },
 			{ role: "assistant", text: "moved", timestamp: BASE_TS + 21 },
@@ -321,14 +329,14 @@ test("picking a chat or a workspace puts the cursor in the chat input, unless th
 		await expect(palette(page)).toBeHidden();
 		await nextFrame(page);
 		await expect(focusedChat).toHaveCount(0);
-		const skills = page
+		const modelPicker = page
 			.getByTestId("center-group")
 			.filter({ has: page.getByTestId("chat-view") })
-			.getByTestId("open-skills");
-		await skills.focus();
+			.getByTestId("model-selector");
+		await modelPicker.focus();
 		await nextFrame(page);
 		await nextFrame(page);
-		await expect(skills).toBeFocused();
+		await expect(modelPicker).toBeFocused();
 		await expect(focusedChat).toHaveCount(0);
 	} finally {
 		rmSync(seeded.path, { force: true });

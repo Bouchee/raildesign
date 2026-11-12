@@ -23,19 +23,12 @@ describe("parseArgs", () => {
 			port: DEFAULT_PORT,
 			host: DEFAULT_HOST,
 			open: true,
-			noAnalytics: false,
 			verbose: false,
 			staticDir: undefined,
 			projectDir: undefined,
 			help: false,
 			version: false,
 		});
-	});
-
-	test("--no-analytics mutes for the run; the env spelling is the analytics service's job", () => {
-		expect(parseArgs(["--no-analytics"], {}).noAnalytics).toBe(true);
-		expect(parseArgs([], { THINKRAIL_NO_ANALYTICS: "1" }).noAnalytics).toBe(false);
-		expect(parseArgs([], {}).noAnalytics).toBe(false);
 	});
 
 	test("--verbose turns on debug logging; the env spelling is the log module's job", () => {

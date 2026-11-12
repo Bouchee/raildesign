@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { PiEvent, TurnChangeSet } from "@thinkrail/contracts";
+import type { SessionEvent, TurnChangeSet } from "@thinkrail/contracts";
 import * as gitModule from "../git";
 import { gitDiffFile, gitStatus, snapshotWorktree } from "../git";
 import { loadTurns, saveWorkspaces } from "../persistence";
@@ -60,8 +60,8 @@ afterEach(() => {
 
 const resolve = () => ({ workspaceId: "w1", worktreePath: repo });
 
-const start: PiEvent = { type: "agent_start" };
-const settle: PiEvent = { type: "agent_settled", terminal: null };
+const start: SessionEvent = { type: "agent_start" };
+const settle: SessionEvent = { type: "agent_settled", terminal: null };
 
 test("a worktree snapshot captures tracked edits and untracked files without touching the index", async () => {
 	const head = git(repo, "rev-parse", "HEAD^{tree}");

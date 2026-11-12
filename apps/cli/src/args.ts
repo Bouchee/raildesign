@@ -5,7 +5,6 @@ export interface CliOptions {
 	port: number;
 	host: string;
 	open: boolean;
-	noAnalytics: boolean;
 	verbose: boolean;
 	staticDir: string | undefined;
 	projectDir: string | undefined;
@@ -23,23 +22,21 @@ export function parseSubcommand(argv: readonly string[]): Subcommand | undefined
 	return SUBCOMMANDS.find((name) => name === argv[0]);
 }
 
-export const USAGE = `Usage: thinkrail [options] [project-dir]
-       thinkrail update [--channel stable|nightly] [--version X.Y.Z|X.Y.Z-nightly.N|latest]
-       thinkrail uninstall [--remove-data|--keep-data] [-y]
+export const USAGE = `Usage: raildesign [options] [project-dir]
+       raildesign update [--channel stable|nightly] [--version X.Y.Z|X.Y.Z-nightly.N|latest]
+       raildesign uninstall [--remove-data|--keep-data] [-y]
 
-Boots the ThinkRail engine host in-process and opens the browser to the app.
+Boots the RailDesign engine host in-process and opens the browser to the app.
 The \`update\` subcommand re-downloads + installs the latest build for your channel;
-\`uninstall\` removes ThinkRail from this machine (your ~/.thinkrail app state is kept
+\`uninstall\` removes RailDesign from this machine (your ~/.raildesign app state is kept
 unless you ask for it to go). Both take \`--help\`.
 
 Options:
   --port <n>     Listen port (default ${DEFAULT_PORT}; falls back to a free port if taken).
   --host <h>     Bind host (default ${DEFAULT_HOST}).
   --no-open      Don't open the browser (e.g. headless / remote host).
-  --no-analytics Disable additional usage analytics this run.
-                 The saved sharing preference lives in Settings → Privacy.
   --verbose      Debug-level logging (terminal + the rotated log files under
-                 ~/.thinkrail/logs).
+                 ~/.raildesign/logs).
   -v, --version  Print the version and exit.
   -h, --help     Show this help.
 
@@ -49,7 +46,6 @@ Arguments:
 Env:
   THINKRAIL_PORT / THINKRAIL_HOST   Defaults for --port / --host.
   THINKRAIL_STATIC_DIR                 Override the built web app served by the host.
-  THINKRAIL_NO_ANALYTICS               Same as --no-analytics (any non-empty value; read by the host).
   THINKRAIL_LOG_LEVEL                  Log level: debug|info|warn|error (default info; read by the host).`;
 
 function readFlagValue(arg: string, next: string | undefined): { value: string; consumed: number } {
@@ -69,7 +65,6 @@ export function parseArgs(argv: readonly string[], env: ParseEnv = {}): CliOptio
 	let port: number | undefined;
 	let host: string | undefined;
 	let open = true;
-	let noAnalytics = false;
 	let verbose = false;
 	let help = false;
 	let version = false;
@@ -79,8 +74,6 @@ export function parseArgs(argv: readonly string[], env: ParseEnv = {}): CliOptio
 		const arg = argv[i] as string;
 		if (arg === "--no-open") {
 			open = false;
-		} else if (arg === "--no-analytics") {
-			noAnalytics = true;
 		} else if (arg === "--verbose") {
 			verbose = true;
 		} else if (arg === "-h" || arg === "--help") {
@@ -115,7 +108,6 @@ export function parseArgs(argv: readonly string[], env: ParseEnv = {}): CliOptio
 		port: resolvedPort,
 		host: host ?? envHost ?? DEFAULT_HOST,
 		open,
-		noAnalytics,
 		verbose,
 		staticDir: env.THINKRAIL_STATIC_DIR,
 		projectDir,

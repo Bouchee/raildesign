@@ -1,7 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { AssistantMessage, StopReason, ToolResultMessage } from "@thinkrail/contracts";
+import type {
+	AssistantMessage,
+	SessionState,
+	StopReason,
+	ToolResultMessage,
+	TranscriptMessage,
+} from "@thinkrail/contracts";
+
+import type { SessionRecord } from "../agent";
 
 type FixtureAssistantMessage = {
 	role: "assistant";
@@ -13,6 +21,7 @@ type FixtureAssistantMessage = {
 export type FixtureMessage =
 	| { role: "user"; text: string; timestamp: number }
 	| FixtureAssistantMessage
+	| Extract<TranscriptMessage, { role: "custom" | "compactionSummary" }>
 	| {
 			role: "toolResult";
 			toolCallId: string;
@@ -27,84 +36,76 @@ export function writeFixtureSession(
 	dir: string,
 	opts: {
 		id?: string;
+		workspaceId?: string;
 		cwd: string;
 		name?: string;
 		messages: FixtureMessage[];
+		state?: SessionState;
+		updatedAt?: number;
 	},
 ): { id: string; path: string } {
-	mkdirSync(dir, { recursive: true });
-
-	const sessionId = opts.id ?? `sess-${randomUUID()}`;
-	const entryId = (suffix: string) => `${sessionId}-${suffix}`;
-	let parentId: string | null = null;
-	const lines: string[] = [
-		JSON.stringify({
-			type: "session",
-			version: 3,
-			id: sessionId,
-			timestamp: new Date(opts.messages[0]?.timestamp ?? Date.now()).toISOString(),
-			cwd: opts.cwd,
-		}),
-	];
-
-	if (opts.name !== undefined) {
-		const id = entryId("info");
-		lines.push(
-			JSON.stringify({
-				type: "session_info",
-				id,
-				parentId,
-				timestamp: new Date().toISOString(),
-				name: opts.name,
-			}),
-		);
-		parentId = id;
-	}
-
-	opts.messages.forEach((m, i) => {
-		const id = entryId(`m${i}`);
-		const content =
-			m.role === "user"
-				? m.text
-				: m.role === "assistant"
-					? (m.content ?? [{ type: "text", text: m.text }])
-					: m.content;
-		lines.push(
-			JSON.stringify({
-				type: "message",
-				id,
-				parentId,
-				timestamp: new Date(m.timestamp).toISOString(),
-				message: {
-					role: m.role,
-					content,
-					timestamp: m.timestamp,
-					...(m.role === "assistant" && m.stopReason ? { stopReason: m.stopReason } : {}),
-					...(m.role === "assistant" && m.errorMessage !== undefined
-						? { errorMessage: m.errorMessage }
-						: {}),
-					...(m.role === "toolResult"
-						? {
-								toolCallId: m.toolCallId,
-								toolName: m.toolName,
-								...(m.details !== undefined ? { details: m.details } : {}),
-								isError: m.isError,
-							}
-						: {}),
-				},
-			}),
-		);
-		parentId = id;
+	const sessionId = opts.id ?? randomUUID();
+	if (!/^[A-Za-z0-9_-]{1,200}$/.test(sessionId)) throw new Error("Invalid fixture session ID");
+	const messages: TranscriptMessage[] = opts.messages.map((message, index) => {
+		const id = `${sessionId}-m${index}`;
+		if (message.role === "user")
+			return { id, role: "user", content: message.text, timestamp: message.timestamp };
+		if (message.role === "toolResult") return { ...message, id };
+		if (message.role === "custom" || message.role === "compactionSummary")
+			return { ...message, id };
+		const content = message.content ?? [{ type: "text" as const, text: message.text }];
+		return {
+			id,
+			role: "assistant",
+			content,
+			timestamp: message.timestamp,
+			api: "openai-responses",
+			provider: "fixture",
+			model: "fixture",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: message.stopReason ?? "stop",
+			...(message.errorMessage === undefined ? {} : { errorMessage: message.errorMessage }),
+		};
 	});
-
-	const path = join(dir, `${opts.messages[0]?.timestamp ?? Date.now()}_${sessionId}.jsonl`);
-	writeFileSync(path, `${lines.join("\n")}\n`);
+	const record: SessionRecord = {
+		version: 1,
+		sessionId,
+		workspaceId: opts.workspaceId ?? "fixture",
+		cwd: resolve(opts.cwd),
+		...(opts.name === undefined ? {} : { title: opts.name }),
+		model: null,
+		thinkingLevel: "off",
+		eventSeq: 0,
+		revision: 0,
+		history: [],
+		messages,
+		decisions: {},
+		updatedAt: opts.updatedAt ?? Math.max(0, ...messages.map((message) => message.timestamp)),
+		state: opts.state ?? {
+			execution: "idle",
+			runId: null,
+			needsInput: null,
+			completion: null,
+			completionUnread: false,
+			queuedCount: 0,
+			backgroundWork: false,
+		},
+	};
+	mkdirSync(dir, { recursive: true, mode: 0o700 });
+	const path = join(dir, `${sessionId}.json`);
+	const temporary = join(dir, `.${sessionId}.${randomUUID()}.tmp`);
+	writeFileSync(temporary, `${JSON.stringify(record)}\n`, { mode: 0o600 });
+	renameSync(temporary, path);
 	return { id: sessionId, path };
 }
 
-export function defaultSessionDirFor(agentDir: string, cwd: string): string {
-	const resolvedCwd = resolve(cwd);
-	const resolvedAgentDir = resolve(agentDir);
-	const safePath = `--${resolvedCwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
-	return join(resolvedAgentDir, "sessions", safePath);
+export function sessionDirFor(dataDirectory: string): string {
+	return join(resolve(dataDirectory), "sessions");
 }

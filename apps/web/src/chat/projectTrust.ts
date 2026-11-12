@@ -12,13 +12,13 @@ export type ProjectTrustNotice =
 	| {
 			kind: "untrusted";
 			aliasSkills: number;
-			piResources: ProjectResourceKind[];
+			applicationResources: ProjectResourceKind[];
 			mcpServers: number;
 	  }
 	| { kind: "unacknowledged"; names: string[] }
 	| { kind: "trusted"; aliasSkills: number };
 
-type TrustRecord = Pick<Project, "trusted" | "piResourceTrust" | "acknowledgedSkills">;
+type TrustRecord = Pick<Project, "trusted" | "resourceTrust" | "acknowledgedSkills">;
 
 export function deriveProjectTrustNotice(
 	project: TrustRecord | undefined,
@@ -28,16 +28,21 @@ export function deriveProjectTrustNotice(
 	const mcpServers = summary.mcpServers ?? 0;
 	const aliasPending = summary.aliasSkills.length > 0 && project.trusted !== true;
 	const nativePending =
-		(summary.piResources.length > 0 || mcpServers > 0) && project.piResourceTrust !== "granted";
+		(summary.applicationResources.length > 0 || mcpServers > 0) &&
+		project.resourceTrust !== "granted";
 	if (aliasPending || nativePending) {
 		return {
 			kind: "untrusted",
 			aliasSkills: aliasPending ? summary.aliasSkills.length : 0,
-			piResources: nativePending ? summary.piResources : [],
+			applicationResources: nativePending ? summary.applicationResources : [],
 			mcpServers: nativePending ? mcpServers : 0,
 		};
 	}
-	if (summary.aliasSkills.length === 0 && summary.piResources.length === 0 && mcpServers === 0)
+	if (
+		summary.aliasSkills.length === 0 &&
+		summary.applicationResources.length === 0 &&
+		mcpServers === 0
+	)
 		return { kind: "hidden" };
 	const acknowledged = new Set(project.acknowledgedSkills ?? []);
 	const names = summary.aliasSkills.filter((name) => !acknowledged.has(name));
@@ -45,14 +50,12 @@ export function deriveProjectTrustNotice(
 	return { kind: "trusted", aliasSkills: summary.aliasSkills.length };
 }
 
-const LOADED_KINDS: ReadonlyArray<[ProjectResourceKind, MessageKey]> = [
+const RESOURCE_KINDS: ReadonlyArray<[ProjectResourceKind, MessageKey]> = [
 	["skills", "chat.trust.kind.skills"],
 	["prompts", "chat.trust.kind.prompts"],
 	["themes", "chat.trust.kind.themes"],
 	["systemPrompt", "chat.trust.kind.systemPrompt"],
 	["subagents", "chat.trust.kind.subagents"],
-];
-const CODE_KINDS: ReadonlyArray<[ProjectResourceKind, MessageKey]> = [
 	["extensions", "chat.trust.kind.extensions"],
 	["settings", "chat.trust.kind.settings"],
 ];
@@ -78,7 +81,7 @@ export function untrustedNoticeText(
 ): string {
 	const parts = [
 		...(notice.aliasSkills > 0 ? [t("chat.trust.skills", { count: notice.aliasSkills })] : []),
-		...(notice.piResources.length > 0 ? [t("chat.trust.piResources")] : []),
+		...(notice.applicationResources.length > 0 ? [t("chat.trust.applicationResources")] : []),
 		...(notice.mcpServers > 0 ? [t("chat.trust.mcpServers", { count: notice.mcpServers })] : []),
 	];
 	const items = parts.reduce(
@@ -92,16 +95,9 @@ export function trustEnablesText(
 	t: Translator,
 	notice: Extract<ProjectTrustNotice, { kind: "untrusted" }>,
 ): string | null {
-	const present = new Set(notice.piResources);
-	const loads = namesOf(t, LOADED_KINDS, present);
-	const runs = namesOf(t, CODE_KINDS, present);
-	const enables = !runs
-		? loads
-			? t("chat.trust.enablesLoads", { loads })
-			: null
-		: loads
-			? t("chat.trust.enablesLoadsAndRuns", { loads, runs })
-			: t("chat.trust.enablesRuns", { runs });
+	const present = new Set(notice.applicationResources);
+	const loads = namesOf(t, RESOURCE_KINDS, present);
+	const enables = loads ? t("chat.trust.enablesLoads", { loads }) : null;
 	if (notice.mcpServers === 0) return enables;
 	const mcp = t("chat.trust.mcpApproval", { count: notice.mcpServers });
 	return enables ? t("chat.trust.sentences", { first: enables, second: mcp }) : mcp;
@@ -114,7 +110,7 @@ export function trustGrantParams(
 	return {
 		id: projectId,
 		trusted: true,
-		...(notice.piResources.length > 0 || notice.mcpServers > 0 ? { resources: true } : {}),
+		...(notice.applicationResources.length > 0 || notice.mcpServers > 0 ? { resources: true } : {}),
 	};
 }
 
@@ -128,7 +124,7 @@ export function trustedNoticeText(
 }
 
 export function canStopTrusting(project: TrustRecord | undefined): boolean {
-	return project?.trusted === true || project?.piResourceTrust === "granted";
+	return project?.trusted === true || project?.resourceTrust === "granted";
 }
 
 export function stopTrustingText(
@@ -136,7 +132,7 @@ export function stopTrustingText(
 	project: TrustRecord | undefined,
 	supportsProjectTrust: boolean,
 ): string {
-	return supportsProjectTrust && project?.piResourceTrust === "granted"
+	return supportsProjectTrust && project?.resourceTrust === "granted"
 		? t("chat.trust.stopTrustingResources")
 		: t("chat.trust.stopTrustingSkills");
 }

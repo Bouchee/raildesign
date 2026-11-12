@@ -1,10 +1,11 @@
 import { realpathSync } from "node:fs";
 import { expect, type Page, test, type WebSocketRoute } from "@playwright/test";
-import type { ExtUiRequest, SessionStateRecord } from "@thinkrail/contracts";
+import type { ExtUiRequest, ExtUiResponse, SessionStateRecord } from "@thinkrail/contracts";
 import { enterDefaultWorkspace, openFixtureProject, openPersistedChat } from "./fixtures/app";
 import { E2E_FIXTURE_REPO } from "./fixtures/paths";
 import { shot } from "./fixtures/screenshots";
 import { seedWorkspaceSession } from "./fixtures/sessions";
+import { E2eWire } from "./fixtures/wire";
 
 const BASE_TS = 1_700_950_000_000;
 const MCP_CALL = "call-linear";
@@ -12,17 +13,20 @@ const MCP_CALL = "call-linear";
 type DialogRequest = Extract<ExtUiRequest, { kind: "select" | "confirm" | "input" | "editor" }>;
 
 interface Wire {
-	ask(request: DialogRequest): void;
-	dismiss(request: DialogRequest): void;
-	replies: { id: string; value: unknown }[];
+	ask(request: DialogRequest): Promise<void>;
+	dismiss(request: Pick<DialogRequest, "id" | "sessionId">): void;
+	replies: ExtUiResponse[];
 }
 
 // The host never raised these dialogs, so its own `session.state` pushes would report no pending input
-// and the client would drop them; the shim keeps reporting each one until it is answered or dismissed.
+// and the client would drop them; this renderer fixture keeps ownership until explicit dismissal.
+// Replies reach the real host and are rejected; this fixture never manufactures successful execution.
 async function routeWire(page: Page): Promise<Wire> {
 	let browser: WebSocketRoute | null = null;
 	const replies: Wire["replies"] = [];
 	const asking = new Map<string, DialogRequest>();
+	const baseline = new Map<string, SessionStateRecord>();
+	let revision = 0;
 	const withDialog = (record: SessionStateRecord): SessionStateRecord => {
 		const request = asking.get(record.sessionId);
 		return request
@@ -30,6 +34,7 @@ async function routeWire(page: Page): Promise<Wire> {
 					...record,
 					state: {
 						...record.state,
+						runId: request.runId ?? null,
 						needsInput: { interactionId: request.id, kind: "dialog", request },
 					},
 				}
@@ -46,14 +51,11 @@ async function routeWire(page: Page): Promise<Wire> {
 			try {
 				const frame = JSON.parse(message.toString()) as {
 					method?: string;
-					params?: { response?: { id: string; value: unknown } };
+					params?: { response?: ExtUiResponse };
 				};
 				const response = frame.params?.response;
 				if (frame.method === "session.extUiReply" && response) {
 					replies.push(response);
-					for (const [sessionId, request] of asking) {
-						if (request.id === response.id) asking.delete(sessionId);
-					}
 				}
 			} catch {}
 			server.send(message);
@@ -72,14 +74,30 @@ async function routeWire(page: Page): Promise<Wire> {
 		});
 	});
 	return {
-		ask(request) {
-			asking.set(request.sessionId, request);
-			send({ channel: "pi.extensionUi", data: request });
+		async ask(request) {
+			const wire = await E2eWire.connect(Number(new URL(page.url()).port));
+			try {
+				const record = (await wire.request("session.stateList", {})).find(
+					(record) => record.sessionId === request.sessionId,
+				);
+				if (!record) throw new Error(`No owned fixture session state for ${request.sessionId}`);
+				baseline.set(request.sessionId, record);
+			} finally {
+				wire.close();
+			}
+			const owned = { ...request, runId: `ui-${request.sessionId}`, revision: ++revision };
+			asking.set(request.sessionId, owned);
+			const record = baseline.get(request.sessionId);
+			if (!record) throw new Error("Missing fixture state");
+			send({ channel: "session.state", data: withDialog(record) });
+			send({ channel: "session.interaction", data: owned });
 		},
 		dismiss(request) {
 			asking.delete(request.sessionId);
+			const record = baseline.get(request.sessionId);
+			if (record) send({ channel: "session.state", data: record });
 			send({
-				channel: "pi.extensionUi",
+				channel: "session.interaction",
 				data: { id: request.id, sessionId: request.sessionId, kind: "dismiss" },
 			});
 		},
@@ -135,7 +153,7 @@ test("an extension dialog about a tool call asks on that tool's card, out of a c
 	const group = page.getByTestId("activity-group").first();
 	await expect(group).toHaveAttribute("data-expanded", "false");
 
-	wire.ask({
+	await wire.ask({
 		id: "extui-mcp",
 		sessionId,
 		kind: "select",
@@ -165,12 +183,18 @@ test("an extension dialog about a tool call asks on that tool's card, out of a c
 		page.getByRole("region", { name: "Allow linear/create_issue? It may change data." }),
 	).toBeVisible();
 	await expect(prompt.getByTestId("ext-ui-hint")).toHaveText(
-		"Sending a chat message cancels this request.",
+		"Reject this request or use Stop to cancel the task.",
 	);
 	await shot(group, "extension-dialogs", "mcp-approval-on-card");
 
 	await prompt.getByTestId("ext-ui-option").filter({ hasText: "Always allow" }).click();
-	await expect.poll(() => wire.replies).toEqual([{ id: "extui-mcp", value: "Always allow" }]);
+	await expect
+		.poll(() => wire.replies)
+		.toEqual([
+			{ id: "extui-mcp", sessionId, runId: `ui-${sessionId}`, revision: 1, value: "Always allow" },
+		]);
+	await expect(page.getByTestId("ext-ui-prompt")).toBeVisible();
+	wire.dismiss({ id: "extui-mcp", sessionId });
 	await expect(page.getByTestId("ext-ui-prompt")).toHaveCount(0);
 	await expect(group.getByTestId("activity-awaiting-step")).toHaveCount(0);
 });
@@ -183,7 +207,7 @@ test("an approval lists the call's whole input inside the prompt, anchored or do
 	const group = page.getByTestId("activity-group").first();
 	const topic = "A very long research topic, written out in full detail. ".repeat(60).trim();
 
-	wire.ask({
+	await wire.ask({
 		id: "extui-anchored",
 		sessionId,
 		kind: "select",
@@ -209,9 +233,11 @@ test("an approval lists the call's whole input inside the prompt, anchored or do
 	await expect(input.locator("dd").last()).toBeInViewport();
 	await shot(group, "extension-dialogs", "mcp-approval-lists-input");
 	await prompt.getByTestId("ext-ui-option").filter({ hasText: "Deny" }).click();
-	await expect.poll(() => wire.replies).toEqual([{ id: "extui-anchored", value: "Deny" }]);
+	await expect.poll(() => wire.replies).toMatchObject([{ id: "extui-anchored", value: "Deny" }]);
+	await expect(page.getByTestId("ext-ui-prompt")).toBeVisible();
+	wire.dismiss({ id: "extui-anchored", sessionId });
 
-	wire.ask({
+	await wire.ask({
 		id: "extui-docked",
 		sessionId,
 		kind: "select",
@@ -234,7 +260,7 @@ test("a draft typed into an anchored prompt survives folding its Activity group 
 	const wire = await routeWire(page);
 	const sessionId = await openSeededChat(page, "Dialog draft across folds");
 	const group = page.getByTestId("activity-group").first();
-	wire.ask({
+	await wire.ask({
 		id: "extui-edit",
 		sessionId,
 		kind: "editor",
@@ -255,7 +281,9 @@ test("a draft typed into an anchored prompt survives folding its Activity group 
 	await page.getByTestId("ext-ui-submit").click();
 	await expect
 		.poll(() => wire.replies)
-		.toEqual([{ id: "extui-edit", value: "user changed draft" }]);
+		.toMatchObject([{ id: "extui-edit", value: "user changed draft" }]);
+	await expect(page.getByTestId("ext-ui-prompt")).toBeVisible();
+	wire.dismiss({ id: "extui-edit", sessionId });
 });
 
 test("a dialog tied to no tool call docks above the composer, and a host dismissal clears it", async ({
@@ -264,7 +292,7 @@ test("a dialog tied to no tool call docks above the composer, and a host dismiss
 	const wire = await routeWire(page);
 	const sessionId = await openSeededChat(page, "Dialog docked above the composer");
 
-	wire.ask({
+	await wire.ask({
 		id: "extui-paste",
 		sessionId,
 		kind: "input",
@@ -282,7 +310,9 @@ test("a dialog tied to no tool call docks above the composer, and a host dismiss
 
 	await prompt.getByTestId("ext-ui-input").fill("abc-123");
 	await prompt.getByTestId("ext-ui-input").press("Enter");
-	await expect.poll(() => wire.replies).toEqual([{ id: "extui-paste", value: "abc-123" }]);
+	await expect.poll(() => wire.replies).toMatchObject([{ id: "extui-paste", value: "abc-123" }]);
+	await expect(page.getByTestId("ext-ui-prompt")).toBeVisible();
+	wire.dismiss({ id: "extui-paste", sessionId });
 	await expect(prompt).toHaveCount(0);
 	await expect(page.getByTestId("chat-input")).toBeFocused();
 	await page.keyboard.type("next");
@@ -295,7 +325,7 @@ test("a dialog tied to no tool call docks above the composer, and a host dismiss
 		title: "Run it?",
 		message: "Sure?",
 	};
-	wire.ask(gone);
+	await wire.ask(gone);
 	await expect(page.getByTestId("ext-ui-prompt")).toBeVisible();
 	await shot(page.getByTestId("ext-ui-prompt"), "extension-dialogs", "docked-confirm");
 	wire.dismiss(gone);
@@ -309,7 +339,7 @@ test("options stack in one column in a narrow prompt, and a tall docked prompt s
 	const sessionId = await openSeededChat(page, "Dialog layout limits");
 	const chat = page.getByTestId("chat-scroll");
 
-	wire.ask({
+	await wire.ask({
 		id: "extui-many",
 		sessionId,
 		kind: "select",
@@ -325,10 +355,14 @@ test("options stack in one column in a narrow prompt, and a tall docked prompt s
 	await expect(last).toBeInViewport();
 	await expect(page.getByTestId("chat-input")).toBeInViewport();
 	await last.click();
-	await expect.poll(() => wire.replies).toEqual([{ id: "extui-many", value: "release/2026.25" }]);
+	await expect
+		.poll(() => wire.replies)
+		.toMatchObject([{ id: "extui-many", value: "release/2026.25" }]);
+	await expect(page.getByTestId("ext-ui-prompt")).toBeVisible();
+	wire.dismiss({ id: "extui-many", sessionId });
 
 	await page.setViewportSize({ width: 390, height: 844 });
-	wire.ask({
+	await wire.ask({
 		id: "extui-narrow",
 		sessionId,
 		kind: "select",

@@ -16,7 +16,6 @@ import {
 	type ExtensionSettingValues,
 	type HostEnvironment,
 	isComposerGrowthLimit,
-	isJbcentralQuotaRefreshSeconds,
 	isLineWidth,
 	isLocalePreference,
 	isQuestionPanelHeight,
@@ -33,32 +32,12 @@ import {
 	type WorkspaceCreation,
 	type WorkspaceKickoff,
 } from "@thinkrail/contracts";
-import {
-	claimBrowserAttributionAttemptIn,
-	readAcquisitionIn,
-	replaceAcquisitionWithTerminalMarkerIn,
-	saveAcquisitionIn,
-} from "./attribution";
-import { type AcquisitionRecord, isRecord } from "./attributionProtocol";
-import { claimAppInstalledIn, ensureInstallationIn, type InstallationRecord } from "./installation";
-
-export {
-	type AcquisitionRecord,
-	ATTRIBUTION_LIFETIME_MS,
-	ATTRIBUTION_MAX_POLLS,
-	ATTRIBUTION_ORIGIN,
-	ATTRIBUTION_POLL_INTERVAL_MS,
-	type AttributionTouch,
-	claimIdPattern,
-	hasExactKeys,
-	isRecord,
-	parseRedeemedAttribution,
-	type RedeemedAttribution,
-} from "./attributionProtocol";
-export type { InstallationRecord } from "./installation";
+export function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 export function dataDir(): string {
-	return resolve(process.env.THINKRAIL_DATA_DIR ?? join(homedir(), ".thinkrail"));
+	return resolve(process.env.THINKRAIL_DATA_DIR ?? join(homedir(), ".raildesign"));
 }
 
 /** Where chats without a project keep their folders; never a repository root for `project.open`. */
@@ -70,7 +49,7 @@ function within(root: string, path: string): boolean {
 	return path === root || path.startsWith(root + sep);
 }
 
-/** Lexical, for the spellings ThinkRail stored or pi recorded (both resolved, architecture Decision 22). */
+/** Lexical, for the spellings RailDesign stores (both resolved, architecture Decision 22). */
 export function isUnderChatsRoot(path: string): boolean {
 	return within(chatsRoot(), resolve(path));
 }
@@ -638,11 +617,7 @@ export function loadConfig(): AppConfig {
 	return {
 		...extensions,
 		...normalizeThemePreference(value),
-		analyticsEnabled:
-			typeof value.analyticsEnabled === "boolean"
-				? value.analyticsEnabled
-				: DEFAULT_CONFIG.analyticsEnabled,
-		analyticsConsentConfirmed: value.analyticsConsentConfirmed === true,
+
 		notificationsEnabled:
 			typeof value.notificationsEnabled === "boolean"
 				? value.notificationsEnabled
@@ -688,13 +663,7 @@ export function loadConfig(): AppConfig {
 		subagentMaxConcurrent: isSubagentMaxConcurrent(value.subagentMaxConcurrent)
 			? value.subagentMaxConcurrent
 			: DEFAULT_CONFIG.subagentMaxConcurrent,
-		jbcentralQuotaEnabled:
-			typeof value.jbcentralQuotaEnabled === "boolean"
-				? value.jbcentralQuotaEnabled
-				: DEFAULT_CONFIG.jbcentralQuotaEnabled,
-		jbcentralQuotaRefreshSeconds: isJbcentralQuotaRefreshSeconds(value.jbcentralQuotaRefreshSeconds)
-			? value.jbcentralQuotaRefreshSeconds
-			: DEFAULT_CONFIG.jbcentralQuotaRefreshSeconds,
+
 		customLayoutPresets: Array.isArray(value.customLayoutPresets)
 			? value.customLayoutPresets
 			: DEFAULT_CONFIG.customLayoutPresets,
@@ -730,37 +699,10 @@ export function loadHostEnvironment(): HostEnvironment {
 			)
 		: [];
 	return {
-		...(typeof value.agentDir === "string" && value.agentDir.length > 0
-			? { agentDir: value.agentDir }
-			: {}),
 		vars: vars.map(({ name, value }) => ({ name, value })),
 	};
 }
 
 export function saveHostEnvironment(environment: HostEnvironment): void {
 	writeJsonAtomic("environment.json", environment, 0o600);
-}
-
-export function ensureInstallation(): InstallationRecord {
-	return ensureInstallationIn(dataDir());
-}
-
-export function claimAppInstalled(): boolean {
-	return claimAppInstalledIn(dataDir());
-}
-
-export function readAcquisition(now = Date.now()): AcquisitionRecord | undefined {
-	return readAcquisitionIn(dataDir(), now);
-}
-
-export function claimBrowserAttributionAttempt(): boolean {
-	return claimBrowserAttributionAttemptIn(dataDir());
-}
-
-export function saveAcquisition(record: AcquisitionRecord): void {
-	saveAcquisitionIn(dataDir(), record);
-}
-
-export function replaceAcquisitionWithTerminalMarker(): void {
-	replaceAcquisitionWithTerminalMarkerIn(dataDir());
 }

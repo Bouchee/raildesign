@@ -607,6 +607,8 @@ function ToolRow({
 }) {
 	const t = useT();
 	if (getToolChrome(row.toolName) === "bare") {
+		if (!row.tool && !row.dead)
+			return <ToolPromptSlot toolCallId={row.toolCallId} className="mt-8" />;
 		const renderProps: ToolRenderProps = {
 			toolCallId: row.toolCallId,
 			toolName: row.toolName,

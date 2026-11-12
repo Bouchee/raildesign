@@ -1,172 +1,94 @@
-import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve, sep } from "node:path";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
-import type { ToolResponsePendingDetails } from "@thinkrail/contracts";
-import { defaultSessionDirFor, writeFixtureSession } from "./testFixtures";
+import { join, resolve } from "node:path";
+import { extractSession } from "./extract";
+import { HistoryIndex } from "./historyIndex";
+import { sessionDirFor, writeFixtureSession } from "./testFixtures";
 
-describe("writeFixtureSession — pinned against pi's real SessionManager", () => {
-	test("explicit sessionDir layout: SessionManager.list(cwd, dir) round-trips id/cwd/name/messageCount", async () => {
-		const dir = mkdtempSync(join(tmpdir(), "trpi-fixture-explicit-"));
-		try {
-			const cwd = "/tmp/thinkrail-a5-pin-explicit";
-			writeFixtureSession(dir, {
-				id: "pin-explicit-1",
-				cwd,
-				name: "Pin test session",
-				messages: [
-					{ role: "user", text: "hello", timestamp: 1_700_000_000_000 },
-					{ role: "assistant", text: "hi there", timestamp: 1_700_000_001_000 },
-				],
-			});
-
-			const sessions = await SessionManager.list(cwd, dir);
-
-			expect(sessions).toHaveLength(1);
-			expect(sessions[0]).toMatchObject({
-				id: "pin-explicit-1",
-				cwd,
-				name: "Pin test session",
-				messageCount: 2,
-			});
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
-	});
-
-	test("canonical ask_user_question toolCall + ack details round-trip through SessionManager", () => {
-		const dir = mkdtempSync(join(tmpdir(), "trpi-fixture-toolcall-"));
-		try {
-			const toolCallId = "ask-fixture-1";
-			const args = {
-				questions: [
-					{
-						question: "Which rollout?",
-						header: "Rollout",
-						options: [
-							{ label: "Canary", description: "Start with a small cohort." },
-							{ label: "Everyone", description: "Release in one step." },
-						],
-					},
-				],
-			};
-			const ack: ToolResponsePendingDetails = { kind: "ack" };
-			const { path } = writeFixtureSession(dir, {
-				id: "pin-toolcall-1",
-				cwd: "/tmp/thinkrail-toolcall-pin",
-				messages: [
-					{ role: "user", text: "Help choose a rollout.", timestamp: 1_700_000_000_000 },
-					{
-						role: "assistant",
-						content: [
-							{
-								type: "toolCall",
-								id: toolCallId,
-								name: "ask_user_question",
-								arguments: args,
-							},
-						],
-						stopReason: "toolUse",
-						timestamp: 1_700_000_001_000,
-					},
-					{
-						role: "toolResult",
-						toolCallId,
-						toolName: "ask_user_question",
-						content: [{ type: "text", text: "Questions shown to the user." }],
-						details: ack,
-						isError: false,
-						timestamp: 1_700_000_002_000,
-					},
-				],
-			});
-
-			const messages = SessionManager.open(path).buildSessionContext().messages;
-			expect(messages).toHaveLength(3);
-			expect(messages[1]).toMatchObject({
-				role: "assistant",
-				stopReason: "toolUse",
-				content: [{ type: "toolCall", id: toolCallId, name: "ask_user_question", arguments: args }],
-			});
-			expect(messages[2]).toMatchObject({
-				role: "toolResult",
-				toolCallId,
-				toolName: "ask_user_question",
-				details: { kind: "ack" },
-				isError: false,
-			});
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
-	});
-
-	test("default layout: no-arg discovery finds a fixture written under defaultSessionDirFor's encoded dir", async () => {
-		const agentDir = mkdtempSync(join(tmpdir(), "trpi-fixture-agentdir-"));
-		const previousEnv = process.env.PI_CODING_AGENT_DIR;
-		try {
-			const cwd = "/tmp/thinkrail-a5-pin-default";
-			const sessionDir = defaultSessionDirFor(agentDir, cwd);
-			const written = writeFixtureSession(sessionDir, {
-				id: "pin-default-1",
-				cwd,
-				name: "Default layout pin",
-				messages: [{ role: "user", text: "seed prompt", timestamp: 1_700_000_000_000 }],
-			}).path;
-
-			process.env.PI_CODING_AGENT_DIR = agentDir;
-			const sessions = await SessionManager.list(cwd);
-
-			expect(sessions).toHaveLength(1);
-			expect(sessions[0]?.path).toBe(written);
-			expect(sessions[0]).toMatchObject({
-				id: "pin-default-1",
-				cwd,
-				name: "Default layout pin",
-				messageCount: 1,
-			});
-		} finally {
-			if (previousEnv === undefined) delete process.env.PI_CODING_AGENT_DIR;
-			else process.env.PI_CODING_AGENT_DIR = previousEnv;
-			rmSync(agentDir, { recursive: true, force: true });
-		}
-	});
-
-	test("default layout: pi's real no-arg listAll() finds what HistoryIndex's own default walk must also find", async () => {
-		const agentDir = mkdtempSync(join(tmpdir(), "trpi-fixture-listall-"));
-		const previousEnv = process.env.PI_CODING_AGENT_DIR;
-		try {
-			const cwd = "/tmp/thinkrail-a5-pin-listall";
-			const sessionDir = defaultSessionDirFor(agentDir, cwd);
-			writeFixtureSession(sessionDir, {
-				id: "pin-listall-1",
-				cwd,
-				messages: [{ role: "user", text: "seed prompt", timestamp: 1_700_000_000_000 }],
-			});
-
-			process.env.PI_CODING_AGENT_DIR = agentDir;
-			const sessions = await SessionManager.listAll();
-
-			expect(sessions.map((s) => s.id)).toContain("pin-listall-1");
-		} finally {
-			if (previousEnv === undefined) delete process.env.PI_CODING_AGENT_DIR;
-			else process.env.PI_CODING_AGENT_DIR = previousEnv;
-			rmSync(agentDir, { recursive: true, force: true });
-		}
-	});
+test("fixture sessions use the real flat JSON record and stable transcript identities", async () => {
+	const root = mkdtempSync(join(tmpdir(), "raildesign-history-fixture-"));
+	try {
+		const directory = sessionDirFor(root);
+		const written = writeFixtureSession(directory, {
+			id: "fixture-a",
+			workspaceId: "workspace-a",
+			cwd: `${root}/repo/./`,
+			name: "Fixture chat",
+			messages: [
+				{ role: "user", text: "hello", timestamp: 10 },
+				{ role: "assistant", text: "hello back", timestamp: 20 },
+				{
+					role: "toolResult",
+					toolCallId: "call-a",
+					toolName: "read",
+					content: [{ type: "text", text: "file contents" }],
+					details: { path: "index.ts" },
+					isError: false,
+					timestamp: 30,
+				},
+			],
+		});
+		expect(written.path).toBe(join(directory, "fixture-a.json"));
+		const json = readFileSync(written.path, "utf8");
+		const stored = JSON.parse(json);
+		expect(stored).toMatchObject({
+			version: 1,
+			sessionId: "fixture-a",
+			workspaceId: "workspace-a",
+			cwd: resolve(root, "repo"),
+			title: "Fixture chat",
+			history: [],
+			revision: 0,
+			eventSeq: 0,
+		});
+		expect(stored.messages.map((message: { id: string }) => message.id)).toEqual([
+			"fixture-a-m0",
+			"fixture-a-m1",
+			"fixture-a-m2",
+		]);
+		expect(stored.messages[2]).toMatchObject({
+			toolCallId: "call-a",
+			details: { path: "index.ts" },
+			isError: false,
+		});
+		expect(extractSession(json)?.entries.map((entry) => entry.text)).toEqual([
+			"hello",
+			"hello back",
+		]);
+		const result = await new HistoryIndex(directory).search({
+			query: "hello",
+			filter: () => true,
+			labels: () => ({}),
+		});
+		expect(result.prompts[0]?.sessionId).toBe("fixture-a");
+		expect(result.messages[0]?.messageIndex).toBe(1);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
 });
 
-test("pi records a new transcript's cwd in resolved spelling (stored directories rely on it)", async () => {
-	const dir = mkdtempSync(join(tmpdir(), "trpi-fixture-cwd-"));
-	try {
-		const cwd = resolve(dir, "repo");
-		const sessionDir = join(dir, "sessions");
-		const manager = SessionManager.create(`${cwd}${sep}.${sep}`, sessionDir);
-		manager.appendMessage({ role: "user", content: "hello", timestamp: 1_700_000_000_000 });
+test("fixture session IDs cannot escape the session directory", () => {
+	expect(() =>
+		writeFixtureSession("/not-used", { id: "../outside", cwd: "/repo", messages: [] }),
+	).toThrow("Invalid fixture session ID");
+});
 
-		expect(manager.getCwd()).toBe(cwd);
-		expect((await SessionManager.list(cwd, sessionDir)).map((info) => info.cwd)).toEqual([cwd]);
+test("an empty fixture carries explicit session activity metadata", () => {
+	const root = mkdtempSync(join(tmpdir(), "raildesign-history-empty-fixture-"));
+	try {
+		const written = writeFixtureSession(sessionDirFor(root), {
+			id: "newest-empty",
+			workspaceId: "workspace-a",
+			cwd: root,
+			messages: [],
+			updatedAt: 42,
+		});
+		const record = JSON.parse(readFileSync(written.path, "utf8"));
+		expect(record.updatedAt).toBe(42);
+		expect(record.messages).toEqual([]);
+		expect(record.state.execution).toBe("idle");
 	} finally {
-		rmSync(dir, { recursive: true, force: true });
+		rmSync(root, { recursive: true, force: true });
 	}
 });

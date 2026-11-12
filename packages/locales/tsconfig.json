@@ -1,10 +1,10 @@
 {
-	"extends": "../../tsconfig.base.json",
 	"compilerOptions": {
-		"noEmit": true,
 		"jsx": "react-jsx",
 		"lib": ["ES2023", "DOM", "DOM.Iterable"],
+		"noEmit": true,
 		"types": ["bun"]
 	},
+	"extends": "../../tsconfig.base.json",
 	"include": ["src", "en.json"]
 }

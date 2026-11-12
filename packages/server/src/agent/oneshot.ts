@@ -1,10 +1,12 @@
-import type { Api, Context, Model } from "@earendil-works/pi-ai";
-import { usePiRuntime } from "./agentSessionManager";
-import { preferredDefaultModel } from "./modelDefaults";
-import { type AvailableModelsRuntime, settledAvailableModels } from "./piRuntime";
-
+import { randomUUID } from "node:crypto";
+import { Agent, Runner } from "@openai/agents";
+import type { WireModel } from "@thinkrail/contracts";
+import {
+	createConfiguredModel,
+	listAvailableModels,
+	responsesClientSettings,
+} from "./modelConfiguration";
 export type ModelTier = "cheap" | "default";
-
 export interface OneShotRequest {
 	system?: string;
 	prompt: string;
@@ -13,70 +15,32 @@ export interface OneShotRequest {
 	temperature?: number;
 	signal?: AbortSignal;
 }
-
 export interface OneShotResult {
 	text: string;
 	model: { provider: string; id: string };
 }
-
-const CHEAP_MODELS: ReadonlyArray<readonly [provider: string, idPrefix: string]> = [
-	["anthropic", "claude-haiku"],
-	["openai", "gpt-5-mini"],
-	["openai", "gpt-4o-mini"],
-	["openai", "gpt-4.1-mini"],
-	["google", "gemini-2.5-flash"],
-	["google", "gemini-flash"],
-	["xai", "grok-build"],
-];
-
-function pickModelFromRuntime(runtime: AvailableModelsRuntime, tier: ModelTier): Model<Api> | null {
-	const available = settledAvailableModels(runtime);
-	if (available.length === 0) return null;
-	if (tier === "default") return preferredDefaultModel(available) ?? null;
-	for (const [provider, prefix] of CHEAP_MODELS) {
-		const hit = available.find(
-			(model) => model.provider === provider && model.id.startsWith(prefix),
-		);
-		if (hit) return hit;
-	}
-	const priced = available.filter((model) => tokenCost(model) > 0);
-	return (
-		priced.sort(
-			(left, right) => tokenCost(left) - tokenCost(right) || left.id.localeCompare(right.id),
-		)[0] ??
-		preferredDefaultModel(available) ??
-		null
-	);
+export async function pickModel(): Promise<WireModel | null> {
+	return (await listAvailableModels())[0] ?? null;
 }
-
-function tokenCost(model: Model<Api>): number {
-	return model.cost.input + model.cost.output;
-}
-
-export function pickModel(tier: ModelTier = "cheap"): Promise<Model<Api> | null> {
-	return usePiRuntime((runtime) => pickModelFromRuntime(runtime, tier));
-}
-
-export function completeOnce(req: OneShotRequest): Promise<OneShotResult> {
-	return usePiRuntime(async (runtime) => {
-		const model = pickModelFromRuntime(runtime, req.tier ?? "cheap");
-		if (!model) throw new Error("no-model");
-
-		const context: Context = {
-			...(req.system ? { systemPrompt: req.system } : {}),
-			messages: [{ role: "user", content: req.prompt, timestamp: Date.now() }],
-		};
-		const message = await runtime.completeSimple(model, context, {
-			maxTokens: req.maxTokens ?? 256,
-			temperature: req.temperature ?? 0.2,
-			...(req.signal ? { signal: req.signal } : {}),
-		});
-
-		const text = message.content
-			.filter((content) => content.type === "text")
-			.map((content) => content.text)
-			.join("")
-			.trim();
-		return { text, model: { provider: String(model.provider), id: model.id } };
+export async function completeOnce(request: OneShotRequest): Promise<OneShotResult> {
+	const model = await pickModel();
+	if (!model) throw new Error("no-model");
+	const agent = new Agent({
+		name: "RailDesign assistant",
+		...(request.system ? { instructions: request.system } : {}),
+		model: createConfiguredModel(model, randomUUID()),
+		modelSettings: {
+			...responsesClientSettings,
+			maxTokens: request.maxTokens ?? 256,
+			...(request.temperature === undefined ? {} : { temperature: request.temperature }),
+		},
 	});
+	const result = await new Runner({ tracingDisabled: true }).run(agent, request.prompt, {
+		maxTurns: 1,
+		...(request.signal ? { signal: request.signal } : {}),
+	});
+	return {
+		text: result.finalOutput?.trim() ?? "",
+		model: { provider: model.provider, id: model.id },
+	};
 }

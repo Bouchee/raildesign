@@ -7,7 +7,6 @@ import {
 	mcpChatFailureText,
 	mcpConfiguredExposureText,
 	mcpEntryUpdate,
-	mcpHandledElsewhereText,
 	mcpRenderedTarget,
 	mcpRowView,
 	mcpSaveFeedback,
@@ -20,7 +19,7 @@ function summary(overrides: Partial<McpServerSummary> = {}): McpServerSummary {
 	return {
 		name: "docs",
 		scope: "user",
-		source: "/home/.pi/agent/mcp.json",
+		source: "/data/mcp.json",
 		fingerprint: "rendered",
 		transport: "stdio",
 		endpoint: "bun docs.ts",
@@ -211,7 +210,9 @@ test("enablement and exposure route by scope: user servers send only the changed
 	expect(
 		mcpSettingWrite("ws", project, { enabled: true }, { command: "x", enabled: false }).params,
 	).toMatchObject({ entry: { command: "x" } });
-	expect(() => mcpSettingWrite("ws", project, { enabled: true }, null)).toThrow(".pi/mcp.json");
+	expect(() => mcpSettingWrite("ws", project, { enabled: true }, null)).toThrow(
+		".raildesign/mcp.json",
+	);
 });
 
 test("an update or removal at either scope carries the fingerprint its row was rendered with, never a folded override's", () => {
@@ -247,7 +248,7 @@ test("an update or removal at either scope carries the fingerprint its row was r
 	expect(mcpRenderedTarget(user)).toEqual({ scope: "user", expectedFingerprint: "user-entry" });
 });
 
-test("save feedback never claims open chats already applied a change they are still reloading for", () => {
+test("save feedback reports connection refresh without claiming model context was reloaded", () => {
 	const result = (states: string[][]): McpListResult => ({
 		servers: [],
 		statuses: states.map((servers, index) => ({
@@ -261,21 +262,12 @@ test("save feedback never claims open chats already applied a change they are st
 			})),
 		})),
 	});
-	expect(mcpSaveFeedback(result([]))).toBe("Saved — applies when a chat starts in this workspace.");
-	const open = "Saved — applies to open chats as they reload; a busy chat waits until it is idle.";
+	expect(mcpSaveFeedback(result([]))).toBe(
+		"Saved — applies when a server connection starts in this workspace.",
+	);
+	const open = "Saved — server connections will refresh.";
 	expect(mcpSaveFeedback(result([["connected"], ["connected"]]))).toBe(open);
 	expect(mcpSaveFeedback(result([["connected"], ["pending-reload"]]))).toBe(open);
-});
-
-test("the handled-elsewhere notice names the owning extension, or the pi setting to remove", () => {
-	expect(
-		mcpHandledElsewhereText(currentTranslator(), "/home/me/.pi/agent/extensions/my-mcp.ts"),
-	).toBe(
-		"MCP is handled by /home/me/.pi/agent/extensions/my-mcp.ts in this workspace; ThinkRail's MCP management is read-only.",
-	);
-	expect(mcpHandledElsewhereText(currentTranslator(), "pi settings (-builtin:mcp)")).toBe(
-		"MCP is turned off in pi settings (-builtin:mcp); remove that entry to manage servers here.",
-	);
 });
 
 test("a per-chat action reports its one chat's error as is, and names the chat when it targeted several", () => {

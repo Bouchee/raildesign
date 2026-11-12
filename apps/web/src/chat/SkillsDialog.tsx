@@ -34,12 +34,16 @@ import { useProjectTrustSummary } from "./useProjectTrustSummary";
 
 const TIER_META: Record<string, { label: MessageKey | null; hint: MessageKey; rank: number }> = {
 	bundled: { label: null, hint: "chat.skills.tier.bundledHint", rank: 0 },
-	pi: { label: null, hint: "chat.skills.tier.piHint", rank: 1 },
+	application: {
+		label: "chat.skills.tier.application",
+		hint: "chat.skills.tier.applicationHint",
+		rank: 1,
+	},
 	personal: { label: "chat.skills.tier.personal", hint: "chat.skills.tier.personalHint", rank: 2 },
 	project: { label: "chat.skills.tier.project", hint: "chat.skills.tier.projectHint", rank: 4 },
 };
 
-const TIER_BRAND: Record<string, string> = { bundled: "ThinkRail", pi: "Pi" };
+const TIER_BRAND: Record<string, string> = { bundled: "RailDesign" };
 
 interface Group {
 	key: string;
@@ -79,6 +83,7 @@ export interface SkillsWorkspaceContext {
 	workspaceId: string;
 	sessionId: string;
 	streaming: boolean;
+	allowReload: boolean;
 	stale?: boolean;
 	onReloaded?: (syncedTick: number) => void;
 }
@@ -131,8 +136,22 @@ export function SkillsDialog({
 			.finally(() => setBusy(false));
 	};
 
+	const setOtherAgentSkills = async (enabled: boolean) => {
+		if (busy) return;
+		setBusy(true);
+		const run = async () => {
+			await getTransport().request("settings.update", { config: { otherAgentSkills: enabled } });
+			await refresh();
+		};
+		await run()
+			.catch((error: unknown) =>
+				toast.error(errorText(error), t("settings.extensions.otherAgentSkillsFailed")),
+			)
+			.finally(() => setBusy(false));
+	};
+
 	const reload = async () => {
-		if (busy || !workspace) return;
+		if (busy || !workspace?.allowReload) return;
 		setBusy(true);
 		const run = async () => {
 			const { syncedTick } = await reloadSessionResourcesWithSkillBaseline(workspace.workspaceId, {
@@ -180,7 +199,7 @@ export function SkillsDialog({
 	const trustEnables = trustNotice.kind === "untrusted" ? trustEnablesText(t, trustNotice) : null;
 	const groups = groupCatalog(t, entries ?? []);
 	const hasPlugins = groups.some((g) => g.isPlugin);
-	const isLeadingKey = (key: string) => key === "bundled" || key === "pi";
+	const isLeadingKey = (key: string) => key === "bundled" || key === "application";
 	const leadingGroups = groups.filter((g) => isLeadingKey(g.key));
 	const otherGroups = groups.filter((g) => !isLeadingKey(g.key));
 	const size = entries ? skillCatalogSize(entries) : null;
@@ -263,7 +282,11 @@ export function SkillsDialog({
 					{workspace ? (
 						<IconTooltip
 							label={
-								workspace.streaming ? t("chat.skills.reloadBusy") : t("chat.skills.reloadHint")
+								!workspace.allowReload
+									? t("chat.skills.reloadUnavailable")
+									: workspace.streaming
+										? t("chat.skills.reloadBusy")
+										: t("chat.skills.reloadHint")
 							}
 							wrapTrigger
 						>
@@ -272,7 +295,7 @@ export function SkillsDialog({
 								variant="outline"
 								iconLeft={RefreshCw}
 								data-testid="skills-reload"
-								disabled={busy || workspace.streaming}
+								disabled={busy || workspace.streaming || !workspace.allowReload}
 								onClick={() => void reload()}
 							>
 								{t("chat.skills.reload")}
@@ -281,6 +304,26 @@ export function SkillsDialog({
 					) : null}
 				</div>
 
+				<p data-testid="skills-execution-unavailable" className="text-text-muted tr-text-metadata">
+					{t("chat.skills.reloadUnavailable")}
+				</p>
+				<div className="flex items-center justify-between gap-12">
+					<div className="flex min-w-0 flex-col gap-2">
+						<span className="tr-text-ui text-text-default">
+							{t("settings.extensions.otherAgentSkills")}
+						</span>
+						<span className="tr-text-metadata text-text-muted">
+							{t("settings.extensions.otherAgentSkillsDescription")}
+						</span>
+					</div>
+					<SkillSwitch
+						checked={otherAgentSkills}
+						busy={busy}
+						label={t("settings.extensions.otherAgentSkills")}
+						testId="other-agent-skills-toggle"
+						onCheckedChange={(enabled) => void setOtherAgentSkills(enabled)}
+					/>
+				</div>
 				{size ? (
 					<p
 						data-testid="skills-size"
@@ -310,7 +353,7 @@ export function SkillsDialog({
 					</p>
 				) : null}
 
-				{workspace?.stale ? (
+				{workspace?.stale && workspace.allowReload ? (
 					<div
 						data-testid="skills-stale"
 						className="rounded-sm border border-border-default bg-container-elevated-bg px-12 py-8 text-text-muted tr-text-metadata"

@@ -13,14 +13,14 @@ import {
 const POWERSHELL_TEST_TIMEOUT_MS = 30_000;
 
 test("names one AppUserModelID per channel", () => {
-	expect(desktopAppUserModelId("stable")).toBe("JetBrains.ThinkRail");
-	expect(desktopAppUserModelId("nightly")).toBe("JetBrains.ThinkRail.Nightly");
-	expect(desktopAppUserModelId("dev")).toBe("JetBrains.ThinkRail.Dev");
+	expect(desktopAppUserModelId("stable")).toBe("io.github.bouchee.raildesign");
+	expect(desktopAppUserModelId("nightly")).toBe("io.github.bouchee.raildesign.nightly");
+	expect(desktopAppUserModelId("dev")).toBe("io.github.bouchee.raildesign.dev");
 	expect(() => desktopAppUserModelId("beta")).toThrow('unknown release channel "beta"');
 });
 
 function withTemp(run: (root: string) => void): void {
-	const root = mkdtempSync(join(tmpdir(), "thinkrail-taskbar-"));
+	const root = mkdtempSync(join(tmpdir(), "raildesign-taskbar-"));
 	try {
 		run(root);
 	} finally {
@@ -39,27 +39,27 @@ function pinnedFolders(appData: string): { taskbar: string; implicit: string } {
 
 test("collects Electrobun's Start-menu shortcut and every taskbar pin, but not the Desktop shortcut", () => {
 	withTemp((root) => {
-		const channelRoot = join(root, "local", "ai.thinkrail.app", "canary");
+		const channelRoot = join(root, "local", "io.github.bouchee.raildesign", "canary");
 		mkdirSync(join(channelRoot, "app"), { recursive: true });
 		writeFileSync(
 			join(channelRoot, ".electrobun-uninstall.json"),
 			JSON.stringify({
 				schema_version: 1,
-				desktop_shortcut: "C:\\Users\\me\\Desktop\\ThinkRail (Canary).lnk",
-				start_menu_shortcut: "C:\\Users\\me\\Start Menu\\Programs\\ThinkRail (Canary).lnk",
+				desktop_shortcut: "C:\\Users\\me\\Desktop\\RailDesign (Canary).lnk",
+				start_menu_shortcut: "C:\\Users\\me\\Start Menu\\Programs\\RailDesign (Canary).lnk",
 			}),
 		);
 		const appData = join(root, "roaming");
 		const { taskbar, implicit } = pinnedFolders(appData);
-		writeFileSync(join(taskbar, "ThinkRail (Canary).lnk"), "");
+		writeFileSync(join(taskbar, "RailDesign (Canary).lnk"), "");
 		writeFileSync(join(taskbar, "desktop.ini"), "");
-		writeFileSync(join(implicit, "ThinkRail (Canary).lnk"), "");
+		writeFileSync(join(implicit, "RailDesign (Canary).lnk"), "");
 
 		expect(taskbarShortcutCandidates(join(channelRoot, "app"), appData)).toEqual({
 			paths: [
-				"C:\\Users\\me\\Start Menu\\Programs\\ThinkRail (Canary).lnk",
-				join(taskbar, "ThinkRail (Canary).lnk"),
-				join(implicit, "ThinkRail (Canary).lnk"),
+				"C:\\Users\\me\\Start Menu\\Programs\\RailDesign (Canary).lnk",
+				join(taskbar, "RailDesign (Canary).lnk"),
+				join(implicit, "RailDesign (Canary).lnk"),
 			],
 			failures: [],
 		});
@@ -68,7 +68,7 @@ test("collects Electrobun's Start-menu shortcut and every taskbar pin, but not t
 
 test("finds nothing for an unmanaged build or an unknown manifest schema", () => {
 	withTemp((root) => {
-		const appDir = join(root, "build", "ThinkRail-dev");
+		const appDir = join(root, "build", "RailDesign-dev");
 		mkdirSync(appDir, { recursive: true });
 		expect(taskbarShortcutCandidates(appDir, undefined)).toEqual({ paths: [], failures: [] });
 		writeFileSync(
@@ -89,11 +89,11 @@ test("a corrupt manifest is reported without hiding the taskbar pins", () => {
 		writeFileSync(join(root, "channel", ".electrobun-uninstall.json"), "");
 		const appData = join(root, "roaming");
 		const { taskbar } = pinnedFolders(appData);
-		writeFileSync(join(taskbar, "ThinkRail.lnk"), "");
+		writeFileSync(join(taskbar, "RailDesign.lnk"), "");
 
 		const { paths, failures } = taskbarShortcutCandidates(appDir, appData);
 
-		expect(paths).toEqual([join(taskbar, "ThinkRail.lnk")]);
+		expect(paths).toEqual([join(taskbar, "RailDesign.lnk")]);
 		expect(failures).toHaveLength(1);
 		expect(failures[0]).toBeInstanceOf(SyntaxError);
 	});
@@ -111,10 +111,10 @@ test("stamps only existing shortcuts to this launcher that carry another ID", ()
 		const other = file("other");
 		const broken = file("broken");
 		const launcher =
-			"C:\\Users\\me\\AppData\\Local\\ai.thinkrail.app\\stable\\app\\bin\\launcher.exe";
+			"C:\\Users\\me\\AppData\\Local\\io.github.bouchee.raildesign\\stable\\app\\bin\\launcher.exe";
 		const ids = new Map<string, string | null>([
 			[ours, null],
-			[current, "JetBrains.ThinkRail"],
+			[current, "io.github.bouchee.raildesign"],
 			[other, null],
 		]);
 		const closed: string[] = [];
@@ -135,13 +135,13 @@ test("stamps only existing shortcuts to this launcher that carry another ID", ()
 			const result = stampTaskbarShortcuts(
 				[ours, current, other, broken, join(root, "missing.lnk")],
 				launcher,
-				"JetBrains.ThinkRail",
+				"io.github.bouchee.raildesign",
 				open,
 			);
 
 			expect(result.stamped).toEqual([ours]);
 			expect(result.failures).toEqual([new Error("not a shortcut")]);
-			expect(ids.get(ours)).toBe("JetBrains.ThinkRail");
+			expect(ids.get(ours)).toBe("io.github.bouchee.raildesign");
 			expect(ids.get(other)).toBeNull();
 			expect(writableOpens).toEqual([ours]);
 			expect(closed).toEqual([ours, ours, current, other]);
@@ -173,8 +173,8 @@ function powershell(script: string): string {
 test.skipIf(process.platform !== "win32")("sets the process AppUserModelID", () => {
 	const shell = loadWindowsShellApi();
 	expect(loadWindowsShellApi()).toBe(shell);
-	shell.setProcessAppUserModelId("JetBrains.ThinkRail.Test");
-	expect(shell.processAppUserModelId()).toBe("JetBrains.ThinkRail.Test");
+	shell.setProcessAppUserModelId("io.github.bouchee.raildesign.Test");
+	expect(shell.processAppUserModelId()).toBe("io.github.bouchee.raildesign.Test");
 });
 
 test.skipIf(process.platform !== "win32")(
@@ -186,7 +186,7 @@ test.skipIf(process.platform !== "win32")(
 			mkdirSync(join(root, "app", "bin"), { recursive: true });
 			writeFileSync(launcher, "");
 			writeFileSync(other, "");
-			const ours = join(root, "ThinkRail.lnk");
+			const ours = join(root, "RailDesign.lnk");
 			const foreign = join(root, "Other.lnk");
 			for (const [path, target] of [
 				[ours, launcher],
@@ -197,7 +197,7 @@ test.skipIf(process.platform !== "win32")(
 				);
 			}
 			const shell = loadWindowsShellApi();
-			const id = "JetBrains.ThinkRail.Test";
+			const id = "io.github.bouchee.raildesign.Test";
 			shell.withComApartment(() => {
 				const opened = shell.openShortcut(ours);
 				try {

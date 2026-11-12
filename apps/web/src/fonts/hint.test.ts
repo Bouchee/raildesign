@@ -30,9 +30,9 @@ function file(fileName: string, family: string): UserFontFile {
 
 test("an empty or foreign hint reads as the default preference", () => {
 	expect(readFontsHint()).toEqual({ preference: DEFAULT_FONT_PREFERENCE, files: [] });
-	store.set("thinkrail-fonts", JSON.stringify({ version: 2, preference: {} }));
+	store.set("raildesign-fonts", JSON.stringify({ version: 2, preference: {} }));
 	expect(readFontsHint()).toEqual({ preference: DEFAULT_FONT_PREFERENCE, files: [] });
-	store.set("thinkrail-fonts", "{");
+	store.set("raildesign-fonts", "{");
 	expect(readFontsHint()).toEqual({ preference: DEFAULT_FONT_PREFERENCE, files: [] });
 });
 
@@ -57,7 +57,7 @@ test("a stored face missing its weight is dropped instead of reaching FontFace a
 	const valid = file("FiraCode.woff2", "Fira Code");
 	const { weight: _weight, ...face } = valid.ok ? valid.face : { weight: null };
 	store.set(
-		"thinkrail-fonts",
+		"raildesign-fonts",
 		JSON.stringify({
 			version: 1,
 			preference: DEFAULT_FONT_PREFERENCE,

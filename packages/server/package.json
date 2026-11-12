@@ -17,7 +17,6 @@
 	"dependencies": {
 		"@earendil-works/pi-ai": "catalog:",
 		"@earendil-works/pi-coding-agent": "catalog:",
-		"@posthog/core": "1.60.1",
 		"@stroncium/procfs": "1.2.1",
 		"@thinkrail/contracts": "workspace:*",
 		"@thinkrail/ext-ask-user-question": "workspace:*",
@@ -27,7 +26,6 @@
 		"@thinkrail/locales": "workspace:*",
 		"@thinkrail/shared": "workspace:*",
 		"bun-pty": "0.5.2",
-		"jsonc-parser": "3.3.1",
 		"pi-background-commands": "workspace:*",
 		"pi-delegation": "workspace:*",
 		"pi-spec-graph": "workspace:*",
@@ -37,12 +35,18 @@
 		"pino": "10.4.0",
 		"pino-pretty": "13.2.0",
 		"pino-roll": "4.0.0",
-		"posthog-node": "5.57.2",
 		"trash": "10.1.1",
-		"typebox": "catalog:"
+		"typebox": "catalog:",
+		"@openai/agents": "catalog:",
+		"openai": "catalog:",
+		"zod": "catalog:",
+		"proper-lockfile": "catalog:",
+		"yaml": "catalog:",
+		"@modelcontextprotocol/client": "catalog:"
 	},
 	"devDependencies": {
 		"@types/bun": "catalog:",
-		"typescript": "catalog:"
+		"typescript": "catalog:",
+		"@types/proper-lockfile": "catalog:"
 	}
 }

@@ -1,24 +1,10 @@
-import { chmodSync, copyFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FullConfig } from "@playwright/test";
 import { removeTree } from "@thinkrail/shared/removeTree";
-import { seedAgentDefinitionFixtures } from "./fixtures/agents";
-import { E2E_BASE_CONFIG, seedAnalyticsConsent } from "./fixtures/analyticsConsent";
-import {
-	CentralSetupError,
-	findGlobalCentralArtifact,
-	isRealCentralE2e,
-	removeCentralModeLocalSeeds,
-	seedE2eDefaultModel,
-	stageGlobalCentralArtifact,
-	waitForCentralTarget,
-	writeE2eAgentSettings,
-} from "./fixtures/centralAgent";
+import { E2E_BASE_CONFIG } from "./fixtures/appConfig";
 import { writeFakeGh, writeHermeticE2eShell } from "./fixtures/executables";
 import {
-	E2E_CENTRAL_BAD_EXTENSION_SOURCE,
-	E2E_CENTRAL_EXTENSION_SOURCE,
-	E2E_CENTRAL_STATE,
 	E2E_DATA_DIR,
 	E2E_FAKE_BIN_DIR,
 	E2E_FIXTURE_REPO,
@@ -26,121 +12,52 @@ import {
 	E2E_GH_SCENARIO,
 	E2E_HOME_DIR,
 	E2E_INSTALLED_FONTS,
-	E2E_PI_AGENT_DIR,
-	E2E_PI_MODELS_SEED,
 	E2E_PICK_DIR_POINTER,
 } from "./fixtures/paths";
 import { seedFixtureRepo } from "./fixtures/repo";
+import {
+	isLiveAgentE2e,
+	seedAgentConfiguration,
+	seedE2eDefaultModel,
+	waitForAgentTarget,
+} from "./fixtures/sdkAgent";
 import { seedExternalCwdSessions } from "./fixtures/sessions";
 import { seedSpeechFixture } from "./fixtures/speech";
 import { seedTemplateFixtures } from "./fixtures/templates";
 import { E2eWire } from "./fixtures/wire";
 
-function centralSetupFailure(error: unknown): Error {
-	if (error instanceof CentralSetupError) return error;
-	if (error instanceof Error && error.message.startsWith("THINKRAIL_E2E_MODEL")) return error;
-	if (error instanceof Error && error.message.startsWith("Real-Central E2E requires")) return error;
-	return new Error(
-		"Real-Central E2E setup failed. Verify Central is installed and its global PI extension is current, then retry.",
-	);
-}
-
-function seedLocalAgentConfiguration(): void {
-	mkdirSync(E2E_PI_AGENT_DIR, { recursive: true });
-	const seed = JSON.stringify({ providers: {} });
-	writeFileSync(join(E2E_PI_AGENT_DIR, "models.json"), seed);
-	writeFileSync(E2E_PI_MODELS_SEED, seed);
-	writeE2eAgentSettings();
-}
-
-export default function globalSetup(config?: FullConfig): void | Promise<void> {
-	const centralMode = isRealCentralE2e();
-	try {
-		const globalCentralArtifact = centralMode ? findGlobalCentralArtifact() : undefined;
-		removeTree(E2E_DATA_DIR);
-		mkdirSync(E2E_DATA_DIR, { recursive: true });
-		writeFileSync(join(E2E_DATA_DIR, "config.json"), JSON.stringify(E2E_BASE_CONFIG));
-		writeFileSync(
-			join(E2E_DATA_DIR, "feedback.json"),
-			JSON.stringify({
-				acceptedMessages: 0,
-				nextInvitationAt: 20,
-				dismissed: true,
-				githubStarAsked: true,
-			}),
-		);
-		mkdirSync(E2E_HOME_DIR, { recursive: true });
-		writeFileSync(join(E2E_HOME_DIR, ".zshrc"), "# ThinkRail e2e isolated shell\n");
-
-		for (const rc of [".zshrc", ".bashrc"]) writeFileSync(join(E2E_HOME_DIR, rc), "");
-
-		mkdirSync(E2E_FAKE_BIN_DIR, { recursive: true });
-		for (const command of ["central", "code", "github-ssh"]) {
-			const target = join(E2E_FAKE_BIN_DIR, command);
-			copyFileSync(new URL(`./fixtures/bin/${command}`, import.meta.url), target);
-			chmodSync(target, 0o755);
-		}
-		writeHermeticE2eShell(E2E_FAKE_BIN_DIR, process.env.SHELL ?? "/bin/bash");
-		writeFakeGh(E2E_FAKE_BIN_DIR, E2E_GH_SCENARIO, E2E_GH_LOG);
-		copyFileSync(
-			new URL("./fixtures/central-extension.ts.fixture", import.meta.url),
-			E2E_CENTRAL_EXTENSION_SOURCE,
-		);
-		copyFileSync(
-			new URL("./fixtures/central-extension-error.ts.fixture", import.meta.url),
-			E2E_CENTRAL_BAD_EXTENSION_SOURCE,
-		);
-		writeFileSync(E2E_CENTRAL_STATE, "");
-
-		if (centralMode && globalCentralArtifact) {
-			mkdirSync(E2E_PI_AGENT_DIR, { recursive: true });
-			stageGlobalCentralArtifact(globalCentralArtifact);
-			writeE2eAgentSettings();
-			removeCentralModeLocalSeeds();
-		} else {
-			seedLocalAgentConfiguration();
-		}
-
-		seedExternalCwdSessions();
-		seedTemplateFixtures();
-		seedAgentDefinitionFixtures();
-		seedFixtureRepo();
-		writeFileSync(E2E_PICK_DIR_POINTER, E2E_FIXTURE_REPO);
-		writeFileSync(E2E_INSTALLED_FONTS, "[]");
-		seedSpeechFixture();
-	} catch (error) {
-		if (!centralMode) throw error;
-		removeTree(E2E_DATA_DIR);
-		throw centralSetupFailure(error);
+export default async function globalSetup(config?: FullConfig): Promise<void> {
+	mkdirSync(E2E_DATA_DIR, { recursive: true });
+	// Playwright starts the host and its writer lock before global setup.
+	for (const name of readdirSync(E2E_DATA_DIR)) {
+		if (name !== "host.lock") removeTree(join(E2E_DATA_DIR, name));
 	}
-
+	writeFileSync(join(E2E_DATA_DIR, "config.json"), JSON.stringify(E2E_BASE_CONFIG));
+	mkdirSync(E2E_HOME_DIR, { recursive: true });
+	for (const rc of [".zshrc", ".bashrc"]) writeFileSync(join(E2E_HOME_DIR, rc), "");
+	mkdirSync(E2E_FAKE_BIN_DIR, { recursive: true });
+	for (const command of ["code", "github-ssh"]) {
+		const target = join(E2E_FAKE_BIN_DIR, command);
+		copyFileSync(new URL(`./fixtures/bin/${command}`, import.meta.url), target);
+		chmodSync(target, 0o755);
+	}
+	writeHermeticE2eShell(E2E_FAKE_BIN_DIR, process.env.SHELL ?? "/bin/bash");
+	writeFakeGh(E2E_FAKE_BIN_DIR, E2E_GH_SCENARIO, E2E_GH_LOG);
+	seedAgentConfiguration();
+	seedExternalCwdSessions();
+	seedTemplateFixtures();
+	seedFixtureRepo();
+	writeFileSync(E2E_PICK_DIR_POINTER, E2E_FIXTURE_REPO);
+	writeFileSync(E2E_INSTALLED_FONTS, "[]");
+	seedSpeechFixture();
 	const baseURL = config?.projects[0]?.use.baseURL;
-	if (!centralMode) {
-		if (!baseURL) return undefined;
-		return E2eWire.connect(Number(new URL(baseURL).port))
-			.then(async (wire) => {
-				try {
-					await seedE2eDefaultModel(wire);
-					await wire.request("settings.update", { config: { onboardingDismissed: true } });
-				} finally {
-					wire.close();
-				}
-			})
-			.then(() => seedAnalyticsConsent(baseURL, false, true))
-			.then(() => undefined);
+	if (!baseURL) return;
+	const wire = await E2eWire.connect(Number(new URL(baseURL).port));
+	try {
+		if (isLiveAgentE2e()) await waitForAgentTarget(wire);
+		else await seedE2eDefaultModel(wire);
+		await wire.request("settings.update", { config: { onboardingDismissed: true } });
+	} finally {
+		wire.close();
 	}
-	return E2eWire.connect()
-		.then(async (wire) => {
-			try {
-				await wire.request("settings.update", { config: E2E_BASE_CONFIG });
-				await waitForCentralTarget(wire);
-				removeCentralModeLocalSeeds();
-			} finally {
-				wire.close();
-			}
-		})
-		.catch((error: unknown) => {
-			removeTree(E2E_DATA_DIR);
-			throw centralSetupFailure(error);
-		});
 }

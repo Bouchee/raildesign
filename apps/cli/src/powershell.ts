@@ -29,7 +29,7 @@ export async function runPowerShellScript(
 	args: readonly string[] = [],
 	options: RunPowerShellOptions = {},
 ): Promise<PowerShellResult | undefined> {
-	const path = join(tmpdir(), `thinkrail-${randomUUID()}.ps1`);
+	const path = join(tmpdir(), `raildesign-${randomUUID()}.ps1`);
 	await Bun.write(path, script.startsWith(BOM) ? script : `${BOM}${script}`);
 	try {
 		for (const host of HOSTS) {

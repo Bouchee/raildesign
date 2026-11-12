@@ -92,10 +92,10 @@ test("opens and safely forgets an existing user-owned worktree", async ({ page }
 
 		await openWorkspaceMenu(row);
 		await expect(page.getByTestId("workspace-rename")).toHaveCount(0);
-		await expect(page.getByTestId("workspace-remove")).toHaveText("Remove from ThinkRail");
+		await expect(page.getByTestId("workspace-remove")).toHaveText("Remove from RailDesign");
 		await page.getByTestId("workspace-remove").click();
 		const confirm = page.getByRole("alertdialog", {
-			name: "Remove existing-worktree-fixture from ThinkRail?",
+			name: "Remove existing-worktree-fixture from RailDesign?",
 		});
 		await expect(confirm).toContainText("existing checkout, files, and branch");
 		await expect(confirm).toContainText("stay untouched");
@@ -148,7 +148,7 @@ test("an attached worktree cannot also be opened as a project", async ({ page })
 
 		const error = page.getByTestId("open-error-dialog");
 		await expect(error).toBeVisible();
-		await expect(error).toContainText("already open in ThinkRail as a workspace");
+		await expect(error).toContainText("already open in RailDesign as a workspace");
 		await expect(page.getByTestId("project-item")).toHaveCount(1);
 	} finally {
 		writeFileSync(E2E_PICK_DIR_POINTER, E2E_FIXTURE_REPO);

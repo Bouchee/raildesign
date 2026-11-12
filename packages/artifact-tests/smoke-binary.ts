@@ -27,7 +27,7 @@ async function readServingUrl(stdout: ReadableStream<Uint8Array>): Promise<strin
 	let buffered = "";
 	for await (const chunk of stdout) {
 		buffered += decoder.decode(chunk, { stream: true });
-		const match = buffered.match(/thinkrail → (http:\/\/\S+)/);
+		const match = buffered.match(/raildesign → (http:\/\/\S+)/);
 		if (match?.[1]) return match[1];
 	}
 	throw new Error(`stdout closed without a serving URL: ${JSON.stringify(buffered)}`);
@@ -56,18 +56,14 @@ const adapter: ArtifactHostAdapter = {
 			);
 			const cache = env.XDG_CACHE_HOME;
 			if (!cache) throw new Error("XDG_CACHE_HOME is missing");
-			const skillsDir = globSync(join(cache, "thinkrail", "skills", "*")).find((path) =>
-				existsSync(join(path, "host", "brainstorming", "SKILL.md")),
-			);
-			const runtimeDir = globSync(join(cache, "thinkrail", "runtime", "*")).find((path) =>
+			const runtimeDir = globSync(join(cache, "raildesign", "runtime", "*")).find((path) =>
 				existsSync(join(path, "macos-trash")),
 			);
-			if (!skillsDir || !runtimeDir) throw new Error("CLI staged resources were not found");
+			if (!runtimeDir) throw new Error("CLI staged resources were not found");
 			let stopPromise: Promise<void> | undefined;
 			return {
 				origin,
 				resources: {
-					skillsDir,
 					trashHelpers: {
 						macos: join(runtimeDir, "macos-trash"),
 						windows: join(runtimeDir, "windows-trash.exe"),
@@ -129,11 +125,11 @@ try {
 		cwd: project,
 	});
 	if (!subcommand.success) throw new Error(`uninstall --help exited ${subcommand.exitCode}`);
-	if (!subcommand.stdout.toString().includes("thinkrail uninstall")) {
+	if (!subcommand.stdout.toString().includes("raildesign uninstall")) {
 		throw new Error("uninstall --help printed no usage");
 	}
 	if (existsSync(marker)) throw new Error("compiled binary executed a project bunfig preload");
-	if (existsSync(join(cache, "thinkrail"))) {
+	if (existsSync(join(cache, "raildesign"))) {
 		throw new Error("exit-only subcommand staged embedded assets");
 	}
 	await runArtifactHostProbes(adapter);

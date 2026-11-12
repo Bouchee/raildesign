@@ -13,7 +13,11 @@ import {
 	setWindowFocus,
 } from "./fixtures/app";
 import { E2E_DATA_DIR, E2E_FIXTURE_REPO } from "./fixtures/paths";
-import { seedWorkspaceSession } from "./fixtures/sessions";
+import {
+	completedFixtureState,
+	pendingToolFixtureState,
+	seedWorkspaceSession,
+} from "./fixtures/sessions";
 import { E2eWire } from "./fixtures/wire";
 
 const BASE_TS = 1_704_000_000_000;
@@ -79,6 +83,7 @@ test("an unresolved persisted question is level-triggered in project and workspa
 	} satisfies AskUserQuestionArgs;
 	const session = seedWorkspaceSession(realpathSync(E2E_FIXTURE_REPO), {
 		name: "needs input state",
+		state: pendingToolFixtureState("state-question"),
 		messages: [
 			{ role: "user", text: "Ask for rollout input.", timestamp: BASE_TS },
 			{
@@ -118,6 +123,7 @@ test("entering a workspace clears its visible unread result without a chat click
 	await openFixtureProject(page);
 	const session = seedWorkspaceSession(realpathSync(E2E_FIXTURE_REPO), {
 		name: "workspace entry receipt",
+		state: completedFixtureState("workspace-entry-receipt"),
 		messages: [
 			{ role: "user", text: "Finish before workspace entry.", timestamp: BASE_TS + 5 },
 			{ role: "assistant", text: "Visible workspace result.", timestamp: BASE_TS + 6 },
@@ -142,6 +148,7 @@ test("marking a workspace unread relights its result until the chat is left, and
 	await openFixtureProject(page);
 	const session = seedWorkspaceSession(realpathSync(E2E_FIXTURE_REPO), {
 		name: "mark unread receipt",
+		state: completedFixtureState("mark-unread-receipt"),
 		messages: [
 			{ role: "user", text: "Finish before marking.", timestamp: BASE_TS + 7 },
 			{ role: "assistant", text: "Result to revisit.", timestamp: BASE_TS + 8 },
@@ -186,6 +193,7 @@ test("opening an unread finished chat at its latest edge clears it for every cli
 	await openFixtureProject(page);
 	const session = seedWorkspaceSession(realpathSync(E2E_FIXTURE_REPO), {
 		name: "finished state receipt",
+		state: completedFixtureState("finished-state-receipt"),
 		messages: [
 			{ role: "user", text: "Finish this run.", timestamp: BASE_TS + 10 },
 			{ role: "assistant", text: "Finished result.", timestamp: BASE_TS + 11 },
@@ -193,6 +201,7 @@ test("opening an unread finished chat at its latest edge clears it for every cli
 	});
 	const quietSibling = seedWorkspaceSession(realpathSync(E2E_FIXTURE_REPO), {
 		name: "quiet sibling",
+		updatedAt: BASE_TS + 12,
 		messages: [],
 	});
 	try {
@@ -248,6 +257,7 @@ test("an unread result clears only once its chat is seen at the latest edge of a
 	await openFixtureProject(page);
 	const session = seedWorkspaceSession(realpathSync(E2E_FIXTURE_REPO), {
 		name: "seen state receipt",
+		state: completedFixtureState("seen-state-receipt"),
 		messages: Array.from({ length: 30 }, (_, index) => [
 			{
 				role: "user" as const,
@@ -299,48 +309,11 @@ test("an unread result clears only once its chat is seen at the latest edge of a
 	}
 });
 
-test("a result finished under the open Resources inspector clears only once the inspector closes", async ({
-	page,
-}) => {
-	await openFixtureProject(page);
-	const session = seedWorkspaceSession(realpathSync(E2E_FIXTURE_REPO), {
-		name: "inspector state receipt",
-		messages: [
-			{ role: "user", text: "Finish behind the inspector.", timestamp: BASE_TS + 120 },
-			{ role: "assistant", text: "Covered finished result.", timestamp: BASE_TS + 121 },
-		],
-	});
-	const acknowledgements = recordAcknowledgements(page);
-	try {
-		await reconnectWithSeed(page);
-		const workspace = defaultWorkspaceRow(page);
-		await expectAttentionDot(workspace);
-
-		await setWindowFocus(page, false);
-		await enterDefaultWorkspace(page);
-		await openPersistedChat(page, "inspector state receipt");
-		await expect(page.getByText("Covered finished result.", { exact: true })).toBeVisible();
-		await page.getByTestId("resources-trigger").click();
-		const inspector = page.getByTestId("resources-inspector");
-		await expect(inspector).toBeVisible();
-		await setWindowFocus(page, true);
-		await settleFrames(page);
-		expect(acknowledgements()).toBe(0);
-		await expectAttentionDot(workspace);
-
-		await inspector.getByTestId("resources-inspector-close").click();
-		await expect(inspector).toHaveCount(0);
-		await expect(workspace).not.toHaveAttribute("data-attention", /.+/);
-		expect(acknowledgements()).toBe(1);
-	} finally {
-		rmSync(session.path, { force: true });
-	}
-});
-
 test("a result behind an open modal clears only once the modal closes", async ({ page }) => {
 	await openFixtureProject(page);
 	const session = seedWorkspaceSession(realpathSync(E2E_FIXTURE_REPO), {
 		name: "modal state receipt",
+		state: completedFixtureState("modal-state-receipt"),
 		messages: [
 			{ role: "user", text: "Finish behind a modal.", timestamp: BASE_TS + 140 },
 			{ role: "assistant", text: "Modal-covered finished result.", timestamp: BASE_TS + 141 },
@@ -381,6 +354,7 @@ test("opening a chat from a sent review comment clears its unread result", async
 	await openFixtureProject(page);
 	const session = seedWorkspaceSession(realpathSync(E2E_FIXTURE_REPO), {
 		name: "sent review attention receipt",
+		state: completedFixtureState("sent-review-attention-receipt"),
 		messages: [
 			{ role: "user", text: "Finish this review run.", timestamp: BASE_TS + 20 },
 			{ role: "assistant", text: "Review-opened finished result.", timestamp: BASE_TS + 21 },
@@ -388,6 +362,7 @@ test("opening a chat from a sent review comment clears its unread result", async
 	});
 	const quietSibling = seedWorkspaceSession(realpathSync(E2E_FIXTURE_REPO), {
 		name: "quiet sent review sibling",
+		updatedAt: BASE_TS + 22,
 		messages: [],
 	});
 	let peer: Page | undefined;
@@ -406,6 +381,10 @@ test("opening a chat from a sent review comment clears its unread result", async
 
 		await seedSentReviewComment(page, session.id);
 		await enterDefaultWorkspace(page);
+		await expect(page.locator('[data-testid="editor-tab"][data-kind="chat"]')).toHaveAttribute(
+			"data-session-id",
+			quietSibling.id,
+		);
 		const targetChatTab = page.locator(
 			`[data-testid="editor-tab"][data-kind="chat"][data-session-id="${session.id}"]`,
 		);

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import type { PiEvent, Project, Workspace } from "@thinkrail/contracts";
+import type { Project, SessionEvent, Workspace } from "@thinkrail/contracts";
 import { layoutOpenOptionsForNavigation, selectAttentionCenterTab, useAppStore } from "../store";
 import type { NavigationDriver } from "./driver";
 import { startNavigation } from "./restore";
@@ -400,10 +400,12 @@ test("streaming pi events cause zero History writes while the location is unchan
 				type: "text",
 				partial: { role: "assistant", content: [{ type: "text", text }] },
 			},
-		}) as unknown as PiEvent;
-	useAppStore.getState().handlePiEvent({ type: "agent_start" } as unknown as PiEvent, "s1");
+		}) as unknown as SessionEvent;
+	useAppStore
+		.getState()
+		.handleSessionEvent({ type: "agent_start" } as unknown as SessionEvent, "s1");
 	for (let i = 0; i < 200; i++) {
-		useAppStore.getState().handlePiEvent(delta(`chunk ${i}`), "s1");
+		useAppStore.getState().handleSessionEvent(delta(`chunk ${i}`), "s1");
 	}
 	expect(d.writes.length).toBe(writes);
 });

@@ -1,17 +1,14 @@
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, join, resolve } from "node:path";
-import { defaultSessionDirFor, writeFixtureSession } from "@thinkrail/server/history-test-fixtures";
+import { join, resolve } from "node:path";
+import { PROTOCOL_VERSION } from "@thinkrail/contracts";
+import { sessionDirFor, writeFixtureSession } from "@thinkrail/server/history-test-fixtures";
 import { removeTree } from "@thinkrail/shared/removeTree";
 import { toolHomeEnv } from "@thinkrail/shared/toolHomes";
-import { within } from "./lifecycle";
+import { pollUntil, within } from "./lifecycle";
 
 export interface ArtifactResources {
-	readonly skillsDir: string;
-	readonly trashHelpers: {
-		readonly macos: string;
-		readonly windows: string;
-	};
+	readonly trashHelpers: { readonly macos: string; readonly windows: string };
 }
 
 export interface RunningArtifactHost {
@@ -25,121 +22,12 @@ export interface ArtifactHostAdapter {
 	launch(env: Record<string, string>, label: string): Promise<RunningArtifactHost>;
 }
 
-const MALFORMED_MERMAID = "flowchart LR\n A -->";
-const ASK_PROMPT = "Ask the runtime question.";
-const ASK_TOOL_CALL_ID = "artifact-ask";
-const ASK_QUESTION = {
-	questions: [
-		{
-			question: "Which runtime?",
-			header: "Runtime",
-			options: [
-				{ label: "Bun", description: "fast" },
-				{ label: "Node", description: "compatible" },
-			],
-		},
-	],
-};
-const ASK_ANSWER = {
-	cancelled: false,
-	answers: [{ questionIndex: 0, question: "Which runtime?", kind: "option", answer: "Bun" }],
-};
-
-const MCP_STDIO_FIXTURE = `import { createInterface } from "node:readline";
-const reply = (id, result) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n");
-createInterface({ input: process.stdin }).on("line", (line) => {
-  const message = JSON.parse(line);
-  if (message.id === undefined) return;
-  if (message.method === "initialize")
-    return reply(message.id, {
-      protocolVersion: message.params.protocolVersion,
-      capabilities: { tools: {} },
-      serverInfo: { name: "artifact-smoke", version: "1.0.0" },
-    });
-  if (message.method === "tools/list")
-    return reply(message.id, {
-      tools: [{ name: "echo", description: "Echo", inputSchema: { type: "object", properties: {} } }],
-    });
-  return reply(message.id, { content: [{ type: "text", text: "ok" }] });
-});
-`;
-
-function startNeedsSignInServer(): { url: string; stop: () => void } {
-	const server = Bun.serve({
-		hostname: "127.0.0.1",
-		port: 0,
-		fetch(request) {
-			const { pathname, origin } = new URL(request.url);
-			if (pathname.startsWith("/.well-known/oauth-protected-resource")) {
-				return Response.json({ resource: `${origin}/mcp`, authorization_servers: [origin] });
-			}
-			if (pathname === "/.well-known/oauth-authorization-server") {
-				return Response.json({
-					issuer: origin,
-					authorization_endpoint: `${origin}/authorize`,
-					token_endpoint: `${origin}/token`,
-					registration_endpoint: `${origin}/register`,
-					response_types_supported: ["code"],
-					code_challenge_methods_supported: ["S256"],
-				});
-			}
-			return new Response("unauthorized", {
-				status: 401,
-				headers: {
-					"WWW-Authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`,
-				},
-			});
-		},
-	});
-	return { url: `http://127.0.0.1:${server.port}/mcp`, stop: () => server.stop(true) };
-}
-
-function writeMcpFixtures(root: string, agentDir: string, httpUrl: string): void {
-	const fixture = join(root, "mcp-stdio-fixture.mjs");
-	writeFileSync(fixture, MCP_STDIO_FIXTURE);
-	mkdirSync(agentDir, { recursive: true });
-	writeFileSync(
-		join(agentDir, "mcp.json"),
-		JSON.stringify({
-			mcpServers: {
-				"smoke-stdio": { command: process.execPath, args: [fixture], exposure: "direct" },
-				"smoke-oauth": { url: httpUrl, exposure: "direct" },
-			},
-		}),
-	);
-}
-
-async function assertMcpServersReported(
-	socket: WebSocket,
-	workspaceId: string,
-	sessionId: string,
-): Promise<void> {
-	const until = Date.now() + 30_000;
-	for (;;) {
-		const listed = (await within(rpc(socket, "mcp.list", { workspaceId }), 10_000, "mcp.list")) as {
-			statuses?: {
-				sessionId: string;
-				servers: { name: string; state: string; toolCount?: number }[];
-			}[];
-		};
-		const servers = listed.statuses?.find((snapshot) => snapshot.sessionId === sessionId)?.servers;
-		const stdio = servers?.find((server) => server.name === "smoke-stdio");
-		const http = servers?.find((server) => server.name === "smoke-oauth");
-		if (stdio?.state === "connected" && stdio.toolCount === 1 && http?.state === "needs-sign-in")
-			return;
-		if (Date.now() > until) {
-			throw new Error(`the MCP engine did not report both fixtures: ${JSON.stringify(servers)}`);
-		}
-		await Bun.sleep(250);
-	}
-}
-
 function assert(condition: unknown, message: string): asserts condition {
 	if (!condition) throw new Error(message);
 }
 
 async function connectRpc(baseUrl: string): Promise<WebSocket> {
-	const socket = new WebSocket(`${baseUrl.replace(/^http/, "ws")}/ws`);
+	const socket = new WebSocket(`${baseUrl.replace(/^http/, "ws")}/ws?protocol=${PROTOCOL_VERSION}`);
 	await new Promise<void>((resolve, reject) => {
 		socket.addEventListener("open", () => resolve(), { once: true });
 		socket.addEventListener("error", () => reject(new Error("WebSocket connection failed")), {
@@ -153,6 +41,14 @@ let requestSequence = 0;
 function rpc(socket: WebSocket, method: string, params: unknown): Promise<unknown> {
 	const id = `artifact_${++requestSequence}`;
 	return new Promise((resolve, reject) => {
+		const cleanup = () => {
+			socket.removeEventListener("message", onMessage);
+			socket.removeEventListener("close", onClose);
+		};
+		const onClose = () => {
+			cleanup();
+			reject(new Error(`${method} connection closed`));
+		};
 		const onMessage = (event: MessageEvent) => {
 			if (typeof event.data !== "string") return;
 			const frame = JSON.parse(event.data) as {
@@ -162,210 +58,14 @@ function rpc(socket: WebSocket, method: string, params: unknown): Promise<unknow
 				error?: string;
 			};
 			if (frame.id !== id) return;
-			socket.removeEventListener("message", onMessage);
+			cleanup();
 			if (frame.ok) resolve(frame.result);
 			else reject(new Error(frame.error ?? `${method} failed`));
 		};
 		socket.addEventListener("message", onMessage);
+		socket.addEventListener("close", onClose, { once: true });
 		socket.send(JSON.stringify({ id, method, params }));
 	});
-}
-
-function assertExternalModel(models: unknown): asserts models is Record<string, unknown>[] {
-	assert(Array.isArray(models), "model.list did not return an array");
-	assert(
-		models.some(
-			(model) =>
-				typeof model === "object" &&
-				model !== null &&
-				(model as { provider?: string; id?: string; name?: string }).provider ===
-					"compiled-external" &&
-				(model as { provider?: string; id?: string; name?: string }).id ===
-					"compiled-external-model" &&
-				(model as { provider?: string; id?: string; name?: string }).name ===
-					"Compiled external extension model (.pi)",
-		),
-		"global external extension model (value-importing pi) is missing",
-	);
-}
-
-async function assertCentralConfigured(socket: WebSocket, label: string): Promise<void> {
-	let state: unknown;
-	for (let attempt = 0; attempt < 40; attempt += 1) {
-		const status = (await within(
-			rpc(socket, "provider.status", {}),
-			10_000,
-			`${label} status`,
-		)) as {
-			jbcentral?: { state?: unknown };
-		};
-		state = status.jbcentral?.state;
-		if (state === "configured") return;
-		if (state !== "configuring") break;
-		await Bun.sleep(250);
-	}
-	throw new Error(`${label} Central state is ${JSON.stringify(state)}, expected configured`);
-}
-
-async function assertStrictVisualizeValidation(
-	socket: WebSocket,
-	workspaceId: string,
-	sessionId: string,
-): Promise<void> {
-	await within(
-		rpc(socket, "session.prompt", { sessionId, text: "Draw the broken flowchart." }),
-		10_000,
-		"session.prompt",
-	);
-	for (let attempt = 0; attempt < 240; attempt += 1) {
-		const states = (await within(
-			rpc(socket, "session.stateList", {}),
-			10_000,
-			"session.stateList",
-		)) as { sessionId: string; state: { execution: string; completion: unknown } }[];
-		const state = states.find((entry) => entry.sessionId === sessionId)?.state;
-		if (state?.execution === "idle" && state.completion !== null) break;
-		await Bun.sleep(250);
-	}
-	const transcript = (await within(
-		rpc(socket, "session.getMessages", { sessionId, workspaceId }),
-		10_000,
-		"session.getMessages",
-	)) as { messages: { role: string; toolName?: string; isError?: boolean; content?: unknown }[] };
-	const result = transcript.messages.find(
-		(message) => message.role === "toolResult" && message.toolName === "visualize",
-	);
-	assert(result, "the scripted visualize tool call never executed in the artifact session");
-	assert(result.isError === true, "strict mermaid validation accepted a dangling flowchart edge");
-	const text = Array.isArray(result.content)
-		? result.content.map((block) => (block as { text?: string }).text ?? "").join("\n")
-		: "";
-	assert(
-		/invalid Mermaid syntax in `mermaid`/.test(text) && /Parse error/.test(text),
-		`visualize rejected the diagram without the strict mermaid parse error: ${text}`,
-	);
-}
-
-async function sessionState(
-	socket: WebSocket,
-	sessionId: string,
-): Promise<{ execution: string; completion: unknown; needsInput: { kind: string } | null }> {
-	const states = (await within(
-		rpc(socket, "session.stateList", {}),
-		10_000,
-		"session.stateList",
-	)) as {
-		sessionId: string;
-		state: { execution: string; completion: unknown; needsInput: { kind: string } | null };
-	}[];
-	const state = states.find((entry) => entry.sessionId === sessionId)?.state;
-	assert(state, `session ${sessionId} is missing from session.stateList`);
-	return state;
-}
-
-async function assertAskUserQuestionRoundTrip(
-	socket: WebSocket,
-	workspaceId: string,
-	sessionId: string,
-): Promise<void> {
-	const prompting = rpc(socket, "session.prompt", { sessionId, text: ASK_PROMPT });
-	prompting.catch(() => {});
-	let asked = false;
-	for (let attempt = 0; attempt < 240 && !asked; attempt += 1) {
-		asked = (await sessionState(socket, sessionId)).needsInput?.kind === "tool-response";
-		if (!asked) await Bun.sleep(250);
-	}
-	assert(asked, "the scripted ask_user_question call never blocked the artifact session");
-	await within(
-		rpc(socket, "session.respondToTool", {
-			sessionId,
-			toolCallId: ASK_TOOL_CALL_ID,
-			response: ASK_ANSWER,
-		}),
-		10_000,
-		"session.respondToTool",
-	);
-	await within(prompting, 30_000, "session.prompt acknowledgement");
-	for (let attempt = 0; attempt < 240; attempt += 1) {
-		const state = await sessionState(socket, sessionId);
-		if (state.execution === "idle" && state.completion !== null) break;
-		await Bun.sleep(250);
-	}
-	const transcript = (await within(
-		rpc(socket, "session.getMessages", { sessionId, workspaceId }),
-		10_000,
-		"session.getMessages",
-	)) as {
-		messages: { role: string; toolCallId?: string; isError?: boolean; details?: unknown }[];
-	};
-	const result = transcript.messages.find(
-		(message) => message.role === "toolResult" && message.toolCallId === ASK_TOOL_CALL_ID,
-	);
-	assert(result, "the answered ask_user_question call left no tool result in the transcript");
-	assert(result.isError !== true, "the answered ask_user_question call persisted as an error");
-	assert(
-		JSON.stringify(result.details) === JSON.stringify(ASK_ANSWER),
-		`the persisted answer differs from the one sent: ${JSON.stringify(result.details)}`,
-	);
-}
-
-async function assertOAuthLoginReachesAuthUrl(socket: WebSocket): Promise<void> {
-	let loginId: string | undefined;
-	const authUrl = new Promise<string>((resolve, reject) => {
-		const settle = (fn: () => void) => {
-			socket.removeEventListener("message", onPush);
-			fn();
-		};
-		const onPush = (event: MessageEvent) => {
-			if (typeof event.data !== "string") return;
-			const message = JSON.parse(event.data) as {
-				channel?: string;
-				data?: {
-					loginId?: string;
-					frame?: {
-						kind: string;
-						url?: string;
-						message?: string;
-						options?: { id: string; label: string }[];
-					};
-				};
-			};
-			if (message.channel !== "provider.login" || !message.data?.frame) return;
-			const { loginId: pushLoginId, frame } = message.data;
-			if (frame.kind === "select") {
-				const browser = frame.options?.find((option) =>
-					/browser/i.test(`${option.id} ${option.label}`),
-				);
-				const optionId = browser?.id ?? frame.options?.[0]?.id;
-				if (!optionId || !pushLoginId) {
-					settle(() => reject(new Error(`unanswerable select frame: ${JSON.stringify(frame)}`)));
-					return;
-				}
-				rpc(socket, "provider.loginReply", { loginId: pushLoginId, value: optionId }).catch(
-					(error) =>
-						settle(() => reject(error instanceof Error ? error : new Error(String(error)))),
-				);
-				return;
-			}
-			if (frame.kind === "authUrl") settle(() => resolve(frame.url ?? ""));
-			if (frame.kind === "error") {
-				settle(() => reject(new Error(`login flow failed: ${frame.message}`)));
-			}
-		};
-		socket.addEventListener("message", onPush);
-		rpc(socket, "provider.loginStart", { providerId: "openai-codex" }).then(
-			(result) => {
-				loginId = (result as { loginId?: string }).loginId;
-			},
-			(error) => settle(() => reject(error instanceof Error ? error : new Error(String(error)))),
-		);
-	});
-	try {
-		const reached = await within(authUrl, 30_000, "Codex OAuth auth URL");
-		assert(reached.includes("auth.openai.com"), `unexpected auth URL: ${reached}`);
-	} finally {
-		if (loginId !== undefined) rpc(socket, "provider.loginCancel", { loginId }).catch(() => {});
-	}
 }
 
 export function hostEnvironment(
@@ -381,292 +81,162 @@ export function hostEnvironment(
 	return { ...inherited, ...overrides };
 }
 
-function createCentralExecutable(fakeBinDir: string): void {
-	if (process.platform !== "win32") {
-		writeFileSync(
-			join(fakeBinDir, "central"),
-			'#!/bin/sh\n[ "$1" = "--version" ] || exit 8\nprintf \'central 1.6.2 (synthetic artifact metadata)\\n\'\n',
-			{ mode: 0o755 },
-		);
-		return;
-	}
-	const source = join(fakeBinDir, "central.ts");
-	writeFileSync(
-		source,
-		'if (process.argv[2] !== "--version") process.exit(8); console.log("central 1.6.2 (synthetic artifact metadata)");\n',
-	);
-	const build = Bun.spawnSync([
-		process.execPath,
-		"build",
-		"--compile",
-		source,
-		"--outfile",
-		join(fakeBinDir, "central.exe"),
-	]);
-	assert(build.success, `could not build the synthetic Central executable: ${build.stderr}`);
-}
-
 export async function runArtifactHostProbes(adapter: ArtifactHostAdapter): Promise<void> {
-	const root = mkdtempSync(join(tmpdir(), `thinkrail-${adapter.name}-artifact-`));
-	const homeDir = join(root, "home");
-	const fakeBinDir = join(root, "no-pi-bin");
+	const root = mkdtempSync(join(tmpdir(), `raildesign-${adapter.name}-artifact-`));
+	const home = join(root, "home");
+	const data = join(root, "data");
 	const projectDir = join(root, "project");
-	const agentDir = join(root, "pi-agent");
-	mkdirSync(homeDir, { recursive: true });
-	mkdirSync(fakeBinDir, { recursive: true });
-	createCentralExecutable(fakeBinDir);
-	const centralArtifact = join(homeDir, ".pi", "agent", "extensions", "jetbrains-central.ts");
-	mkdirSync(dirname(centralArtifact), { recursive: true });
-	writeFileSync(
-		centralArtifact,
-		`import { createFauxCore, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
-import { CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
-import { clampThinkingLevel } from "@earendil-works/pi-ai/models";
-const api = "compiled-external-faux";
-const model = {
-  id: "compiled-external-model",
-  name: \`Compiled external extension model (\${CONFIG_DIR_NAME})\`,
-  reasoning: false,
-  input: ["text"],
-  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-  contextWindow: 100000,
-  maxTokens: 4096,
-  api,
-};
-if (clampThinkingLevel(model, "high") !== "off") throw new Error("pi-ai/models alias failed");
-const faux = createFauxCore({ api, provider: "compiled-external", models: [model] });
-const respond = (context) => {
-  faux.appendResponses([respond]);
-  const last = context.messages[context.messages.length - 1];
-  if (last && last.role === "toolResult") return fauxAssistantMessage("Tool call attempted.");
-  if (last && last.role === "user" && JSON.stringify(last.content).includes(${JSON.stringify(ASK_PROMPT)}))
-    return fauxAssistantMessage(
-      [fauxToolCall("ask_user_question", ${JSON.stringify(ASK_QUESTION)}, { id: ${JSON.stringify(ASK_TOOL_CALL_ID)} })],
-      { stopReason: "toolUse" },
-    );
-  return fauxAssistantMessage(
-    [fauxToolCall("visualize", { type: "diagram", mermaid: ${JSON.stringify(MALFORMED_MERMAID)} })],
-    { stopReason: "toolUse" },
-  );
-};
-faux.setResponses([respond]);
-export default function syntheticExternalExtension(pi) {
-  pi.registerProvider("compiled-external", {
-    api,
-    baseUrl: "https://compiled-extension.invalid",
-    apiKey: "synthetic-smoke-key",
-    models: [model],
-    streamSimple: faux.streamSimple,
-  });
-}
-`,
-	);
-	const inheritedPath = (process.env.PATH ?? "")
-		.split(delimiter)
-		.filter((directory) => directory && !Bun.which("pi", { PATH: directory }));
-	const noPiPath = [fakeBinDir, ...inheritedPath].join(delimiter);
-	assert(!Bun.which("pi", { PATH: noPiPath }), "probe PATH unexpectedly contains pi");
-	assert(Bun.which("git", { PATH: noPiPath }), "probe PATH does not contain git");
-
-	const skillDir = join(projectDir, ".claude", "skills", "compiled-portable");
-	mkdirSync(skillDir, { recursive: true });
-	writeFileSync(
-		join(skillDir, "SKILL.md"),
-		"---\nname: compiled-portable\ndescription: Compiled portable smoke skill\n---\n\n# Smoke\n",
-	);
-	for (const command of [
-		["git", "-C", projectDir, "init", "-b", "main"],
-		["git", "-C", projectDir, "add", "."],
+	mkdirSync(home, { recursive: true });
+	mkdirSync(projectDir, { recursive: true });
+	writeFileSync(join(projectDir, "seed.txt"), "artifact seed\n");
+	for (const args of [
+		["init", "--quiet"],
+		["add", "seed.txt"],
 		[
-			"git",
-			"-C",
-			projectDir,
 			"-c",
-			"user.name=ThinkRail Smoke",
+			"user.name=RailDesign Smoke",
 			"-c",
-			"user.email=smoke@thinkrail.invalid",
-			"-c",
-			"commit.gpgsign=false",
+			"user.email=smoke@raildesign.invalid",
 			"commit",
 			"--quiet",
 			"-m",
-			"seed artifact project",
+			"seed",
 		],
 	]) {
-		assert(Bun.spawnSync(command).success, `fixture command failed: ${command.join(" ")}`);
-	}
-
-	const baseEnv: Record<string, string> = {
-		PI_OFFLINE: "1",
-		...toolHomeEnv(homeDir),
-		PATH: noPiPath,
-		THINKRAIL_NO_ANALYTICS: "1",
-		CI: "1",
-	};
-	let defaultHost: RunningArtifactHost | undefined;
-	let customHost: RunningArtifactHost | undefined;
-	let socket: WebSocket | undefined;
-	const needsSignIn = startNeedsSignInServer();
-	try {
-		const defaultEnv = hostEnvironment(
-			{
-				...baseEnv,
-				THINKRAIL_DATA_DIR: join(root, "default-data"),
-				XDG_CACHE_HOME: join(root, "default-cache"),
-			},
-			["PI_CODING_AGENT_DIR"],
-		);
-		defaultHost = await adapter.launch(defaultEnv, "default-agent");
-		socket = await within(connectRpc(defaultHost.origin), 10_000, "default host WebSocket");
-		assertExternalModel(await within(rpc(socket, "model.list", {}), 20_000, "default model.list"));
-		await assertCentralConfigured(socket, "default-agent");
-		socket.close();
-		socket = undefined;
-		await defaultHost.stop();
-		defaultHost = undefined;
-
-		const customEnv = hostEnvironment({
-			...baseEnv,
-			THINKRAIL_DATA_DIR: join(root, "data"),
-			PI_CODING_AGENT_DIR: agentDir,
-			XDG_CACHE_HOME: join(root, "cache"),
+		const result = Bun.spawnSync(["git", ...args], {
+			cwd: projectDir,
+			stdout: "pipe",
+			stderr: "pipe",
 		});
-		customHost = await adapter.launch(customEnv, "custom-agent");
-		const health = await within(fetch(`${customHost.origin}/health`), 10_000, "GET /health");
+		assert(result.success, `fixture git failed: ${result.stderr.toString()}`);
+	}
+	const env = hostEnvironment(
+		{
+			...toolHomeEnv(home),
+			LOCALAPPDATA: join(root, "local"),
+			APPDATA: join(root, "roaming"),
+			XDG_CONFIG_HOME: join(root, "config"),
+			XDG_DATA_HOME: join(root, "xdg-data"),
+			XDG_CACHE_HOME: join(root, "cache"),
+			THINKRAIL_DATA_DIR: data,
+			CI: "1",
+		},
+		["OPENAI_BASE_URL", "OPENAI_MODEL", "OPENAI_API_KEY"],
+	);
+	let host: RunningArtifactHost | undefined;
+	let socket: WebSocket | undefined;
+	try {
+		host = await adapter.launch(env, "workspace");
+		const health = await within(fetch(`${host.origin}/health`), 10000, "GET /health");
 		assert(health.ok && (await health.text()) === "ok", `/health answered ${health.status}`);
-		const index = await within(fetch(customHost.origin), 10_000, "GET /");
-		assert(index.ok && (await index.text()).includes("ThinkRail"), "web UI was not served");
-		socket = await within(connectRpc(customHost.origin), 10_000, "custom host WebSocket");
-		const models = await within(rpc(socket, "model.list", {}), 20_000, "custom model.list");
-		assertExternalModel(models);
-		await assertCentralConfigured(socket, "custom-agent");
-		const externalModel = models.find(
-			(model) => model.provider === "compiled-external" && model.id === "compiled-external-model",
+		const index = await within(fetch(host.origin), 10000, "GET /");
+		assert(index.ok && (await index.text()).includes("RailDesign"), "RailDesign UI was not served");
+		socket = await within(connectRpc(host.origin), 10000, "host WebSocket");
+		const call = (method: string, params: unknown) => {
+			assert(socket, "artifact WebSocket is not connected");
+			return within(rpc(socket, method, params), 30000, method);
+		};
+		const providers = await call("provider.status", {});
+		assert(
+			providers &&
+				typeof providers === "object" &&
+				"providers" in providers &&
+				Array.isArray(providers.providers),
+			"provider.status did not return configured SDK endpoint status",
 		);
-		assert(externalModel, "external model lookup failed after assertion");
-
-		const project = (await within(
-			rpc(socket, "project.open", { path: projectDir }),
-			10_000,
-			"project.open",
-		)) as { id?: string };
+		assert(!("jbcentral" in providers), "removed Central configuration reached the wire");
+		assert(providers.providers.length === 0, "artifact inherited provider configuration");
+		const project = (await call("project.open", { path: projectDir })) as { id: string };
 		assert(project.id, "project.open returned no project id");
-		const workspaces = (await within(
-			rpc(socket, "workspace.list", { projectId: project.id }),
-			10_000,
-			"workspace.list",
-		)) as { id?: string; kind?: string; worktreePath?: string }[];
-		const workspace = workspaces.find((entry) => entry.kind === "default");
-		assert(workspace?.id && workspace.worktreePath, "Default workspace is missing");
-		const transcript = writeFixtureSession(defaultSessionDirFor(agentDir, workspace.worktreePath), {
-			cwd: resolve(workspace.worktreePath),
+		const workspace = (await call("workspace.create", {
+			projectId: project.id,
+			name: "artifact-smoke",
+		})) as { id: string; worktreePath: string };
+		assert(
+			workspace.id &&
+				workspace.worktreePath &&
+				resolve(workspace.worktreePath) !== resolve(projectDir),
+			"workspace.create did not isolate the worktree",
+		);
+		const file = (await call("fs.readFile", { workspaceId: workspace.id, path: "seed.txt" })) as {
+			content: string;
+		};
+		assert(file.content === "artifact seed\n", "workspace file content is wrong");
+		const terminal = (await call("terminal.attach", {
+			workspaceId: workspace.id,
+			tabKey: "artifact-pty",
+			cols: 80,
+			rows: 24,
+		})) as { id: string };
+		assert(terminal.id, "terminal.attach returned no PTY id");
+		await call("terminal.resize", { id: terminal.id, cols: 100, rows: 30 });
+		await call("terminal.write", {
+			id: terminal.id,
+			data: "echo raildesign-pty-probe > artifact-pty.txt\r",
+		});
+		const outputPath = join(workspace.worktreePath, "artifact-pty.txt");
+		await pollUntil(
+			() =>
+				existsSync(outputPath) &&
+				readFileSync(outputPath, "utf8").trim() === "raildesign-pty-probe",
+			{ timeoutMs: 10000, what: "PTY command in the selected worktree" },
+		);
+		const output = (await call("fs.readFile", {
+			workspaceId: workspace.id,
+			path: "artifact-pty.txt",
+		})) as { content: string };
+		assert(
+			output.content.trim() === "raildesign-pty-probe",
+			"PTY output file differs from the host file view",
+		);
+		assert(
+			!existsSync(join(projectDir, "artifact-pty.txt")),
+			"PTY command changed the original project directory",
+		);
+		const closed = (await call("terminal.close", {
+			workspaceId: workspace.id,
+			tabKey: "artifact-pty",
+			force: true,
+		})) as { closed: boolean };
+		assert(closed.closed, "terminal.close did not close the PTY");
+		const created = (await call("session.create", { workspaceId: workspace.id })) as {
+			sessionId: string;
+		};
+		assert(created.sessionId, "session.create returned no session ID");
+		const transcript = writeFixtureSession(sessionDirFor(data), {
+			workspaceId: workspace.id,
+			cwd: workspace.worktreePath,
 			name: "artifact trash probe",
 			messages: [{ role: "user", text: "move to trash", timestamp: Date.now() }],
 		});
-		await within(
-			rpc(socket, "session.delete", { sessionId: transcript.id, workspaceId: workspace.id }),
-			10_000,
-			"session.delete",
-		);
+		await call("session.delete", { sessionId: transcript.id, workspaceId: workspace.id });
 		assert(!existsSync(transcript.path), "session.delete left the transcript on disk");
-		await within(
-			rpc(socket, "project.setTrust", { id: project.id, trusted: true }),
-			10_000,
-			"trust",
-		);
-		const skills = await within(
-			rpc(socket, "skill.list", { projectId: project.id }),
-			30_000,
-			"skill.list",
-		);
-		assert(Array.isArray(skills), "skill.list did not return an array");
-		const portable = skills.find(
-			(entry) =>
-				typeof entry === "object" &&
-				entry !== null &&
-				(entry as { name?: string }).name === "skill:compiled-portable",
-		) as { description?: string; sourceInfo?: { scope?: string } } | undefined;
-		assert(portable?.description === "Compiled portable smoke skill", "portable skill is missing");
-		assert(portable.sourceInfo?.scope === "project", "portable skill provenance is wrong");
-		assert(
-			skills.some(
-				(entry) =>
-					typeof entry === "object" &&
-					entry !== null &&
-					(entry as { name?: string }).name === "skill:brainstorming",
-			),
-			"bundled workflow skill is missing",
-		);
-		writeMcpFixtures(root, agentDir, needsSignIn.url);
-		const created = (await within(
-			rpc(socket, "session.create", { workspaceId: workspace.id, model: externalModel }),
-			30_000,
-			"session.create with bundled factories",
-		)) as { sessionId?: string };
-		assert(created.sessionId, "session.create returned no session id");
-		await assertMcpServersReported(socket, workspace.id, created.sessionId);
-		const commands = await within(
-			rpc(socket, "session.getCommands", { sessionId: created.sessionId }),
-			10_000,
-			"session.getCommands",
-		);
-		assert(Array.isArray(commands), "session.getCommands did not return an array");
-		assert(
-			commands.some(
-				(entry) =>
-					typeof entry === "object" &&
-					entry !== null &&
-					(entry as { name?: string }).name === "skill:brainstorming",
-			),
-			"session resource loader omitted bundled skills",
-		);
-		await assertStrictVisualizeValidation(socket, workspace.id, created.sessionId);
-		await assertAskUserQuestionRoundTrip(socket, workspace.id, created.sessionId);
-		await within(
-			rpc(socket, "session.dispose", { sessionId: created.sessionId }),
-			10_000,
-			"session.dispose",
-		);
-		await assertOAuthLoginReachesAuthUrl(socket);
-
-		for (const helper of Object.values(customHost.resources.trashHelpers)) {
-			assert(existsSync(helper), `trash helper is missing: ${helper}`);
+		for (const helper of Object.values(host.resources.trashHelpers)) {
+			assert(existsSync(helper), `native trash helper is missing: ${helper}`);
 		}
-		for (const skill of [
-			"spec-graph",
-			"asking-user-questions",
-			"brainstorming",
-			"choosing-a-workflow",
-			"importing-a-codebase",
-			"setting-up-a-project",
-			"starting-a-new-project",
-			"writing-specs",
-			"writing-workflow-skills",
-		]) {
-			assert(
-				existsSync(join(customHost.resources.skillsDir, "host", skill, "SKILL.md")),
-				`skill file missing: ${skill}`,
-			);
-		}
-		assert(
-			existsSync(join(customHost.resources.skillsDir, "host", "SPEC.md")),
-			"workflow SPEC is missing",
-		);
-		assert(
-			existsSync(
-				join(customHost.resources.skillsDir, "extensions", "web-access", "librarian", "SKILL.md"),
-			),
-			"web-access's librarian skill is not staged under its owner folder",
-		);
 		socket.close();
 		socket = undefined;
-		await customHost.stop();
-		customHost = undefined;
+		await host.stop();
+		host = undefined;
+		host = await adapter.launch(env, "restart");
+		socket = await within(connectRpc(host.origin), 10000, "restart WebSocket");
+		const restored = (await call("session.getMessages", {
+			sessionId: created.sessionId,
+			workspaceId: workspace.id,
+		})) as { summary: { sessionId: string }; messages: unknown[] };
+		assert(
+			restored.summary.sessionId === created.sessionId && restored.messages.length === 0,
+			"session record did not survive restart",
+		);
+		console.log(
+			"host probe OK: workspace, files, PTY, transcript deletion and restart; SDK tool/advanced artifact acceptance remains a separate stage 4 gate.",
+		);
 	} finally {
 		socket?.close();
-		await defaultHost?.stop().catch(() => {});
-		await customHost?.stop().catch(() => {});
-		needsSignIn.stop();
-		removeTree(root);
+		try {
+			await host?.stop();
+		} finally {
+			removeTree(root);
+		}
 	}
 }

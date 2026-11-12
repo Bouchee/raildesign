@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 
 export type CompatibilitySkillProvider = "claude" | "codex" | "github-copilot" | "gemini";
 
-const PROJECT_SKILL_PATH = /^\.(claude|github|gemini|pi|agents)\/skills(?:\/|$)/;
+const PROJECT_SKILL_PATH = /^\.(claude|github|gemini|raildesign|agents)\/skills(?:\/|$)/;
 
 export function isProjectSkillPath(relativePath: string): boolean {
 	return PROJECT_SKILL_PATH.test(relativePath.replaceAll("\\", "/"));

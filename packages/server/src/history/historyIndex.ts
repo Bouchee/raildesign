@@ -1,8 +1,8 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { HistorySearchResult, MessageHit, PromptHit } from "@thinkrail/contracts";
 import { MAX_HISTORY_LIMIT, MAX_HISTORY_QUERY_LENGTH } from "@thinkrail/contracts";
+import { dataDir } from "../persistence";
 import { extractSession, type HistoryEntry } from "./extract";
 
 interface SessionRecord {
@@ -48,9 +48,11 @@ export function makeSnippet(text: string, term: string, radius = SNIPPET_RADIUS)
 	return `${prefix}${text.slice(start, end)}${suffix}`;
 }
 
-async function listJsonl(dir: string): Promise<string[]> {
+async function listJson(dir: string): Promise<string[]> {
 	try {
-		return (await readdir(dir)).filter((f) => f.endsWith(".jsonl")).map((f) => join(dir, f));
+		return (await readdir(dir, { withFileTypes: true }))
+			.filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+			.map((entry) => join(dir, entry.name));
 	} catch {
 		return [];
 	}
@@ -67,20 +69,8 @@ export class HistoryIndex {
 		this.sessionDir = sessionDir;
 	}
 
-	private async listFiles(): Promise<string[]> {
-		if (this.sessionDir) return listJsonl(this.sessionDir);
-		const root = join(getAgentDir(), "sessions");
-		let subdirs: string[] = [];
-		try {
-			subdirs = (await readdir(root, { withFileTypes: true }))
-				.filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
-				.map((entry) => join(root, entry.name));
-		} catch {
-			return [];
-		}
-		const files: string[] = [];
-		for (const dir of subdirs) files.push(...(await listJsonl(dir)));
-		return files;
+	private listFiles(): Promise<string[]> {
+		return listJson(this.sessionDir ?? join(dataDir(), "sessions"));
 	}
 
 	private async loadRecord(path: string, mtimeMs: number, size: number): Promise<void> {

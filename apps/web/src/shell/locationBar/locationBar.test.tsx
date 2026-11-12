@@ -22,7 +22,7 @@ import {
 } from "./locationModel";
 import { chipClass, pillClass } from "./Segment";
 
-const project: Project = { id: "p1", name: "thinkrail-copy", path: "/repo" } as Project;
+const project: Project = { id: "p1", name: "raildesign-copy", path: "/repo" } as Project;
 const worktree: Workspace = {
 	id: "w1",
 	projectId: "p1",
@@ -251,7 +251,7 @@ test("remote counts distinguish an unknown fallback from a known in-sync review"
 });
 
 test("project initials and commit plurals", () => {
-	expect(projectInitial("thinkrail-copy")).toBe("T");
+	expect(projectInitial("raildesign-copy")).toBe("R");
 	expect(projectInitial("  émile")).toBe("É");
 	expect(projectInitial("")).toBe("?");
 	expect(pluralCommits(1)).toBe("1 commit");

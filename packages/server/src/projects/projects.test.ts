@@ -29,7 +29,6 @@ import {
 	refreshRecentProjectFolders,
 	renameProject,
 	revokeProjectMcpTool,
-	setPiTrustSeed,
 	setProjectGroupEnabled,
 	setProjectMcpOverride,
 	setProjectPublisher,
@@ -94,7 +93,6 @@ beforeEach(() => {
 
 afterEach(() => {
 	setProjectPublisher(null);
-	setPiTrustSeed(null);
 	rmSync(dataDir, { recursive: true, force: true });
 	if (savedDataDir === undefined) delete process.env.THINKRAIL_DATA_DIR;
 	else process.env.THINKRAIL_DATA_DIR = savedDataDir;
@@ -123,18 +121,18 @@ test("openProject refuses a checkout already attached as an external workspace",
 	makeRepo(attached);
 	seedWorkspace(attached, "external");
 
-	expect(() => openProject(attached)).toThrow("already open in ThinkRail");
+	expect(() => openProject(attached)).toThrow("already open in RailDesign");
 	expect(listProjects()).toHaveLength(0);
 });
 
-test("openProject refuses a ThinkRail-managed worktree dir, whatever symlinks the path carries", () => {
+test("openProject refuses a RailDesign-managed worktree dir, whatever symlinks the path carries", () => {
 	const repo = join(dataDir, "repo");
 	makeRepo(repo);
 	const managed = join(dataDir, "worktrees", "repo", "workspace-1");
 	git(repo, "worktree", "add", "-b", "workspace-1", managed);
 	seedWorkspace(managed);
 
-	expect(() => openProject(managed)).toThrow("already open in ThinkRail");
+	expect(() => openProject(managed)).toThrow("already open in RailDesign");
 	expect(openProject(repo).path).toBe(realpathSync(repo));
 });
 
@@ -350,7 +348,7 @@ test("initProject: commits even with no configured git identity (the -c fallback
 
 	withoutUserGitConfig(() => initProject(dir));
 	expect(gitOut(dir, "rev-parse", "HEAD")).not.toBe("");
-	expect(gitOut(dir, "log", "-1", "--format=%an")).toBe("ThinkRail");
+	expect(gitOut(dir, "log", "-1", "--format=%an")).toBe("RailDesign");
 });
 
 test("initProject: an existing repo is opened, not re-initialised (dedupe, history preserved)", () => {
@@ -469,7 +467,7 @@ posix("initProject removes the .git it created when the initial commit fails", (
 });
 
 posix(
-	"a git identity probe that times out fails the init instead of committing as ThinkRail",
+	"a git identity probe that times out fails the init instead of committing as RailDesign",
 	() => {
 		const dir = join(dataDir, "slow-identity");
 		mkdirSync(dir);
@@ -584,44 +582,41 @@ test("setProjectTrust: persists a revocable, fail-closed trust decision", () => 
 	expect(listProjects().find((p) => p.id === project.id)?.trusted).toBe(true);
 
 	const revoked = setProjectTrust(project.id, false);
-	expect(revoked.piResourceTrust).toBe("untrusted");
+	expect(revoked.resourceTrust).toBe("untrusted");
 	expect(isProjectTrusted(project.id)).toBe(false);
 	expect(() => setProjectTrust("nope", true)).toThrow();
 });
 
-test("setProjectTrust: pi-level resource trust needs its own explicit grant, and a revoke clears both", () => {
+test("setProjectTrust: application resource trust needs its own explicit grant, and a revoke clears both", () => {
 	const repo = join(dataDir, "repo");
 	makeRepo(repo);
 	const project = initProject(repo);
-	const published: Array<{ trusted: boolean | undefined; piResourceTrust: string | undefined }> =
-		[];
-	setProjectPublisher(({ trusted, piResourceTrust }) =>
-		published.push({ trusted, piResourceTrust }),
-	);
-	expect(project.piResourceTrust).toBe("untrusted");
+	const published: Array<{ trusted: boolean | undefined; resourceTrust: string | undefined }> = [];
+	setProjectPublisher(({ trusted, resourceTrust }) => published.push({ trusted, resourceTrust }));
+	expect(project.resourceTrust).toBe("untrusted");
 
 	const aliasOnly = setProjectTrust(project.id, true, ["a"]);
 	expect(aliasOnly).toMatchObject({
 		trusted: true,
-		piResourceTrust: "untrusted",
+		resourceTrust: "untrusted",
 		acknowledgedSkills: ["a"],
 	});
 
 	const both = setProjectTrust(project.id, true, ["a"], { resources: true });
-	expect(both).toMatchObject({ trusted: true, piResourceTrust: "granted" });
-	expect(setProjectTrust(project.id, true).piResourceTrust).toBe("granted");
+	expect(both).toMatchObject({ trusted: true, resourceTrust: "granted" });
+	expect(setProjectTrust(project.id, true).resourceTrust).toBe("granted");
 
 	const revoked = setProjectTrust(project.id, false, undefined, { resources: true });
-	expect(revoked).toMatchObject({ trusted: false, piResourceTrust: "untrusted" });
+	expect(revoked).toMatchObject({ trusted: false, resourceTrust: "untrusted" });
 	expect(storedProjects().find((stored) => stored.id === project.id)).toMatchObject({
 		trusted: false,
-		piResourceTrust: "untrusted",
+		resourceTrust: "untrusted",
 	});
 	expect(published).toEqual([
-		{ trusted: true, piResourceTrust: "untrusted" },
-		{ trusted: true, piResourceTrust: "granted" },
-		{ trusted: true, piResourceTrust: "granted" },
-		{ trusted: false, piResourceTrust: "untrusted" },
+		{ trusted: true, resourceTrust: "untrusted" },
+		{ trusted: true, resourceTrust: "granted" },
+		{ trusted: true, resourceTrust: "granted" },
+		{ trusted: false, resourceTrust: "untrusted" },
 	]);
 });
 
@@ -630,39 +625,27 @@ function writeProjects(records: object[]): void {
 }
 
 function storedProjects(): Array<
-	Pick<Project, "mcpToolGrants"> & { id: string; piResourceTrust?: string; trusted?: boolean }
+	Pick<Project, "mcpToolGrants"> & { id: string; resourceTrust?: string; trusted?: boolean }
 > {
 	return JSON.parse(readFileSync(join(dataDir, "projects.json"), "utf8"));
 }
 
-test("a record that predates pi-level trust is not grandfathered: it stays as stored and reads untrusted", () => {
+test("a record without an application resource-trust grant stays as stored and reads untrusted", () => {
 	const repo = join(dataDir, "legacy");
 	makeRepo(repo);
 	const root = realpathSync(repo);
 	writeProjects([{ id: "legacy", name: "legacy", path: root, slug: "legacy", lastOpened: 1 }]);
-	const asked: string[] = [];
-	setPiTrustSeed((path) => {
-		asked.push(path);
-		return true;
-	});
-	expect(getProjects()[0]?.piResourceTrust).toBeUndefined();
-	expect(storedProjects()[0]?.piResourceTrust).toBeUndefined();
+	expect(getProjects()[0]?.resourceTrust).toBeUndefined();
+	expect(storedProjects()[0]?.resourceTrust).toBeUndefined();
 	expect(openProject(repo)).toMatchObject({ id: "legacy" });
-	expect(storedProjects()[0]?.piResourceTrust).toBeUndefined();
-	expect(asked).toEqual([]);
+	expect(storedProjects()[0]?.resourceTrust).toBeUndefined();
 });
 
-test("a newly added project starts untrusted unless pi already trusts its path", () => {
-	const plain = join(dataDir, "plain");
-	const piTrusted = join(dataDir, "pi-trusted");
-	makeRepo(plain);
-	makeRepo(piTrusted);
-	const trustedRoot = realpathSync(piTrusted);
-	setPiTrustSeed((path) => realpathSync(path) === trustedRoot);
-
-	expect(openProject(plain).piResourceTrust).toBe("untrusted");
-	expect(openProject(piTrusted).piResourceTrust).toBe("granted");
-	expect(initProject(plain).piResourceTrust).toBe("untrusted");
+test("a newly added project requires an explicit application resource-trust grant", () => {
+	const repo = join(dataDir, "untrusted");
+	makeRepo(repo);
+	expect(openProject(repo).resourceTrust).toBe("untrusted");
+	expect(initProject(repo).resourceTrust).toBe("untrusted");
 });
 
 test("MCP approvals and per-project overrides persist in the project record and clear cleanly", () => {

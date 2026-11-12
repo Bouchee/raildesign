@@ -1,26 +1,12 @@
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { getAgentDir, ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import type { ProjectResourceKind, ProjectTrustSummary } from "@thinkrail/contracts";
-import { discoverAgentDefinitions } from "pi-subagents";
-import { listProjectAliasSkillNames } from "./extensions";
+import { dataDir } from "../persistence";
 import { loadMcpConfigFiles } from "./mcp";
-import { createPiSettings } from "./packages";
+import { listProjectAliasSkillNames, type SkillLoadOptions } from "./skills";
 
-export function piTrustsProjectPath(path: string): boolean {
-	const agentDir = getAgentDir();
-	try {
-		const decision = new ProjectTrustStore(agentDir).get(path);
-		if (decision !== null) return decision;
-		const settings = createPiSettings(path, agentDir, { projectTrusted: false, packages: "none" });
-		return settings.getDefaultProjectTrust() === "always";
-	} catch {
-		return false;
-	}
-}
-
-const PI_DIR_RESOURCES: ReadonlyArray<[ProjectResourceKind, string]> = [
+const APPLICATION_RESOURCES: ReadonlyArray<[ProjectResourceKind, string]> = [
 	["extensions", "extensions"],
 	["settings", "settings.json"],
 	["skills", "skills"],
@@ -38,38 +24,50 @@ function canonical(path: string): string {
 	}
 }
 
-function hasAncestorAgentsSkills(cwd: string): boolean {
-	const personal = join(canonical(process.env.HOME || homedir()), ".agents", "skills");
-	for (let dir = canonical(cwd); ; dir = dirname(dir)) {
-		const candidate = join(dir, ".agents", "skills");
-		if (candidate !== personal && existsSync(candidate)) return true;
-		if (dirname(dir) === dir) return false;
+function hasAgentDefinitions(path: string): boolean {
+	try {
+		return readdirSync(path).some((name) => name.endsWith(".md"));
+	} catch {
+		return false;
 	}
 }
 
-function piResourceKinds(cwd: string): ProjectResourceKind[] {
-	const piDir = join(canonical(cwd), ".pi");
+function applicationResourceKinds(cwd: string, options: SkillLoadOptions): ProjectResourceKind[] {
+	const applicationDir = join(canonical(cwd), ".raildesign");
 	const kinds = new Set<ProjectResourceKind>();
-	for (const [kind, entry] of PI_DIR_RESOURCES) if (existsSync(join(piDir, entry))) kinds.add(kind);
-	if (hasAncestorAgentsSkills(cwd)) kinds.add("skills");
-	const definitions = discoverAgentDefinitions({
-		cwd,
-		agentDir: getAgentDir(),
-		includeProject: true,
-	});
-	if (definitions.some((definition) => definition.source === "project")) kinds.add("subagents");
+	for (const [kind, entry] of APPLICATION_RESOURCES)
+		if (existsSync(join(applicationDir, entry))) kinds.add(kind);
+	const personal = join(
+		canonical(options.homeDir ?? options.env?.HOME ?? homedir()),
+		".agents",
+		"skills",
+	);
+	for (let directory = canonical(cwd); ; directory = dirname(directory)) {
+		const skills = join(directory, ".agents", "skills");
+		if (skills !== personal && existsSync(skills)) kinds.add("skills");
+		if (dirname(directory) === directory) break;
+	}
+	if (
+		hasAgentDefinitions(join(applicationDir, "agents")) ||
+		hasAgentDefinitions(join(cwd, ".agents", "agents"))
+	)
+		kinds.add("subagents");
 	return [...kinds];
 }
 
-export async function projectTrustSummary(cwd: string): Promise<ProjectTrustSummary> {
+/** Inventory only. Grants come from the current Project record, never another runtime's trust store. */
+export async function projectTrustSummary(
+	cwd: string,
+	options: SkillLoadOptions = {},
+): Promise<ProjectTrustSummary> {
 	const mcpServers = loadMcpConfigFiles({
-		agentDir: getAgentDir(),
+		agentDir: options.applicationDir ?? dataDir(),
 		cwd,
 		projectTrusted: true,
 	}).entries.filter((entry) => entry.scope === "project").length;
 	return {
-		aliasSkills: await listProjectAliasSkillNames(cwd),
-		piResources: piResourceKinds(cwd),
+		aliasSkills: await listProjectAliasSkillNames(cwd, options),
+		applicationResources: applicationResourceKinds(cwd, options),
 		mcpServers,
 	};
 }

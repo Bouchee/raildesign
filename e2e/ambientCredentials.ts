@@ -1,4 +1,5 @@
-export const AMBIENT_PI_CREDENTIAL_ENV_NAMES = [
+export const AMBIENT_MODEL_CREDENTIAL_ENV_NAMES = [
+	"RAILDESIGN_E2E_API_KEY",
 	"ANTHROPIC_AUTH_TOKEN",
 	"ANTHROPIC_OAUTH_TOKEN",
 	"ANTHROPIC_API_KEY",
@@ -69,11 +70,11 @@ export const AMBIENT_PI_CREDENTIAL_ENV_NAMES = [
 	"AWS_LOGIN_CACHE_DIRECTORY",
 ] as const;
 
-const AMBIENT_PI_CREDENTIAL_ENV_NAME_SET = new Set<string>(AMBIENT_PI_CREDENTIAL_ENV_NAMES);
+const AMBIENT_MODEL_CREDENTIAL_ENV_NAME_SET = new Set<string>(AMBIENT_MODEL_CREDENTIAL_ENV_NAMES);
 
-export function stripAmbientPiCredentials(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+export function stripAmbientModelCredentials(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 	for (const name of Object.keys(env)) {
-		if (AMBIENT_PI_CREDENTIAL_ENV_NAME_SET.has(name.toUpperCase())) delete env[name];
+		if (AMBIENT_MODEL_CREDENTIAL_ENV_NAME_SET.has(name.toUpperCase())) delete env[name];
 	}
 	return env;
 }

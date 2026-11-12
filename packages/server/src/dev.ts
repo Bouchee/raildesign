@@ -1,123 +1,16 @@
-import type { Provider } from "@earendil-works/pi-ai";
-import type { OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai/oauth";
 import { parsePort } from "@thinkrail/shared/freePort";
-import { configurePiRuntimeGenerationInitializer } from "./agent";
 import { bootHost } from "./host";
-
-if (process.env.THINKRAIL_E2E_FAKE_OAUTH === "1") {
-	const fakeOauth = {
-		name: "E2E Test Provider",
-		async login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
-			const choice = await callbacks.onSelect({
-				message: "How do you want to sign in?",
-				options: [
-					{ id: "subscription", label: "Subscription" },
-					{ id: "api", label: "API console" },
-				],
-			});
-			if (!choice) throw new Error("Login cancelled");
-			let code: string;
-			if (choice === "api") {
-				callbacks.onAuth({
-					url: "https://e2e.test/authorize?probe=1&redirect_uri=https%3A%2F%2Fe2e.test%2Fcode",
-					instructions: "Copy the code the sign-in page shows and paste it here.",
-				});
-				code = await callbacks.onPrompt({ message: "Paste the code E2E shows after you sign in:" });
-			} else {
-				callbacks.onAuth({
-					url: "https://e2e.test/authorize?probe=1&redirect_uri=http%3A%2F%2F127.0.0.1%3A1455%2Fcallback",
-				});
-				code = (await callbacks.onManualCodeInput?.()) ?? "";
-			}
-			callbacks.onProgress?.("Exchanging authorization code…");
-			return {
-				refresh: "e2e-refresh",
-				access: `e2e-access-${choice}-${code}`,
-				expires: 4102444800000,
-			};
-		},
-		async refreshToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
-			return credentials;
-		},
-		getApiKey(credentials: OAuthCredentials): string {
-			return String(credentials.access);
-		},
-	};
-	const dummyStream = (): never => {
-		throw new Error("e2e-apikey is a login fixture — it never streams");
-	};
-	const fakeApiKeyProvider: Provider = {
-		id: "e2e-apikey",
-		name: "E2E Key Provider",
-		baseUrl: "http://e2e-apikey.test",
-		auth: {
-			apiKey: {
-				name: "E2E Key Provider API key",
-				async login(interaction) {
-					const key = await interaction.prompt({
-						type: "secret",
-						message: "Enter your E2E Key Provider API key",
-						placeholder: "e2e-...",
-					});
-					if (!key.trim()) throw new Error("API key must not be empty");
-					return { type: "api_key", key: key.trim() };
-				},
-				async resolve({ credential }) {
-					if (!credential?.key) return undefined;
-					return { auth: { apiKey: credential.key }, source: "E2E API key" };
-				},
-			},
-		},
-		getModels: () => [
-			{
-				id: "e2e-key-model",
-				name: "E2E Key Model",
-				provider: "e2e-apikey",
-				api: "openai-completions",
-				baseUrl: "http://e2e-apikey.test",
-				reasoning: false,
-				input: ["text"],
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-				contextWindow: 100_000,
-				maxTokens: 4096,
-			},
-		],
-		stream: dummyStream,
-		streamSimple: dummyStream,
-	};
-	configurePiRuntimeGenerationInitializer((runtime) => {
-		runtime.registerProvider("e2e-oauth", { oauth: fakeOauth });
-		runtime.registerNativeProvider(fakeApiKeyProvider);
-	});
-}
 
 const host = process.env.THINKRAIL_HOST ?? "localhost";
 const staticDir = process.env.THINKRAIL_STATIC_DIR;
 const rawPort = process.env.THINKRAIL_PORT;
-const envPort = parsePort(rawPort);
-if (rawPort !== undefined && envPort === undefined) {
-	console.warn(
-		`thinkrail dev: ignoring invalid THINKRAIL_PORT=${rawPort}; using a free port from 24242`,
-	);
-}
-const posthogApiKey =
-	process.env.THINKRAIL_DEV_POSTHOG === "1" ? process.env.THINKRAIL_POSTHOG_PROJECT_KEY : undefined;
-if (posthogApiKey) {
-	console.log(
-		"thinkrail dev: THINKRAIL_DEV_POSTHOG is on, so this run sends basic analytics and survey answers",
-	);
-}
-
-const { port } = await bootHost({
-	port: envPort ?? 24242,
+const port = parsePort(rawPort);
+if (rawPort !== undefined && port === undefined) throw new Error("Invalid THINKRAIL_PORT");
+const running = await bootHost({
+	port: port ?? 24242,
 	host,
-	portMode: envPort === undefined ? "free" : "exact",
+	portMode: port === undefined ? "free" : "exact",
 	resolveShellEnv: true,
 	...(staticDir ? { staticDir } : {}),
-	analytics: {
-		channel: "dev",
-		build: "source",
-		...(posthogApiKey ? { posthogApiKey } : {}),
-	},
 });
-console.log(`thinkrail host: http://${host}:${port}`);
+console.log(`RailDesign host: http://${host}:${running.port}`);

@@ -23,12 +23,8 @@ export const AUTH_KIND_LABEL = {
 	oauth: "chat.modelPicker.authKind.oauth",
 	"api-key": "chat.modelPicker.authKind.apiKey",
 	env: "chat.modelPicker.authKind.env",
-	central: "chat.modelPicker.authKind.central",
 	other: "chat.modelPicker.authKind.other",
 } satisfies Record<ProviderAuthKind, MessageKey>;
-
-/** The tag models routed through JetBrains AI (the Central proxy) wear where other kinds show a glyph. */
-export const CENTRAL_KIND_TAG = "JCP";
 
 /** `$in / $out` list prices per Mtok when the provider bills per token (or the kind is unknown). */
 export function costLabel(model: WireModel): string | null {
@@ -44,8 +40,6 @@ export function kindLabel(t: Translator, model: WireModel): string | null {
 	switch (auth.kind) {
 		case "oauth":
 			return auth.detail ?? t("chat.modelPicker.kind.plan");
-		case "central":
-			return t("chat.modelPicker.kind.quota");
 		case "env":
 			return auth.detail ?? "env";
 		case "api-key":
@@ -55,7 +49,7 @@ export function kindLabel(t: Translator, model: WireModel): string | null {
 	}
 }
 
-/** The full sentence for tooltips and group headings: kind word plus pi's detail. */
+/** The full sentence for tooltips and group headings: kind word plus the configured detail. */
 export function describeAuth(t: Translator, model: WireModel): string | null {
 	if (!model.auth) return null;
 	const label = t(AUTH_KIND_LABEL[model.auth.kind]);

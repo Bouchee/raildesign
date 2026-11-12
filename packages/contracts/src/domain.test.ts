@@ -17,14 +17,11 @@ import {
 	isFontChoice,
 	isFontFamilyRef,
 	isFontWeightOffset,
-	isJbcentralConnected,
-	isJbcentralQuotaRefreshSeconds,
 	isLiveResource,
 	isLocalePreference,
 	isPlanReviewResult,
 	isQuestionPanelHeight,
 	isRetriedAttempt,
-	JBCENTRAL_QUOTA_REFRESH_SECONDS,
 	normalizeFontSettings,
 	parsePiPackageInput,
 	QUESTION_PANEL_HEIGHT_PERCENT,
@@ -127,16 +124,6 @@ describe("config defaults", () => {
 		expect(DEFAULT_CONFIG).toHaveProperty("composerGrowthLimit", "half-chat");
 	});
 
-	test("JetBrains quota display defaults on with a bounded 30-second cadence", () => {
-		expect(JBCENTRAL_QUOTA_REFRESH_SECONDS).toEqual({ min: 1, max: 3600, default: 30 });
-		expect(DEFAULT_CONFIG).toHaveProperty("jbcentralQuotaEnabled", true);
-		expect(DEFAULT_CONFIG).toHaveProperty("jbcentralQuotaRefreshSeconds", 30);
-		for (const valid of [1, 30, 3600]) expect(isJbcentralQuotaRefreshSeconds(valid)).toBe(true);
-		for (const invalid of [0, 3601, 1.5, "30", null]) {
-			expect(isJbcentralQuotaRefreshSeconds(invalid)).toBe(false);
-		}
-	});
-
 	test("chat and file lines default to 120-symbol pane-bounded measures", () => {
 		expect(DEFAULT_CONFIG).toMatchObject({
 			chatLineWidth: 120,
@@ -157,38 +144,6 @@ describe("config defaults", () => {
 
 	test("voice input is on by default", () => {
 		expect(DEFAULT_CONFIG.voiceInputEnabled).toBe(true);
-	});
-});
-
-describe("JetBrains Central health", () => {
-	test("only configured, signed-in, non-stopped Central is connected", () => {
-		expect(
-			isJbcentralConnected({
-				state: "configured",
-				version: "1.6.2",
-				signedOut: false,
-				proxyStopped: false,
-			}),
-		).toBe(true);
-		expect(
-			isJbcentralConnected({
-				state: "configured",
-				version: "1.6.2",
-				signedOut: true,
-				proxyStopped: false,
-			}),
-		).toBe(false);
-		expect(
-			isJbcentralConnected({
-				state: "configured",
-				version: "1.6.2",
-				signedOut: false,
-				proxyStopped: true,
-			}),
-		).toBe(false);
-		expect(isJbcentralConnected({ state: "supported", version: "1.6.2", signedOut: false })).toBe(
-			false,
-		);
 	});
 });
 

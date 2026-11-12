@@ -26,7 +26,6 @@ import type {
 import {
 	CHANGE_MUTATIONS_PROTOCOL_VERSION,
 	EXTENSION_SETTINGS_PROTOCOL_VERSION,
-	FEEDBACK_SURVEY_PROTOCOL_VERSION,
 	FONTS_PROTOCOL_VERSION,
 	HOST_UPDATE_RUN_PROTOCOL_VERSION,
 	LOCALES_PROTOCOL_VERSION,
@@ -43,10 +42,8 @@ import {
 	WORKSPACE_CREATION_PROTOCOL_VERSION,
 	WS_CHANNELS,
 } from "@thinkrail/contracts";
-import { currentLocale } from "@thinkrail/locales/react";
 import { isChatsContainer, isConnectedGeneration, useAppStore } from "../store";
-import { githubStarToast } from "./githubStar";
-import { createPiEventBatcher, shouldFlushPiEventsBefore } from "./piEventBatcher";
+import { createSessionEventBatcher, shouldFlushSessionEventsBefore } from "./sessionEventBatcher";
 import { WsTransport } from "./transport";
 
 let transport: WsTransport | null = null;
@@ -144,9 +141,6 @@ export function mergeSessionStateRecords(
 function applySessionStateRecord(record: SessionStateRecord): void {
 	const store = useAppStore.getState();
 	store.applySessionState(record);
-	if (record.state.needsInput?.kind === "dialog") {
-		store.applyExtUi(record.state.needsInput.request);
-	}
 }
 
 function hydrateSessionStates(connectionGeneration: number): void {
@@ -170,11 +164,6 @@ function hydrateSessionStates(connectionGeneration: number): void {
 				}
 				const ordered = mergeSessionStateRecords(records, hydration.buffered);
 				current.installSessionStateSnapshot(ordered);
-				for (const record of ordered) {
-					if (record.state.needsInput?.kind === "dialog") {
-						current.applyExtUi(record.state.needsInput.request);
-					}
-				}
 				hydration.installed = true;
 				hydration.buffered = [];
 			})
@@ -322,20 +311,20 @@ function refreshWorkspaceCreations(connectionGeneration: number): void {
 
 export function initTransport(): WsTransport {
 	if (transport) return transport;
-	const piEvents = createPiEventBatcher((payloads) =>
-		useAppStore.getState().handlePiEvents(payloads),
+	const sessionEvents = createSessionEventBatcher((payloads) =>
+		useAppStore.getState().handleSessionEvents(payloads),
 	);
 
 	transport = new WsTransport(
 		{
 			onStatus: (status) => {
-				piEvents.flush();
+				sessionEvents.flush();
 				useAppStore.getState().setStatus(status);
 			},
 		},
 		{
 			beforeDispatch: (message) => {
-				if (shouldFlushPiEventsBefore(message)) piEvents.flush();
+				if (shouldFlushSessionEventsBefore(message)) sessionEvents.flush();
 			},
 		},
 	);
@@ -343,7 +332,6 @@ export function initTransport(): WsTransport {
 	transport.subscribe(WS_CHANNELS.serverWelcome, (data) => {
 		const welcome = data as Partial<ServerWelcome>;
 		if (typeof welcome.protocolVersion !== "number" || !Array.isArray(welcome.projects)) return;
-		useAppStore.getState().hideSurveyInvitation();
 		useAppStore
 			.getState()
 			.installWelcomeSnapshot(
@@ -374,7 +362,6 @@ export function initTransport(): WsTransport {
 			sessionStateHydration = null;
 			useAppStore.getState().installSessionStateSnapshot([]);
 		}
-		void loadInAppSurvey();
 	});
 
 	transport.subscribe(WS_CHANNELS.hostUpdateAvailable, (data) => {
@@ -385,11 +372,11 @@ export function initTransport(): WsTransport {
 		useAppStore.getState().applyProjectUpdated(data as Project);
 	});
 
-	transport.subscribe(WS_CHANNELS.piEvent, (data) => {
-		piEvents.enqueue(data as SessionEventPayload);
+	transport.subscribe(WS_CHANNELS.sessionEvent, (data) => {
+		sessionEvents.enqueue(data as SessionEventPayload);
 	});
 
-	transport.subscribe(WS_CHANNELS.piExtensionUi, (data) => {
+	transport.subscribe(WS_CHANNELS.sessionExtensionUi, (data) => {
 		useAppStore.getState().applyExtUi(data as ExtUiRequest);
 	});
 
@@ -472,16 +459,6 @@ export function initTransport(): WsTransport {
 		useAppStore.getState().installSpeechStatus(data as SpeechStatus);
 	});
 
-	transport.subscribe(WS_CHANNELS.feedbackInterview, () => {
-		const state = useAppStore.getState();
-		if ((state.protocolVersion ?? 0) < FEEDBACK_SURVEY_PROTOCOL_VERSION) return;
-		state.showSurveyInvitation();
-	});
-
-	transport.subscribe(WS_CHANNELS.feedbackGithubStar, (data) => {
-		useAppStore.getState().pushToast(githubStarToast(data));
-	});
-
 	transport.subscribe(WS_CHANNELS.workspaceCreated, (data) => {
 		const store = useAppStore.getState();
 		store.addWorkspace(data as Workspace);
@@ -538,27 +515,4 @@ export function initTransport(): WsTransport {
 export function getTransport(): WsTransport {
 	if (!transport) throw new Error("transport not initialized — call initTransport() first");
 	return transport;
-}
-
-let surveyLoadGeneration = 0;
-
-export function loadInAppSurvey(): Promise<void> {
-	const protocol = useAppStore.getState().protocolVersion;
-	if (protocol === null || protocol < FEEDBACK_SURVEY_PROTOCOL_VERSION) {
-		useAppStore.getState().setInAppSurvey(null);
-		return Promise.resolve();
-	}
-	const generation = ++surveyLoadGeneration;
-	return getTransport()
-		.request("feedback.survey", { language: currentLocale() })
-		.then((result) => {
-			if (generation !== surveyLoadGeneration) return;
-			useAppStore.getState().setInAppSurvey(result.survey);
-		})
-		.catch(() => {});
-}
-
-export function forgetInAppSurvey(): void {
-	surveyLoadGeneration += 1;
-	useAppStore.getState().setInAppSurvey(null);
 }

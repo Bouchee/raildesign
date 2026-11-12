@@ -10,7 +10,7 @@ tags: [pi-extension, todos]
 ## Responsibility
 
 The pi-free TODO model: the `Todo` types (the status vocabulary) and `TodoStore` — a **per-session**
-list stored as one file, `.thinkrail/context/todos/<sessionId>.json` (under the ephemeral context scratch
+list stored as one file, `.raildesign/context/todos/<sessionId>.json` (under the ephemeral context scratch
 dir), read and written by read-modify-write. The
 file is the source of truth; the store holds no mutable state, so every method re-reads and stale reads
 are impossible (the agent's in-session writes and the UI's edits converge on the same file). Robust by
@@ -200,7 +200,7 @@ reload.
 - **Allowed deps:** Node built-ins only (`node:fs`, `node:path`, `node:crypto`).
 - **Forbidden:** any `@earendil-works/*` **and any `@thinkrail/*`** import — this is the pi-free,
   thinkrail-free layer the host can value-import without pulling pi into its bundle, and that stays
-  installable under vanilla `pi`. Consequence: `STORE_DIR` (`.thinkrail/context/todos`) carries a **local
+  installable under vanilla `pi`. Consequence: `STORE_DIR` (`.raildesign/context/todos`) carries a **local
   mirror** of `@thinkrail/shared`'s `WORKSPACE_CONTEXT_DIR` rather than importing it — the shared constant
   is the host-side source of truth; keep the two in step. `tools/` imports this through the barrel;
   nothing here imports `tools/`.

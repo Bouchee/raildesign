@@ -49,19 +49,17 @@ describe("costLabel / kindLabel", () => {
 		expect(costLabel(model({ id: "m", cost, auth: { kind: "api-key" } }))).toBe("$5 / $25");
 		expect(costLabel(model({ id: "m", cost, auth: { kind: "env" } }))).toBe("$5 / $25");
 		expect(costLabel(model({ id: "m", cost, auth: { kind: "oauth" } }))).toBeNull();
-		expect(costLabel(model({ id: "m", cost, auth: { kind: "central" } }))).toBeNull();
 		expect(costLabel(model({ id: "m", cost }))).toBe("$5 / $25");
 		expect(costLabel(model({ id: "m" }))).toBeNull();
 		expect(billsPerToken("oauth")).toBe(false);
 		expect(billsPerToken(undefined)).toBe(false);
 	});
 
-	test("names what the model draws on: plan, quota, the env variable, or the key", () => {
+	test("names what the model draws on: plan, the env variable, or the key", () => {
 		expect(kindLabel(t, model({ id: "m", auth: { kind: "oauth" } }))).toBe("plan");
 		expect(kindLabel(t, model({ id: "m", auth: { kind: "oauth", detail: "Pro/Max" } }))).toBe(
 			"Pro/Max",
 		);
-		expect(kindLabel(t, model({ id: "m", auth: { kind: "central" } }))).toBe("quota");
 		expect(kindLabel(t, model({ id: "m", auth: { kind: "env", detail: "X_KEY" } }))).toBe("X_KEY");
 		expect(kindLabel(t, model({ id: "m", auth: { kind: "api-key" } }))).toBe("API key");
 		expect(kindLabel(t, model({ id: "m", auth: { kind: "other" } }))).toBeNull();
@@ -99,7 +97,7 @@ describe("litBars", () => {
 });
 
 describe("describeAuth", () => {
-	test("spells out the kind and appends pi's detail", () => {
+	test("spells out the kind and appends the configured detail", () => {
 		expect(describeAuth(t, model({ id: "m" }))).toBeNull();
 		expect(describeAuth(t, model({ id: "m", auth: { kind: "oauth" } }))).toBe("subscription");
 		expect(describeAuth(t, model({ id: "m", auth: { kind: "env", detail: "X_KEY" } }))).toBe(

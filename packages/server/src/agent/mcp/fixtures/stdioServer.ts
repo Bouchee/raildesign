@@ -41,6 +41,8 @@ const PIXEL =
 function callResult(name: string, text: string): unknown {
 	if (name === "rich") {
 		return {
+			_meta: { fixture: "metadata" },
+			isError: false,
 			content: [
 				{ type: "text", text: "rich result" },
 				{ type: "image", data: PIXEL, mimeType: "image/png" },
@@ -84,6 +86,13 @@ lines.on("line", (line) => {
 			return;
 		}
 		case "tools/list":
+			if (process.env.MCP_FIXTURE_PAGINATE === "1")
+				return reply(
+					message.id,
+					message.params?.cursor === "second"
+						? { tools: tools.slice(2) }
+						: { tools: tools.slice(0, 2), nextCursor: "second" },
+				);
 			return reply(message.id, { tools });
 		case "tools/call": {
 			const args = (message.params?.arguments ?? {}) as { text?: string };

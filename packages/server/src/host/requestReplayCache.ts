@@ -190,6 +190,16 @@ export class RequestReplayCache<T> {
 		this.clients.clear();
 	}
 
+	async drain(): Promise<void> {
+		await Promise.allSettled(
+			[...this.clients.values()].flatMap((namespace) =>
+				[...namespace.requests.values()].flatMap((entry) =>
+					!entry.settled && entry.result ? [entry.result] : [],
+				),
+			),
+		);
+	}
+
 	private release(namespace: ClientNamespace<T>, requestId: string, abandoned: string[]): void {
 		const entry = namespace.requests.get(requestId);
 		if (!entry) return;

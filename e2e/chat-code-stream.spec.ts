@@ -1,5 +1,6 @@
 import { realpathSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
+import type { SessionEventPayload } from "@thinkrail/contracts";
 import { enterDefaultWorkspace, openFixtureProject, openPersistedChat } from "./fixtures/app";
 import { E2E_FIXTURE_REPO } from "./fixtures/paths";
 import { seedWorkspaceSession } from "./fixtures/sessions";
@@ -72,4 +73,44 @@ test("a streamed code block grows without losing or repeating a line, and ansi k
 	await expect(ansi.locator('span[style*="color"]').filter({ hasText: /^red$/ })).not.toHaveCount(
 		0,
 	);
+});
+
+test("stream replay emits start, deltas and matching final message in monotonic order", () => {
+	const replay = textStreamReplay(crypto.randomUUID(), "streamed code ".repeat(30), BASE_TS);
+	const events = replay.steps
+		.flat()
+		.map((frame) => (JSON.parse(frame) as { data: SessionEventPayload }).data);
+	expect(events[0]?.event.type).toBe("agent_start");
+	expect(events.at(-1)?.event.type).toBe("agent_settled");
+	expect(events.map(({ seq }) => seq)).toEqual(events.map((_, index) => index + 1));
+	const start = events.find(({ event }) => event.type === "message_start")?.event;
+	if (start?.type !== "message_start" || start.message.role !== "assistant") {
+		throw new Error("missing assistant message start");
+	}
+	for (const { event } of events) {
+		if ("message" in event && event.message.role === "assistant") {
+			expect(event.message.id).toBe(start.message.id);
+		}
+	}
+	expect(
+		events.filter(
+			({ event }) =>
+				event.type === "message_update" && event.assistantMessageEvent.type === "text_delta",
+		).length,
+	).toBeGreaterThan(1);
+});
+
+test("successive replays retain a per-session watermark and independent run identity", () => {
+	const sessionId = crypto.randomUUID();
+	const first = textStreamReplay(sessionId, "first response", BASE_TS);
+	const second = textStreamReplay(sessionId, "second response", BASE_TS);
+	const separate = textStreamReplay(crypto.randomUUID(), "separate response", BASE_TS);
+	const firstEnd = JSON.parse(first.steps.flat().at(-1) ?? "") as { data: SessionEventPayload };
+	const secondStart = JSON.parse(second.steps.flat()[0] ?? "") as { data: SessionEventPayload };
+	const separateStart = JSON.parse(separate.steps.flat()[0] ?? "") as {
+		data: SessionEventPayload;
+	};
+	expect(secondStart.data.seq).toBe(firstEnd.data.seq + 1);
+	expect(secondStart.data.runId).not.toBe(firstEnd.data.runId);
+	expect(separateStart.data.seq).toBe(1);
 });

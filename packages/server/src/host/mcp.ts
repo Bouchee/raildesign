@@ -12,13 +12,14 @@ import type {
 } from "@thinkrail/contracts";
 import { CodedError } from "@thinkrail/shared/codedError";
 import {
+	cancelMcpProbesForWorkspace,
+	closeWorkspaceMcpConnections,
 	effectiveMcpServerConfig,
 	getSessionWorkspaceId,
 	listMcpServers,
 	liveSessionIdsOf,
 	type McpProbeAction,
 	mcpEntryFingerprint,
-	mcpOwnershipGuard,
 	mcpPolicyOf,
 	readMcpServerLog,
 	readMcpToolOutput,
@@ -38,21 +39,20 @@ import {
 	revokeProjectMcpTool,
 	setProjectMcpOverride,
 } from "../projects";
+import { ensureWatch } from "../watch";
 import { getWorkspace, listAllWorkspaceRecords, listWorkspaceRecords } from "../workspaces";
 
-const log = logger("host");
 const LIST_WAIT_MS = 1500;
 const SERVER_NAME = /^[A-Za-z0-9_-]+$/;
+const log = logger("mcp");
 
 function target(workspaceId: string): { workspace: Workspace; project: Project } {
 	const workspace = getWorkspace(workspaceId);
 	const project = getProjects().find((candidate) => candidate.id === workspace.projectId);
 	if (!project) throw new Error(`Unknown project: ${workspace.projectId}`);
+	void ensureWatch(workspaceId);
 	return { workspace, project };
 }
-
-const handledElsewhere = (): CodedError =>
-	new CodedError("MCP_HANDLED_ELSEWHERE", "MCP is not managed by ThinkRail here.");
 
 function assertRenderedEntry(
 	name: string,
@@ -68,7 +68,7 @@ function assertRenderedEntry(
 }
 
 function assertRepositoryWritable(project: Project): void {
-	if (project.piResourceTrust !== "granted") {
+	if (project.resourceTrust !== "granted") {
 		throw new CodedError(
 			"MCP_CONFIG_INVALID",
 			"This project isn't trusted — trust it before changing the MCP servers its repository defines.",
@@ -76,42 +76,13 @@ function assertRepositoryWritable(project: Project): void {
 	}
 }
 
-type Target = { workspace: Workspace; project: Project };
-
-async function admitManaged<T>(
+async function mutateManaged(
 	workspaceId: string,
-	admit: (found: Target) => T | Promise<T>,
-): Promise<T> {
-	const before = target(workspaceId);
-	const ownedElsewhere = await mcpOwnershipGuard({
-		workspaceId: before.workspace.id,
-		cwd: before.workspace.worktreePath,
-		projectTrusted: before.project.piResourceTrust === "granted",
-	});
-	const current = target(workspaceId);
-	if (
-		current.project.id !== before.project.id ||
-		current.workspace.worktreePath !== before.workspace.worktreePath ||
-		(current.project.piResourceTrust === "granted") !==
-			(before.project.piResourceTrust === "granted")
-	) {
-		throw new CodedError(
-			"MCP_CONFIG_INVALID",
-			"The workspace or project trust changed — retry with its current settings.",
-		);
-	}
-	if (ownedElsewhere() !== undefined) throw handledElsewhere();
-	return admit(current);
-}
-
-function mutateManaged(
-	workspaceId: string,
-	mutation: (found: Target) => readonly string[],
+	mutation: (found: { workspace: Workspace; project: Project }) => readonly string[],
 ): Promise<McpListResult> {
-	return admitManaged(workspaceId, (found) => {
-		reloadLiveSessions(mutation(found));
-		return mcpList({ workspaceId });
-	});
+	// Resolve and validate synchronously with the write; asynchronous transport work follows it.
+	await reloadLiveSessions(mutation(target(workspaceId)));
+	return mcpList({ workspaceId });
 }
 
 function serverName(name: unknown): string {
@@ -154,11 +125,16 @@ function ownedSession(workspaceId: string, sessionId: string): void {
 	}
 }
 
-function reloadLiveSessions(workspaceIds: readonly string[]): void {
-	const sessionIds = workspaceIds.flatMap((workspaceId) => liveSessionIdsOf(workspaceId));
-	void reconcileMcpSessions(sessionIds).catch((error) => {
-		log.warn("MCP config change was not applied to the open chats", error);
-	});
+export async function reloadLiveSessions(workspaceIds: readonly string[]): Promise<void> {
+	const ids = [...new Set(workspaceIds)];
+	await Promise.all(
+		ids.map(async (workspaceId) => {
+			await cancelMcpProbesForWorkspace(workspaceId);
+			await closeWorkspaceMcpConnections(workspaceId);
+		}),
+	);
+	const sessionIds = ids.flatMap((workspaceId) => liveSessionIdsOf(workspaceId));
+	await reconcileMcpSessions(sessionIds);
 }
 
 const projectWorkspaces = (project: Project): string[] =>
@@ -199,7 +175,7 @@ export function mcpAdd(params: {
 
 /** A rewrite or removal runs only against the entry the client rendered, at either scope. */
 function renderedEntry(
-	params: { workspaceId: string; name: string },
+	params: { workspaceId: string; name: string } & McpRenderedTarget,
 	write: (
 		options: { scope: McpServerScope; worktree: string; name: string },
 		onDisk: string | undefined,
@@ -217,11 +193,13 @@ function renderedEntry(
 	});
 }
 
-export function mcpUpdate(params: {
-	workspaceId: string;
-	name: string;
-	entry: McpServerEntryInput;
-}): Promise<McpListResult> {
+export function mcpUpdate(
+	params: {
+		workspaceId: string;
+		name: string;
+		entry: McpServerEntryInput;
+	} & McpRenderedTarget,
+): Promise<McpListResult> {
 	return renderedEntry(params, (options, onDisk, project) => {
 		const fingerprint = writeMcpServerEntry({ ...options, entry: params.entry, mode: "update" });
 		if (
@@ -233,7 +211,9 @@ export function mcpUpdate(params: {
 	});
 }
 
-export function mcpRemove(params: { workspaceId: string; name: string }): Promise<McpListResult> {
+export function mcpRemove(
+	params: { workspaceId: string; name: string } & McpRenderedTarget,
+): Promise<McpListResult> {
 	return renderedEntry(params, (options) => removeMcpServerEntry(options));
 }
 
@@ -277,7 +257,11 @@ export function mcpApprove(params: {
 	const name = serverName(params.name);
 	return mutateManaged(params.workspaceId, ({ workspace, project }) => {
 		assertRepositoryWritable(project);
-		if (mcpEntryFingerprint("project", workspace.worktreePath, name) !== params.fingerprint) {
+		if (
+			typeof params.fingerprint !== "string" ||
+			!params.fingerprint ||
+			mcpEntryFingerprint("project", workspace.worktreePath, name) !== params.fingerprint
+		) {
 			throw new CodedError(
 				"MCP_CONFIG_INVALID",
 				`The entry for "${name}" changed since it was reviewed — review it again.`,
@@ -345,33 +329,32 @@ async function probe(
 	clientKey: string,
 ): Promise<{ loginId: string; done: Promise<LoginFrame> }> {
 	const name = serverName(params.name);
-	return admitManaged(params.workspaceId, ({ workspace, project }) => {
-		const projectTrusted = project.piResourceTrust === "granted";
-		const policy = mcpPolicyOf(project);
-		const effective = effectiveMcpServerConfig({
-			cwd: workspace.worktreePath,
-			projectTrusted,
-			policy,
-			name,
-		});
-		if (!effective) {
-			throw new CodedError("MCP_CONFIG_INVALID", `No admitted MCP server named "${name}".`);
-		}
-		if (action === "test" && !("url" in effective)) {
-			throw new CodedError(
-				"MCP_CONFIG_INVALID",
-				"Test connection applies to HTTP servers; a stdio server is verified when a chat starts it.",
-			);
-		}
-		return startMcpProbe({
-			action,
-			workspaceId: workspace.id,
-			cwd: workspace.worktreePath,
-			projectTrusted,
-			policy,
-			serverName: name,
-			ownerClientKey: clientKey,
-		});
+	const { workspace, project } = target(params.workspaceId);
+	const projectTrusted = project.resourceTrust === "granted";
+	const policy = mcpPolicyOf(project);
+	const effective = effectiveMcpServerConfig({
+		cwd: workspace.worktreePath,
+		projectTrusted,
+		policy,
+		name,
+	});
+	if (!effective) {
+		throw new CodedError("MCP_CONFIG_INVALID", `No admitted MCP server named "${name}".`);
+	}
+	if (action === "test" && !("url" in effective)) {
+		throw new CodedError(
+			"MCP_CONFIG_INVALID",
+			"Test connection applies to HTTP servers; a stdio server is verified when a chat starts it.",
+		);
+	}
+	return startMcpProbe({
+		action,
+		workspaceId: workspace.id,
+		cwd: workspace.worktreePath,
+		projectTrusted,
+		policy,
+		serverName: name,
+		ownerClientKey: clientKey,
 	});
 }
 
@@ -379,7 +362,13 @@ export async function mcpLogin(
 	params: { workspaceId: string; name: string },
 	clientKey: string,
 ): Promise<{ loginId: string }> {
-	const { loginId } = await probe("login", params, clientKey);
+	const { loginId, done } = await probe("login", params, clientKey);
+	void done
+		.then(async (result) => {
+			if (result.kind === "success")
+				await reconcileMcpSessions(liveSessionIdsOf(params.workspaceId));
+		})
+		.catch(() => log.warn("MCP connections could not refresh after sign-in."));
 	return { loginId };
 }
 
@@ -397,6 +386,7 @@ export async function mcpLogout(
 ): Promise<{ ok: true }> {
 	const last = await (await probe("logout", params, clientKey)).done;
 	if (last.kind === "error") throw new Error(last.message);
+	await reconcileMcpSessions(liveSessionIdsOf(params.workspaceId));
 	return { ok: true };
 }
 

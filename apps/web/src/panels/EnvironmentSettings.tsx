@@ -28,15 +28,10 @@ import { SettingsNotice } from "./SettingsNotice";
 const INPUT_CLASS =
 	"w-full min-w-0 rounded-sm border border-control-border-default bg-control-bg px-8 py-4 tr-code-text text-text-default outline-none placeholder:text-text-muted focus-visible:border-control-border-active";
 
-const AGENT_DIR_PLACEHOLDER = "~/.pi/agent";
 const NAME_PLACEHOLDER = "NAME";
 const VALUE_PLACEHOLDER = "value";
-const AGENT_DIR_VAR = "PI_CODING_AGENT_DIR";
 
 const ISSUE_TEXT: Record<EnvironmentIssueCode, MessageKey> = {
-	notAbsolute: "settings.environment.issue.notAbsolute",
-	notFound: "settings.environment.issue.notFound",
-	notDirectory: "settings.environment.issue.notDirectory",
 	invalidName: "settings.environment.issue.invalidName",
 	reserved: "settings.environment.issue.reserved",
 	duplicate: "settings.environment.issue.duplicate",
@@ -103,53 +98,6 @@ export function EnvironmentForm({
 							<p>{t("settings.environment.restartRequired")}</p>
 						</SettingsNotice>
 					) : null}
-
-					<div className="flex flex-col gap-4">
-						<label
-							htmlFor="settings-environment-agent-dir"
-							className="tr-text-ui text-text-default"
-						>
-							{t("settings.environment.agentDir.label")}
-						</label>
-						<input
-							id="settings-environment-agent-dir"
-							data-testid="settings-environment-agent-dir"
-							data-settings-draft-input
-							aria-invalid={issues.agentDir !== undefined}
-							placeholder={AGENT_DIR_PLACEHOLDER}
-							value={draft.agentDir}
-							onChange={(event) => onChange({ ...draft, agentDir: event.currentTarget.value })}
-							className={cn(INPUT_CLASS, issues.agentDir && "border-feedback-error")}
-						/>
-						{issues.agentDir ? (
-							<p
-								data-testid="settings-environment-agent-dir-issue"
-								className="tr-text-metadata text-feedback-error"
-							>
-								{t(ISSUE_TEXT[issues.agentDir])}
-							</p>
-						) : null}
-						<p className="tr-text-metadata text-text-muted">
-							{t("settings.environment.agentDir.hint")}
-						</p>
-						{overridden.has(AGENT_DIR_VAR) && status.stored.agentDir !== undefined ? (
-							<p
-								data-testid="settings-environment-agent-dir-overridden"
-								className="tr-text-metadata text-feedback-warning"
-							>
-								{t("settings.environment.agentDir.launchOverridden")}
-							</p>
-						) : null}
-						<p className="flex min-w-0 items-center gap-8 tr-text-metadata text-text-muted">
-							<span className="shrink-0">{t("settings.environment.agentDir.inUse")}</span>
-							<code
-								data-testid="settings-environment-agent-dir-effective"
-								className="min-w-0 truncate tr-code-text"
-							>
-								{status.effectiveAgentDir}
-							</code>
-						</p>
-					</div>
 
 					<div className="flex flex-col gap-4">
 						<span className="tr-text-ui text-text-default">
@@ -277,7 +225,7 @@ export function EnvironmentForm({
 
 export function EnvironmentSettings() {
 	const [status, setStatus] = useState<HostEnvironmentStatus | "loading" | "failed">("loading");
-	const [draft, setDraft] = useState<EnvironmentDraft>({ agentDir: "", vars: [] });
+	const [draft, setDraft] = useState<EnvironmentDraft>({ vars: [] });
 	const [issues, setIssues] = useState<EnvironmentDraftIssues>(NO_ISSUES);
 	const [saving, setSaving] = useState(false);
 	const [saveFailed, setSaveFailed] = useState(false);

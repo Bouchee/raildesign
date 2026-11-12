@@ -94,6 +94,7 @@ test("a command result offers Open log only while the chat can still open it in 
 	).toContain("Open log");
 	expect(asked).toEqual([{ kind: "command", id: "command" }]);
 	expect(render(() => undefined)).not.toContain('data-testid="background-result-open"');
+	expect(render(undefined)).not.toContain('data-testid="background-result-open"');
 });
 
 test("a subagent result teases its report, offers the transcript and never renders the pi header", () => {

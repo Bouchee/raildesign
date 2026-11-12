@@ -1,5 +1,5 @@
 import type { MatchTier } from "./match";
-import type { SessionState, ThinkingLevel, WireModel } from "./piProtocol";
+import type { SessionState, ThinkingLevel, WireModel } from "./sessionProtocol";
 
 export interface SessionStateRecord {
 	sessionId: string;
@@ -74,19 +74,19 @@ export interface Project {
 	/** Skill groups switched on for this project although `AppConfig.otherAgentSkills` leaves them off. */
 	enabledGroups?: string[];
 	/**
-	 * pi-level trust for the project's native `.pi/` resources, separate from the alias-skill `trusted`
-	 * grant; absent (a record that predates pi-level trust) reads as untrusted. Never enables MCP servers by itself.
+	 * Execution trust for the project's `.raildesign/` resources, separate from alias-skill `trusted`.
+	 * Missing trust is untrusted. Never enables MCP servers by itself.
 	 */
-	piResourceTrust?: "granted" | "untrusted";
+	resourceTrust?: "granted" | "untrusted";
 	/** Approved repo-defined MCP entries: server name → fingerprint of the original project-file entry. */
 	mcpApprovals?: Record<string, string>;
-	/** Per-project enablement/exposure of user-level MCP servers (never written to `.pi/mcp.json`). */
+	/** Per-project enablement/exposure of user-level MCP servers (never written to `.raildesign/mcp.json`). */
 	mcpOverrides?: Record<string, McpProjectOverride>;
-	/** "Always allow" MCP tools per server name (never written to `.pi/mcp.json`). */
+	/** "Always allow" MCP tools per server name (never written to `.raildesign/mcp.json`). */
 	mcpToolGrants?: Record<string, McpToolGrant>;
 }
 
-/** Tools (pi tool names) granted while the server keeps the command + args or URL hashed as `target`. */
+/** Tool names granted while the server keeps the command + args or URL hashed as `target`. */
 export interface McpToolGrant {
 	target: string;
 	tools: string[];
@@ -94,7 +94,7 @@ export interface McpToolGrant {
 
 export type ProjectPathStatus = { kind: "repo" | "initable" | "missing" | "notDirectory" };
 
-/** A kind of the project's own pi resources; `extensions` and `settings` run code on the host. */
+/** A kind of the project's application resources; executable resources require separate trust. */
 export type ProjectResourceKind =
 	| "extensions"
 	| "settings"
@@ -106,12 +106,12 @@ export type ProjectResourceKind =
 
 /**
  * What a project's trust grant would load, for the trust notice; alias skill names show only after trust.
- * `mcpServers` counts the entries of the project's `.pi/mcp.json`, each approved separately.
+ * `mcpServers` counts the entries of the project's `.raildesign/mcp.json`, each approved separately.
  */
 export interface ProjectTrustSummary {
 	aliasSkills: string[];
-	/** The kinds of the project's own pi resources a pi-level grant would load; empty when none. */
-	piResources: ProjectResourceKind[];
+	/** The kinds of application resources covered by the resource trust grant. */
+	applicationResources: ProjectResourceKind[];
 	mcpServers?: number;
 }
 
@@ -1085,7 +1085,7 @@ export interface BranchList {
 	defaultBranch: string;
 }
 
-export type ProviderAuthKind = "oauth" | "api-key" | "env" | "central" | "other";
+export type ProviderAuthKind = "oauth" | "api-key" | "env" | "other";
 
 export interface ProviderStatus {
 	id: string;
@@ -1112,82 +1112,12 @@ export interface DetectedAccount {
 	plan?: string;
 }
 
-export interface JbcentralInstall {
-	platform: string;
-	shell: "bash" | "powershell";
-	command: string;
-}
-
-export type JbcentralAction = "connect" | "disconnect" | "start-proxy" | "update";
-
-export type JbcentralProbeFailureReason =
-	| "launch-failed"
-	| "timed-out"
-	| "output-too-large"
-	| "nonzero-exit";
-
-export type JbcentralActionFailureReason =
-	| "not-installed"
-	| "unsupported-version"
-	| "version-probe-failed"
-	| "central-action-failed"
-	| "artifact-missing"
-	| "artifact-present"
-	| "candidate-failed";
-
-export type JbcentralStatus =
-	| { state: "absent" }
-	| { state: "outdated"; version: string }
-	| { state: "supported"; version: string; signedOut: boolean }
-	| {
-			state: "configured";
-			version: string;
-			signedOut: boolean;
-			proxyStopped: boolean;
-	  }
-	| { state: "malformed-version" }
-	| { state: "probe-failed"; reason: JbcentralProbeFailureReason }
-	| { state: "configuring"; action?: JbcentralAction }
-	| {
-			state: "load-failed";
-			configured: boolean;
-			action?: JbcentralAction;
-			reason: "candidate-failed";
-	  };
-
-export function isJbcentralConnected(status: JbcentralStatus): boolean {
-	return status.state === "configured" && !status.signedOut && !status.proxyStopped;
-}
-
 /** A pi `warnings.*` setting the host surfaces; `anthropicExtraUsage` warns that Claude subscription auth bills per token. */
 export type ProviderWarning = "anthropicExtraUsage";
 
 export interface ProviderStatusReport {
 	providers: ProviderStatus[];
-	jbcentral: JbcentralStatus;
-	jbcentralInstall: JbcentralInstall;
-	/** pi's global `warnings.*` switches (default on); absent from hosts older than v99. */
-	warnings?: Record<ProviderWarning, boolean>;
 }
-
-export type JbcentralActionResult =
-	| { outcome: "applied" }
-	| { outcome: "failed"; reason: JbcentralActionFailureReason };
-
-export type JbcentralConnectResult = JbcentralActionResult;
-
-export type JbcentralLoginResult =
-	| { outcome: "launched" }
-	| {
-			outcome: "failed";
-			reason: "not-installed" | "unsupported-version" | "version-probe-failed" | "launch-failed";
-	  };
-
-export type JbcentralQuotaSnapshot =
-	| { state: "hidden" }
-	| { state: "available"; remaining: number; total: number; observedAt: number }
-	| { state: "stale"; remaining: number; total: number; observedAt: number }
-	| { state: "unavailable" };
 
 export type LoginFrame =
 	| { kind: "authUrl"; url: string; instructions?: string }
@@ -1229,19 +1159,19 @@ export interface HostEnvironmentVar {
 }
 
 export interface HostEnvironment {
-	agentDir?: string;
 	vars: HostEnvironmentVar[];
 }
 
-export type HostEnvironmentIssue =
-	| { field: "agentDir"; code: "notAbsolute" | "notFound" | "notDirectory" }
-	| { field: "var"; index: number; code: "invalidName" | "reserved" | "duplicate" };
+export type HostEnvironmentIssue = {
+	field: "var";
+	index: number;
+	code: "invalidName" | "reserved" | "duplicate";
+};
 
 export interface HostEnvironmentStatus {
 	stored: HostEnvironment;
 	restartRequired: boolean;
 	launchOverridden: string[];
-	effectiveAgentDir: string;
 }
 
 export type HostEnvironmentUpdateResult =
@@ -1446,8 +1376,6 @@ export function isLineWidth(value: unknown): value is number {
 }
 
 export interface AppConfig extends ThemePreference {
-	analyticsEnabled: boolean;
-	analyticsConsentConfirmed: boolean;
 	/** When true, the client may raise out-of-app attention notifications (still gated by browser permission). */
 	notificationsEnabled: boolean;
 	terminalReplayKb: number;
@@ -1480,8 +1408,6 @@ export interface AppConfig extends ThemePreference {
 	subagentsEnabled: boolean;
 	/** How many subagents one chat may run at once; more spawns queue FIFO. */
 	subagentMaxConcurrent: number;
-	jbcentralQuotaEnabled: boolean;
-	jbcentralQuotaRefreshSeconds: number;
 	/** Which shell new workspace terminals start on Windows; ignored on other platforms. */
 	terminalWindowsShell: TerminalWindowsShell;
 	/** Idle days after which a quiet workspace settles onto its project's shelf; `null` = never. */
@@ -1558,70 +1484,6 @@ export type AppConfigUpdate = Partial<
 	reviewModel?: WireModel | null;
 	reviewEffort?: ThinkingLevel | null;
 };
-
-export type SurveyInvitationResponse = "postpone" | "never";
-
-export interface GithubStarAsk {
-	stars: number | null;
-}
-
-export const SURVEY_OPEN_TEXT_LIMIT = 2000;
-
-export type SurveyRatingScale = 3 | 5 | 7 | 10;
-
-export function surveyRatingValues(scale: SurveyRatingScale): number[] {
-	if (scale === 10) return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-	return Array.from({ length: scale }, (_, index) => index + 1);
-}
-
-interface SurveyQuestionBase {
-	id: string;
-	question: string;
-	description?: string;
-	optional?: true;
-}
-
-export interface SurveyOpenQuestion extends SurveyQuestionBase {
-	type: "open";
-}
-
-export interface SurveyChoiceQuestion extends SurveyQuestionBase {
-	type: "single_choice" | "multiple_choice";
-	choices: string[];
-	hasOpenChoice?: true;
-	shuffleOptions?: true;
-}
-
-export interface SurveyRatingQuestion extends SurveyQuestionBase {
-	type: "rating";
-	display: "number" | "emoji";
-	scale: SurveyRatingScale;
-	lowerBoundLabel: string;
-	upperBoundLabel: string;
-}
-
-export type SurveyQuestion = SurveyOpenQuestion | SurveyChoiceQuestion | SurveyRatingQuestion;
-
-export interface AppSurvey {
-	id: string;
-	iteration: number;
-	questions: SurveyQuestion[];
-	placeholder?: string;
-	thankYou?: string;
-	shuffleQuestions?: true;
-	language?: string;
-}
-
-export type SurveyAnswerValue = string | string[];
-
-export interface SurveySubmitParams {
-	submissionId: string;
-	surveyId: string;
-	iteration: number;
-	language?: string;
-	answers: Record<string, SurveyAnswerValue>;
-	others?: Record<string, string>;
-}
 
 export const TERMINAL_REPLAY_KB = { min: 0, max: 1024, default: 64 } as const;
 
@@ -1818,22 +1680,9 @@ export function isSubagentMaxConcurrent(value: unknown): value is number {
 	);
 }
 
-export const JBCENTRAL_QUOTA_REFRESH_SECONDS = { min: 1, max: 3600, default: 30 } as const;
-
-export function isJbcentralQuotaRefreshSeconds(value: unknown): value is number {
-	return (
-		typeof value === "number" &&
-		Number.isInteger(value) &&
-		value >= JBCENTRAL_QUOTA_REFRESH_SECONDS.min &&
-		value <= JBCENTRAL_QUOTA_REFRESH_SECONDS.max
-	);
-}
-
 export const DEFAULT_CONFIG: AppConfig = {
 	theme: "dark",
 	themeMode: "fixed",
-	analyticsEnabled: false,
-	analyticsConsentConfirmed: false,
 	notificationsEnabled: true,
 	terminalReplayKb: TERMINAL_REPLAY_KB.default,
 	terminalWindowsShell: "auto",
@@ -1851,8 +1700,6 @@ export const DEFAULT_CONFIG: AppConfig = {
 	agentReviewEnabled: false,
 	subagentsEnabled: true,
 	subagentMaxConcurrent: SUBAGENT_MAX_CONCURRENT.default,
-	jbcentralQuotaEnabled: true,
-	jbcentralQuotaRefreshSeconds: JBCENTRAL_QUOTA_REFRESH_SECONDS.default,
 	settleIdleDays: SETTLE_IDLE_DAYS.default,
 	disabledExtensions: [],
 	extensionSettings: {},

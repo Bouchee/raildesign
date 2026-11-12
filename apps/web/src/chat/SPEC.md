@@ -2,11 +2,17 @@
 id: submodule-web-chat
 type: submodule-design
 status: active
-title: chat — pi conversation UI primitives
+title: chat — application conversation UI primitives
 parent: module-web
 depends-on: [module-contracts]
 tags: [chat]
 ---
+
+## RailDesign SDK execution contract
+
+The application owns its message, tool, usage and event types in `sessionProtocol.ts`; browser code does not import engine types. `session.event` carries `{sessionId, runId, seq, event}` with increasing per-session sequence numbers. SDK details and checkpoints remain on the host. The initial transcript snapshot carries its event sequence watermark; events arriving before hydration are buffered and only later events are applied. Stable message IDs join streamed snapshots and final messages. Basic tool approvals use the existing confirmation UI with session, run, interaction and revision ownership; failures keep the pending card visible. A declared tool without an execution result state is pending: its card and routine row use a neutral marker, and execution summaries/bodies begin only after `tool_execution_start`.
+
+Stage 1 preserves Skills catalog and trust management in `ChatView`, while live session resource reload stays disabled until the SDK can really reload context and tools. MCP configuration and OAuth remain reachable in Settings. Stage 1 mounts no advanced resource polling, resource inspector or subagent transcript executor in `ChatView`. Historical tool cards and resource renderers remain usable as pure projections. Queue actions, compaction commands, continuation synchronization, automatic plan summaries and TODO add nudges are absent from active composition. Ordinary prompts send only while idle; Stop remains available during a run. Agent review controls remain disabled until that execution path exists. Protocol-version thresholds alone do not authorize a removed host operation.
 
 ## Responsibility
 
@@ -440,7 +446,7 @@ matches, and extension descriptors stay exact-name only.
 
 Unregistered tools fall back to `DefaultToolRenderer`. A tool that needs user input mid-run takes one of
 two routes:
-- the extension-UI bridge (`pi.extensionUi` → `ExtUiPrompt`, below);
+- the extension-UI bridge (`session.interaction` → `ExtUiPrompt`, below);
 - for a rich inline card, rendering from its `toolCall` args and replying through the props-only
   **`ToolRenderProps.interaction`**. `ToolRendererBody` fills it through `useToolInteraction`
   (`toolInteraction.ts`), and the plan page does the same for its card. The adapter reads `ChatActions`,
@@ -978,8 +984,8 @@ both message orders. *Rejected:* keeping the modal for non-MCP extensions — ev
   level the highlighted model supports (`opus high`) pre-selects it — pi's `model:level` idiom typed
   with a space — and `/model [query]` in the composer opens the picker prefilled instead of sending
   text. The second row line **says what the user actually pays** (`kindLabel` / `costLabel`): the
-  connection glyph — **key** = API key, **∞** = subscription, **{ }** = environment key, a **JCP** tag =
-  JetBrains AI (Central proxy) — then the plan/variable/key word and, only where the provider bills per
+  connection glyph — **key** = API key, **∞** = subscription, **{ }** = environment key —
+  then the plan/variable/key word and, only where the provider bills per
   token (`auth.kind` api-key / env), `$in / $out per M`; group headers add the provider's connection
   detail. The **vendor glyph** (`ProviderGlyph`) is a monochrome `currentColor` mark from
   `generated/providerGlyphs.ts`, which `scripts/generate-provider-glyphs.ts` extracts at build time from
@@ -1004,29 +1010,19 @@ both message orders. *Rejected:* keeping the modal for non-MCP extensions — ev
   action. Its **Skills** button is the presentational **`SkillsButton`**
   primitive — a `BookOpen` pill, badged when a skill dir changed on disk — also shared with
   `NewWorkspaceDialog` so the two triggers cannot drift), and **`SkillsDialog`** (the **Skills manager**: a catalog
-  grouped by source with **sticky section headers** — the first-party **ThinkRail** and **Pi** groups lead
-  (above the All-plugins master, which governs only the plugin groups), then Personal / **a group per
-  installed Claude plugin** / the repo's Project skills last — each with its admission verdict,
-  project-trust (the same `projectTrust` derivation and copy as the Welcome notice — `useProjectTrustSummary`
-  plus this catalog's untrusted aliases, so a worktree-only alias still shows — so in a chat it is the place
-  to grant pi-level trust, and its `project.setTrust` carries `resources: true` exactly when it named the
-  project's Pi resources), re-confirm-new, a per-group track/thumb **switch** + an **All-plugins** master, and per-skill
-  switches. Each skill row reads as a name (card title) over its description clamped to two lines (full text
-  on hover), so a scan of similar "Use when…" lines still tells skills apart. Switch position plus semantic colour carries state without visible On/Off text; the switch target
-  alone mutates, while unavailable controls keep the existing trust/parent explanation and acknowledgement
-  behavior. It runs in **two modes** via an optional `workspace` prop: chat (`skills.state`, per-workspace
-  skill overrides, + a **Reload** that applies changes to this chat's session via `session.reloadResources`,
-  disabled while streaming) or project (`project.skills`, per-project-baseline toggles, no session) — the
-  latter reused by `panels` pre-session). Group state reads through the contracts' `isSkillGroupEnabled`
-  with `store.otherAgentSkills`, so the switches match the host gate; while that host default is off and a
-  Personal or plugin group stays off, a `skills-other-agents-off` note points to the per-project switch and
-  Settings → Extensions. A `skills-size` line shows the loaded skills' count and an estimated listing
-  size (`skillCatalogSize`: name + description + path + per-entry markup at ~4 chars/token, an estimate
-  rather than pi's figure; a `manualOnly` skill counts as on but costs nothing, since pi never lists it).
-  Up to the host listing budget's floor (`SKILL_LISTING_MIN_TOKENS`) it is the per-request cost; past it,
-  the line says each request lists at most `SKILL_LISTING_MAX_TOKENS` of it and the agent searches for the
-  rest, since the model's window sets the budget in between. Past that ceiling it turns warning colour with
-  a hint to switch unused groups off. All props-driven; behavior detail lives in the components' jsdoc.
+  grouped by source with **sticky section headers** — RailDesign bundled and application groups lead,
+  followed by Personal, plugin groups and project aliases. Each entry retains its admission verdict,
+  trust/acknowledgement state, group switches and workspace/project skill overrides. The host-wide
+  other-agent-content switch remains reachable in this dialog through `settings.update`; plugin and
+  external source discovery stays content-only. Trust reads application resources independently from
+  alias trust, through the shared `projectTrust` derivation. Switches send real host requests and remain
+  blocked by their parent or trust reason; row text itself does not mutate.
+  Project mode reads `project.skills`; workspace mode reads `skills.state` and writes workspace skill
+  overrides. Catalog size remains an estimate derived from admitted entries, with manual-only entries
+  omitted from estimated listing cost. Stage 1 states that model Skill execution is pending. It passes
+  `workspace.allowReload=false`, keeps the real reload algorithm for future integration, disables the
+  button with a clear reason, and suppresses the actionable reload badge. It registers no successful
+  reload stub. The same manager remains reachable from New Workspace before a session exists.
 - **Live session telemetry follows Pi's finalized boundaries.** `SessionStatsBar` renders only the host's
   authoritative `session.getStats` snapshot; the web never derives billed totals or context usage from
   message content. Totals include delegated subagent spend, which the host records into the parent as pi
@@ -1485,7 +1481,7 @@ both message orders. *Rejected:* keeping the modal for non-MCP extensions — ev
   on mobile, a discoverability affordance on desktop.
 - **Chat TODO plan** — the chat's `pi-todos` list, surfaced in the TODO rail and the Plan page (engine:
   [[module-pi-todos]]; host read/write: [[submodule-server-todos]]):
-  `useChatTodos` (the `todo.*` data hook — fetch + live `pi.event` refetch + edits + the add-nudge + the
+  `useChatTodos` (the `todo.*` data hook — fetch + live `session.event` refetch + edits + the add-nudge + the
   **review-snapshot refetch** (the plan's review
   decoration is host-derived, so a change to the workspace's review comments, e.g. deleting a finding that
   clears a step's `changes_requested`, re-reads the plan) + the
@@ -1701,9 +1697,9 @@ Unknown custom messages retain their existing behavior.
   incl. `ToolResultState` + `ExtUiDialogRequest`), and `ChatView` (a split chunk the shell workbench
   preloads on mount through `components/preloadedLazy` and mounts as the chat resource body;
   it wires `SkillsDialog` + the header Skills trigger, resolving the owning `projectId` from the store and
-  reading the reload badge from the store selector `selectSkillsStale(state, workspaceId, sessionId)` —
-  per-session and store-derived, so it survives the tab-switch remount; a successful reload calls
-  `markSkillsSynced` to clear only this chat).
+  retaining per-session staleness from `selectSkillsStale(state, workspaceId, sessionId)` in the dialog
+  context. Active Stage 1 composition disables live reload and its badge; the reusable reload callback
+  still supports `markSkillsSynced` when a real host reload becomes available).
   **No `index.ts` barrel** — chat pulls the **highlight client**, so per the code-splitting exception imports stay
   **per-file**; the registry is importable from `chat/toolRegistry` **without** pulling it.
 - **Allowed deps:** `contracts` (pi message/content-block types, **type-only**); the lifecycle-neutral

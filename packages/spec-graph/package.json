@@ -23,7 +23,7 @@
 		"bench:search": "bun core/bench/live.ts"
 	},
 	"dependencies": {
-		"yaml": "2.9.1"
+		"yaml": "catalog:"
 	},
 	"peerDependencies": {
 		"@earendil-works/pi-coding-agent": "*",

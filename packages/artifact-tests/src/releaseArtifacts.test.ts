@@ -25,81 +25,81 @@ afterEach(() => {
 const targets = [
 	{
 		target: "bun-darwin-arm64",
-		stable: "macos-arm64-ThinkRail.dmg",
-		nightly: "canary-macos-arm64-ThinkRail-canary.dmg",
-		published: "thinkrail-desktop-darwin-arm64.dmg",
+		stable: "macos-arm64-RailDesign.dmg",
+		nightly: "canary-macos-arm64-RailDesign-canary.dmg",
+		published: "raildesign-desktop-darwin-arm64.dmg",
 		updates: {
 			stable: {
 				manifest: "stable-macos-arm64-update.json",
-				archive: "stable-macos-arm64-ThinkRail.app.tar.zst",
+				archive: "stable-macos-arm64-RailDesign.app.tar.zst",
 			},
 			nightly: {
 				manifest: "canary-macos-arm64-update.json",
-				archive: "canary-macos-arm64-ThinkRail-canary.app.tar.zst",
+				archive: "canary-macos-arm64-RailDesign-canary.app.tar.zst",
 			},
 		},
 	},
 	{
 		target: "bun-darwin-x64",
-		stable: "macos-x64-ThinkRail.dmg",
-		nightly: "canary-macos-x64-ThinkRail-canary.dmg",
-		published: "thinkrail-desktop-darwin-x64.dmg",
+		stable: "macos-x64-RailDesign.dmg",
+		nightly: "canary-macos-x64-RailDesign-canary.dmg",
+		published: "raildesign-desktop-darwin-x64.dmg",
 		updates: {
 			stable: {
 				manifest: "stable-macos-x64-update.json",
-				archive: "stable-macos-x64-ThinkRail.app.tar.zst",
+				archive: "stable-macos-x64-RailDesign.app.tar.zst",
 			},
 			nightly: {
 				manifest: "canary-macos-x64-update.json",
-				archive: "canary-macos-x64-ThinkRail-canary.app.tar.zst",
+				archive: "canary-macos-x64-RailDesign-canary.app.tar.zst",
 			},
 		},
 	},
 	{
 		target: "bun-windows-x64",
-		stable: "win-x64-ThinkRail-Setup.zip",
-		nightly: "canary-win-x64-ThinkRail-Setup-canary.zip",
-		published: "thinkrail-desktop-windows-x64.zip",
+		stable: "win-x64-RailDesign-Setup.zip",
+		nightly: "canary-win-x64-RailDesign-Setup-canary.zip",
+		published: "raildesign-desktop-windows-x64.zip",
 		updates: {
 			stable: {
 				manifest: "stable-win-x64-update.json",
-				archive: "stable-win-x64-ThinkRail.tar.zst",
+				archive: "stable-win-x64-RailDesign.tar.zst",
 			},
 			nightly: {
 				manifest: "canary-win-x64-update.json",
-				archive: "canary-win-x64-ThinkRail-canary.tar.zst",
+				archive: "canary-win-x64-RailDesign-canary.tar.zst",
 			},
 		},
 	},
 	{
 		target: "bun-linux-x64",
-		stable: "linux-x64-ThinkRail-Setup.tar.gz",
-		nightly: "canary-linux-x64-ThinkRail-canary-Setup.tar.gz",
-		published: "thinkrail-desktop-linux-x64.tar.gz",
+		stable: "linux-x64-RailDesign-Setup.tar.gz",
+		nightly: "canary-linux-x64-RailDesign-canary-Setup.tar.gz",
+		published: "raildesign-desktop-linux-x64.tar.gz",
 		updates: {
 			stable: {
 				manifest: "stable-linux-x64-update.json",
-				archive: "stable-linux-x64-ThinkRail.tar.zst",
+				archive: "stable-linux-x64-RailDesign.tar.zst",
 			},
 			nightly: {
 				manifest: "canary-linux-x64-update.json",
-				archive: "canary-linux-x64-ThinkRail-canary.tar.zst",
+				archive: "canary-linux-x64-RailDesign-canary.tar.zst",
 			},
 		},
 	},
 	{
 		target: "bun-linux-arm64",
-		stable: "linux-arm64-ThinkRail-Setup.tar.gz",
-		nightly: "canary-linux-arm64-ThinkRail-canary-Setup.tar.gz",
-		published: "thinkrail-desktop-linux-arm64.tar.gz",
+		stable: "linux-arm64-RailDesign-Setup.tar.gz",
+		nightly: "canary-linux-arm64-RailDesign-canary-Setup.tar.gz",
+		published: "raildesign-desktop-linux-arm64.tar.gz",
 		updates: {
 			stable: {
 				manifest: "stable-linux-arm64-update.json",
-				archive: "stable-linux-arm64-ThinkRail.tar.zst",
+				archive: "stable-linux-arm64-RailDesign.tar.zst",
 			},
 			nightly: {
 				manifest: "canary-linux-arm64-update.json",
-				archive: "canary-linux-arm64-ThinkRail-canary.tar.zst",
+				archive: "canary-linux-arm64-RailDesign-canary.tar.zst",
 			},
 		},
 	},
@@ -110,7 +110,7 @@ function writeSetupArtifact(path: string, sentinel: string) {
 		writeFileSync(path, sentinel);
 		return;
 	}
-	const stage = mkdtempSync(join(tmpdir(), "thinkrail-release-payload-"));
+	const stage = mkdtempSync(join(tmpdir(), "raildesign-release-payload-"));
 	roots.push(stage);
 	// The Linux setup fixtures must be real tarballs: the collector repacks them.
 	writeFileSync(join(stage, "payload.txt"), sentinel);
@@ -149,7 +149,7 @@ function readTarEntries(path: string) {
 
 function readSetupArtifact(path: string): string {
 	if (!path.endsWith(".tar.gz")) return readFileSync(path, "utf8");
-	const stage = mkdtempSync(join(tmpdir(), "thinkrail-release-extract-"));
+	const stage = mkdtempSync(join(tmpdir(), "raildesign-release-extract-"));
 	roots.push(stage);
 	const extracted = Bun.spawnSync(["tar", "-xzf", path, "-C", stage]);
 	if (extracted.exitCode !== 0)
@@ -158,7 +158,7 @@ function readSetupArtifact(path: string): string {
 }
 
 function fixture(): string {
-	const root = mkdtempSync(join(tmpdir(), "thinkrail-release-collector-"));
+	const root = mkdtempSync(join(tmpdir(), "raildesign-release-collector-"));
 	roots.push(root);
 	const artifacts = join(root, "apps/desktop/artifacts");
 	mkdirSync(artifacts, { recursive: true });
@@ -171,7 +171,7 @@ function fixture(): string {
 			writeFileSync(join(artifacts, update.archive), `${channel}:${target.target}:archive`);
 		}
 	}
-	writeFileSync(join(artifacts, "macos-arm64-ThinkRail.app.tar.zst"), "wrong stable prefix");
+	writeFileSync(join(artifacts, "macos-arm64-RailDesign.app.tar.zst"), "wrong stable prefix");
 	writeFileSync(join(artifacts, "stable-win-x64-update-old.json"), "stale manifest");
 	writeFileSync(join(artifacts, "old-setup.zip"), "unrelated");
 	return root;
@@ -210,12 +210,12 @@ function collect(root: string, target: string, channel: string) {
 	});
 }
 
-function stampIdentity(channel: string, key: string, extra: Record<string, string> = {}) {
+function stampIdentity(channel: string) {
 	const script = action.runs.steps.find(
 		(step) => step.name === "Stamp shared release identity",
 	)?.run;
 	if (!script) throw new Error("release identity stamp script is missing");
-	const root = mkdtempSync(join(tmpdir(), "thinkrail-release-stamp-"));
+	const root = mkdtempSync(join(tmpdir(), "raildesign-release-stamp-"));
 	roots.push(root);
 	const bin = join(root, "bin");
 	mkdirSync(bin, { recursive: true });
@@ -228,8 +228,6 @@ function stampIdentity(channel: string, key: string, extra: Record<string, strin
 			PATH: `${bin}:${process.env.PATH}`,
 			VERSION: "1.2.3",
 			CHANNEL: channel,
-			POSTHOG_PROJECT_KEY: key,
-			...extra,
 		},
 		stdout: "pipe",
 		stderr: "pipe",
@@ -241,54 +239,28 @@ function stampIdentity(channel: string, key: string, extra: Record<string, strin
 	};
 }
 
-test("release stamping bakes the CI-supplied analytics key without echoing it", () => {
-	const { result, stamped } = stampIdentity("stable", "phc_release");
+test("release stamping contains only version, channel and commit", () => {
+	const { result, stamped } = stampIdentity("stable");
 	expect(result.exitCode).toBe(0);
 	expect(stamped).toBe(
 		[
 			'export const version = "1.2.3";',
 			'export const channel = "stable";',
 			'export const commit = "abc1234";',
-			'export const posthogProjectKey = "phc_release";',
 			"",
 		].join("\n"),
 	);
-	expect(`${result.stdout}${result.stderr}`).not.toContain("phc_release");
 });
 
-test.each([
-	{ channel: "stable", key: "" },
-	{ channel: "nightly", key: "not-a-key" },
-	{ channel: "dev", key: "phc_release" },
-])("release stamping fails closed for %j", ({ channel, key }) => {
-	const { result, stamped } = stampIdentity(channel, key);
+test.each(["dev", "unknown", ""])("release stamping refuses unsupported channel %j", (channel) => {
+	const { result, stamped } = stampIdentity(channel);
 	expect(result.exitCode).not.toBe(0);
 	expect(stamped).toBeUndefined();
 });
 
-test("a source-map upload key without its project id fails closed before stamping", () => {
-	const missing = stampIdentity("stable", "phc_release", { POSTHOG_CLI_API_KEY_SET: "true" });
-	expect(missing.result.exitCode).not.toBe(0);
-	expect(missing.stamped).toBeUndefined();
-	const paired = stampIdentity("stable", "phc_release", {
-		POSTHOG_CLI_API_KEY_SET: "true",
-		POSTHOG_CLI_PROJECT_ID: "1",
-	});
-	expect(paired.result.exitCode).toBe(0);
-	expect(
-		stampIdentity("stable", "phc_release", { POSTHOG_CLI_API_KEY_SET: "false" }).result.exitCode,
-	).toBe(0);
-});
-
-test("source-map credentials reach only the web and desktop build steps", () => {
-	const credentialed = action.runs.steps
-		.filter((step) => step.env && "POSTHOG_CLI_API_KEY" in step.env)
-		.map((step) => step.name);
-	expect(credentialed).toEqual([
-		"Build web UI",
-		"Build and smoke desktop app",
-		"Package desktop installer",
-	]);
+test("release builds contain no upstream telemetry keys or upload configuration", () => {
+	expect(readFileSync(actionPath, "utf8").toLowerCase()).not.toContain("posthog");
+	expect(readFileSync(actionPath, "utf8")).not.toContain("SOURCEMAPS_RELEASE");
 });
 
 test("the Electrobun toolchain downloads with retries before the first desktop build", () => {
@@ -386,7 +358,7 @@ for (const target of targets) {
 
 test("refuses a missing requested installer instead of collecting a stale channel", () => {
 	const root = fixture();
-	rmSync(join(root, "apps/desktop/artifacts/macos-arm64-ThinkRail.dmg"));
+	rmSync(join(root, "apps/desktop/artifacts/macos-arm64-RailDesign.dmg"));
 	expect(collect(root, "bun-darwin-arm64", "stable").exitCode).not.toBe(0);
 });
 

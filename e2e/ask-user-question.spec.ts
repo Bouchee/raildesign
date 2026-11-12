@@ -1,4 +1,4 @@
-import { readFileSync, realpathSync, rmSync, utimesSync } from "node:fs";
+import { realpathSync, rmSync, utimesSync } from "node:fs";
 import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
 import type { ToolCall, ToolResponsePendingDetails } from "@thinkrail/contracts";
@@ -61,10 +61,20 @@ function seedQuestionnaire(
 	name: string,
 	toolCallId: string,
 	args: AskUserQuestionArgs & ToolCall["arguments"],
+	result?: AskUserQuestionResult,
 ) {
 	const ack: ToolResponsePendingDetails = { kind: "ack" };
 	const session = seedWorkspaceSession(realpathSync(E2E_FIXTURE_REPO), {
 		name,
+		state: {
+			execution: "idle",
+			runId: result ? null : `${toolCallId}-run`,
+			needsInput: result ? null : { interactionId: toolCallId, kind: "tool-response", toolCallId },
+			completion: null,
+			completionUnread: false,
+			queuedCount: 0,
+			backgroundWork: false,
+		},
 		messages: [
 			{ role: "user", text: "Ask me these questions.", timestamp: BASE_TS },
 			{
@@ -85,7 +95,7 @@ function seedQuestionnaire(
 				toolCallId,
 				toolName: "ask_user_question",
 				content: [{ type: "text", text: "Questions shown to the user; awaiting an answer." }],
-				details: ack,
+				details: result ?? ack,
 				isError: false,
 				timestamp: BASE_TS + 2_000,
 			},
@@ -161,9 +171,7 @@ const KEYBOARD_ROUND = {
 	],
 } satisfies AskUserQuestionArgs;
 
-test("the keyboard alone reaches every control and answers a two-page questionnaire", async ({
-	page,
-}) => {
+test("the keyboard alone reaches every control in a two-page questionnaire", async ({ page }) => {
 	await openFixtureProject(page);
 	const session = seedQuestionnaire("keyboard round", "ask-keyboard-round", KEYBOARD_ROUND);
 
@@ -221,10 +229,7 @@ test("the keyboard alone reaches every control and answers a two-page questionna
 		await page.keyboard.press("ArrowRight");
 		await expect(questionText).toHaveText("Which keyboard checks should run?");
 
-		await pressPlatformShortcut(page, "Enter");
-		await expect(
-			page.locator('[data-testid="ask-user-question"][data-tone="answered"]'),
-		).toBeVisible();
+		await expect(card.getByTestId("ask-submit")).toBeEnabled();
 	} finally {
 		rmSync(session.path, { force: true });
 	}
@@ -500,12 +505,6 @@ function activeAsk(page: Page): Locator {
 	return page.locator('[data-testid="ask-user-question"][data-tone="active"]');
 }
 
-async function expectSessionToContain(path: string, needle: string): Promise<void> {
-	await expect
-		.poll(() => readFileSync(path, "utf8").includes(needle), { timeout: 10_000 })
-		.toBe(true);
-}
-
 const GEOMETRY_ROUND = {
 	questions: [
 		{
@@ -660,7 +659,7 @@ test("a note and Other grow in place, the note follows the pick, and the card ke
 	}
 });
 
-test("Discuss marks a question, choosing cancels it, and the round sends the discussion with the answers", async ({
+test("Discuss marks a question, choosing cancels it, and paging preserves the selection", async ({
 	page,
 }) => {
 	await openFixtureProject(page);
@@ -696,28 +695,18 @@ test("Discuss marks a question, choosing cancels it, and the round sends the dis
 
 		await card.getByTestId("ask-continue").click();
 		await card.getByTestId("ask-option").first().click();
-		await card.getByTestId("ask-submit").click();
-		await expect(card.getByTestId("ask-submit")).toHaveCount(0);
-
-		const record = page.locator('[data-testid="ask-user-question"][data-tone="answered"]');
-		await expect(record.getByTestId("ask-receipt-toggle")).toContainText(
-			"Answered 1 of 2 questions",
+		await expect(card.getByTestId("ask-submit")).toBeEnabled();
+		await expect(tabs.first()).toHaveAttribute("data-discuss", "true");
+		await tabs.first().click();
+		await expect(card.getByTestId("ask-discuss-text")).toHaveValue(
+			"What does a rollout change for me?",
 		);
-		await expect(record.getByTestId("ask-receipt-toggle")).toContainText("1 to discuss");
-		const pair = record.getByTestId("ask-receipt-pair").first();
-		await expect(pair.getByTestId("ask-receipt-answer")).toContainText("Let’s discuss first");
-		await expect(pair.getByTestId("ask-receipt-answer")).toContainText("Unclear");
-		await expect(pair).toContainText("“What does a rollout change for me?”");
-		await expectSessionToContain(session.path, '"kind":"discuss"');
-		await expectSessionToContain(session.path, '"reason":"unclear"');
 	} finally {
 		rmSync(session.path, { force: true });
 	}
 });
 
-test("Other, notes and Discuss park on their own row, and the platform chord submits", async ({
-	page,
-}) => {
+test("Other, notes and Discuss park on their own keyboard row", async ({ page }) => {
 	await openFixtureProject(page);
 	const session = seedQuestionnaire("keyboard discuss", "ask-keyboard-discuss", {
 		questions: [KEYBOARD_ROLLOUT],
@@ -773,10 +762,8 @@ test("Other, notes and Discuss park on their own row, and the platform chord sub
 		await page.keyboard.press("Space");
 		await expect(reason).toHaveAttribute("aria-pressed", "true");
 
-		await pressPlatformShortcut(page, "Enter");
-		const record = page.locator('[data-testid="ask-user-question"][data-tone="answered"]');
-		await expect(record.getByTestId("ask-receipt-answer")).toContainText("Let’s discuss first");
-		await expect(record).toContainText("“Explain the rollouts first.”");
+		await expect(card.getByTestId("ask-submit")).toBeEnabled();
+		await expect(discussText).toHaveValue("Explain the rollouts first.");
 	} finally {
 		rmSync(session.path, { force: true });
 	}
@@ -803,6 +790,48 @@ test("the platform chord with nothing answered asks for a choice instead of send
 		await expect(card.getByTestId("ask-needs-choice")).toHaveCount(0);
 		await expect(card.getByTestId("ask-shortcuts")).toContainText("Enter select");
 		await expect(card.getByTestId("ask-shortcuts")).toContainText("Space note");
+	} finally {
+		rmSync(session.path, { force: true });
+	}
+});
+
+test("a historical Discuss receipt renders the discussion reason and quoted note", async ({
+	page,
+}) => {
+	await openFixtureProject(page);
+	const session = seedQuestionnaire("discuss receipt", "ask-discuss-receipt", KEYBOARD_ROUND, {
+		cancelled: false,
+		answers: [
+			{
+				questionIndex: 0,
+				question: KEYBOARD_ROLLOUT.question,
+				kind: "discuss",
+				answer: null,
+				reason: "unclear",
+				notes: "What does a rollout change for me?",
+			},
+			{
+				questionIndex: 1,
+				question: "Which keyboard checks should run?",
+				kind: "multi",
+				answer: "Keyboard lint",
+				selected: ["Keyboard lint"],
+			},
+		],
+	});
+	try {
+		await enterDefaultWorkspace(page);
+		await hideAuxiliaryWorkbench(page);
+		await openPersistedChat(page, "discuss receipt");
+		const record = page.locator('[data-testid="ask-user-question"][data-tone="answered"]');
+		await expect(record.getByTestId("ask-receipt-toggle")).toContainText(
+			"Answered 1 of 2 questions",
+		);
+		await expect(record.getByTestId("ask-receipt-toggle")).toContainText("1 to discuss");
+		const pair = record.getByTestId("ask-receipt-pair").first();
+		await expect(pair.getByTestId("ask-receipt-answer")).toContainText("Let’s discuss first");
+		await expect(pair.getByTestId("ask-receipt-answer")).toContainText("Unclear");
+		await expect(pair).toContainText("“What does a rollout change for me?”");
 	} finally {
 		rmSync(session.path, { force: true });
 	}
@@ -974,63 +1003,6 @@ test("the transcript stub expands and focuses a collapsed docked sheet, which ke
 		await expect(reopened.getByTestId("ask-question-text")).toHaveText(
 			"Which keyboard checks should run?",
 		);
-	} finally {
-		rmSync(session.path, { force: true });
-	}
-});
-
-test("the docked sheet stays above the composer while the Resources inspector is open", async ({
-	page,
-}) => {
-	await openFixtureProject(page);
-	const session = seedQuestionnaire("inspected round", "ask-inspected-round", KEYBOARD_ROUND);
-
-	try {
-		await enterDefaultWorkspace(page);
-		await hideAuxiliaryWorkbench(page);
-		await openPersistedChatAfterInput(page, "inspected round");
-		const card = activeAsk(page);
-		await expect(card).toBeVisible();
-		await page.getByTestId("resources-trigger").click();
-		const inspector = page.getByTestId("resources-inspector");
-		await expect(inspector).toBeVisible();
-		await expect(card).toBeInViewport({ ratio: 1 });
-		const inspectorBox = await box(inspector);
-		expect(inspectorBox.y + inspectorBox.height).toBeLessThanOrEqual((await box(card)).y + 1);
-		await shot(page.getByTestId("chat-view"), "ask-dock", "inspector-open");
-	} finally {
-		rmSync(session.path, { force: true });
-	}
-});
-
-test("answering from the dock leaves the receipt in the transcript and restores the composer", async ({
-	page,
-}) => {
-	await openFixtureProject(page);
-	const session = seedQuestionnaire("docked answer", "ask-docked-answer", {
-		questions: [KEYBOARD_ROLLOUT],
-	});
-
-	try {
-		await enterDefaultWorkspace(page);
-		await hideAuxiliaryWorkbench(page);
-		await openPersistedChatAfterInput(page, "docked answer");
-		const card = activeAsk(page);
-		await expect(card.getByTestId("ask-option").first()).toBeFocused();
-		await card.getByTestId("ask-option").nth(1).click();
-		await card.getByTestId("ask-submit").click();
-
-		const receipt = page
-			.getByTestId("chat-scroll")
-			.locator('[data-testid="ask-user-question"][data-tone="answered"]');
-		await expect(receipt).toContainText("Keyboard beta");
-		await expect(page.getByTestId("chat-dock")).toBeEmpty();
-		await expect(page.getByTestId("chat-scroll").getByTestId("ask-docked-open")).toHaveCount(0);
-		await expect(page.getByTestId("chat-input")).not.toHaveAttribute(
-			"placeholder",
-			"Reply in your own words — this replaces the question…",
-		);
-		await expectSessionToContain(session.path, "Keyboard beta");
 	} finally {
 		rmSync(session.path, { force: true });
 	}

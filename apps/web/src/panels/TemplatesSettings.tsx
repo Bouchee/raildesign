@@ -381,7 +381,7 @@ function TemplateRow({
 
 	const openAsFile = () => {
 		if (!workspaceId) return;
-		void openFileInTab(workspaceId, `.pi/prompts/${template.name}.md`, "keep");
+		void openFileInTab(workspaceId, `.raildesign/prompts/${template.name}.md`, "keep");
 		useAppStore.getState().closeSettings();
 	};
 

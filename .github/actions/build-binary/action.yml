@@ -1,4 +1,4 @@
-name: Build ThinkRail native artifacts
+name: Build RailDesign native artifacts
 description: >-
   Stamps the shared release identity, builds the web UI, compiles and smokes the native CLI binary,
   packages and smokes the native Electrobun desktop app, and exposes both release artifacts.
@@ -13,17 +13,6 @@ inputs:
   target:
     description: "Bun compile target matching this native runner"
     required: true
-  posthog-project-key:
-    description: "Public PostHog project key baked into release analytics; never committed"
-    required: true
-  posthog-cli-api-key:
-    description: "Optional PostHog personal API key (error tracking write) that uploads web and desktop-runtime source maps"
-    required: false
-    default: ""
-  posthog-cli-project-id:
-    description: "PostHog project id receiving the source maps; required with posthog-cli-api-key"
-    required: false
-    default: ""
 outputs:
   artifact-name:
     description: "CLI artifact filename"
@@ -55,38 +44,22 @@ runs:
       env:
         VERSION: ${{ inputs.version }}
         CHANNEL: ${{ inputs.channel }}
-        POSTHOG_PROJECT_KEY: ${{ inputs.posthog-project-key }}
-        POSTHOG_CLI_API_KEY_SET: ${{ inputs.posthog-cli-api-key != '' }}
-        POSTHOG_CLI_PROJECT_ID: ${{ inputs.posthog-cli-project-id }}
       run: |
         set -eu
-        if [ "${POSTHOG_CLI_API_KEY_SET:-false}" = true ] && [ -z "${POSTHOG_CLI_PROJECT_ID:-}" ]; then
-          echo "::error::posthog-cli-api-key needs posthog-cli-project-id"; exit 1
-        fi
         case "$CHANNEL" in
           nightly|stable) ;;
           *) echo "::error::unsupported release channel $CHANNEL"; exit 1 ;;
-        esac
-        case "$POSTHOG_PROJECT_KEY" in
-          phc_?*) ;;
-          *) echo "::error::posthog-project-key must be a phc_ project key"; exit 1 ;;
         esac
         commit=$(git rev-parse --short HEAD)
         cat > packages/shared/src/version.ts <<EOF
         export const version = "${VERSION}";
         export const channel = "${CHANNEL}";
         export const commit = "${commit}";
-        export const posthogProjectKey = "${POSTHOG_PROJECT_KEY}";
         EOF
-        echo "stamped version=${VERSION} channel=${CHANNEL} commit=${commit} posthogProjectKey=set"
+        echo "stamped version=${VERSION} channel=${CHANNEL} commit=${commit}"
 
     - name: Build web UI
       shell: bash
-      env:
-        THINKRAIL_SOURCEMAPS_RELEASE: ${{ inputs.posthog-cli-api-key != '' && inputs.version || '' }}
-        POSTHOG_CLI_API_KEY: ${{ inputs.posthog-cli-api-key }}
-        POSTHOG_CLI_PROJECT_ID: ${{ inputs.posthog-cli-project-id }}
-        POSTHOG_CLI_HOST: https://eu.posthog.com
       run: bun run build:web
 
     - name: Compile single-file CLI binary
@@ -102,7 +75,7 @@ runs:
         TARGET: ${{ inputs.target }}
       run: |
         set -eu
-        name="thinkrail-${TARGET#bun-}"
+        name="raildesign-${TARGET#bun-}"
         case "$TARGET" in *windows*) name="${name}.exe" ;; esac
         path="apps/cli/dist/${name}"
         [ -f "$path" ] || { echo "::error::expected CLI artifact not found at $path"; exit 1; }
@@ -123,14 +96,9 @@ runs:
       shell: bash
       env:
         TARGET: ${{ inputs.target }}
-        THINKRAIL_SOURCEMAPS_RELEASE: ${{ inputs.posthog-cli-api-key != '' && inputs.version || '' }}
-        POSTHOG_CLI_API_KEY: ${{ inputs.posthog-cli-api-key }}
-        POSTHOG_CLI_PROJECT_ID: ${{ inputs.posthog-cli-project-id }}
-        POSTHOG_CLI_HOST: https://eu.posthog.com
       run: |
         set -eu
         bun run desktop:build
-        unset THINKRAIL_SOURCEMAPS_RELEASE POSTHOG_CLI_API_KEY POSTHOG_CLI_PROJECT_ID POSTHOG_CLI_HOST
         launcher=$(bun -e 'import { locateDesktopLauncher } from "@thinkrail/artifact-tests"; console.log(locateDesktopLauncher("apps/desktop"));')
         case "$TARGET" in
           bun-linux-*)
@@ -145,10 +113,6 @@ runs:
       env:
         TARGET: ${{ inputs.target }}
         CHANNEL: ${{ inputs.channel }}
-        THINKRAIL_SOURCEMAPS_RELEASE: ${{ inputs.posthog-cli-api-key != '' && inputs.version || '' }}
-        POSTHOG_CLI_API_KEY: ${{ inputs.posthog-cli-api-key }}
-        POSTHOG_CLI_PROJECT_ID: ${{ inputs.posthog-cli-project-id }}
-        POSTHOG_CLI_HOST: https://eu.posthog.com
       run: |
         set -eu
         if [ "$TARGET" = bun-windows-x64 ]; then
@@ -185,28 +149,28 @@ runs:
               *) arch='x64' ;;
             esac
             platform="macos-$arch"
-            source="${prefix}${platform}-ThinkRail${suffix}.dmg"
-            name="thinkrail-desktop-darwin-$arch.dmg"
-            update_archive_name="${environment}-${platform}-ThinkRail${suffix}.app.tar.zst"
+            source="${prefix}${platform}-RailDesign${suffix}.dmg"
+            name="raildesign-desktop-darwin-$arch.dmg"
+            update_archive_name="${environment}-${platform}-RailDesign${suffix}.app.tar.zst"
             app_archive_path="apps/desktop/artifacts/$update_archive_name"
             ;;
           bun-windows-x64)
             platform='win-x64'
-            source="${prefix}${platform}-ThinkRail-Setup${suffix}.zip"
-            name='thinkrail-desktop-windows-x64.zip'
-            update_archive_name="${environment}-${platform}-ThinkRail${suffix}.tar.zst"
+            source="${prefix}${platform}-RailDesign-Setup${suffix}.zip"
+            name='raildesign-desktop-windows-x64.zip'
+            update_archive_name="${environment}-${platform}-RailDesign${suffix}.tar.zst"
             ;;
           bun-linux-x64)
             platform='linux-x64'
-            source="${prefix}${platform}-ThinkRail${suffix}-Setup.tar.gz"
-            name='thinkrail-desktop-linux-x64.tar.gz'
-            update_archive_name="${environment}-${platform}-ThinkRail${suffix}.tar.zst"
+            source="${prefix}${platform}-RailDesign${suffix}-Setup.tar.gz"
+            name='raildesign-desktop-linux-x64.tar.gz'
+            update_archive_name="${environment}-${platform}-RailDesign${suffix}.tar.zst"
             ;;
           bun-linux-arm64)
             platform='linux-arm64'
-            source="${prefix}${platform}-ThinkRail${suffix}-Setup.tar.gz"
-            name='thinkrail-desktop-linux-arm64.tar.gz'
-            update_archive_name="${environment}-${platform}-ThinkRail${suffix}.tar.zst"
+            source="${prefix}${platform}-RailDesign${suffix}-Setup.tar.gz"
+            name='raildesign-desktop-linux-arm64.tar.gz'
+            update_archive_name="${environment}-${platform}-RailDesign${suffix}.tar.zst"
             ;;
           *) echo "::error::unsupported desktop target $TARGET"; exit 1 ;;
         esac

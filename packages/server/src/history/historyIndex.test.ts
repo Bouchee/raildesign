@@ -1,12 +1,10 @@
 import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AssistantMessage, SystemMessage, Usage } from "@earendil-works/pi-ai";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { extractSession } from "./extract";
 import { getHistoryIndex, HistoryIndex, makeSnippet, matchesTerms } from "./historyIndex";
-import { defaultSessionDirFor, writeFixtureSession } from "./testFixtures";
+import { sessionDirFor, writeFixtureSession } from "./testFixtures";
 
 const allowAll = () => true;
 const noLabels = () => ({});
@@ -55,55 +53,22 @@ describe("HistoryIndex.search", () => {
 		expect(result.indexing).toBe(false);
 	});
 
-	test("ignores persisted system and usage entries in extraction and search", async () => {
-		const manager = SessionManager.create("/repo/system-usage", dir, { id: "system-usage" });
-		const usage: Usage = {
-			input: 2,
-			output: 3,
-			cacheRead: 0,
-			cacheWrite: 0,
-			totalTokens: 5,
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-		};
-		const system: SystemMessage = {
-			role: "system",
-			content: "private system instruction",
-			sections: { rules: "private system instruction" },
-			timestamp: 1,
-		};
-		manager.appendMessage(system);
-		manager.appendUsage("cache_warm", "test", "test-model", usage);
-		manager.appendMessage({ role: "user", content: "visible prompt", timestamp: 2 });
-		const assistant: AssistantMessage = {
-			role: "assistant",
-			content: [{ type: "text", text: "visible answer" }],
-			api: "test",
-			provider: "test",
-			model: "test-model",
-			usage,
-			stopReason: "stop",
-			timestamp: 3,
-		};
-		manager.appendMessage(assistant);
-		const path = manager.getSessionFile();
-		expect(path).toBeString();
-		const jsonl = readFileSync(path as string, "utf8");
-		expect(JSON.parse(jsonl.split("\n")[1] ?? "{}").message.role).toBe("system");
-		expect(extractSession(jsonl)?.entries).toEqual([
-			expect.objectContaining({
-				text: "visible prompt",
-				role: "user",
-				timestamp: 2,
-				messageIndex: 0,
-			}),
-			expect.objectContaining({
-				text: "visible answer",
-				role: "assistant",
-				timestamp: 3,
-				messageIndex: 1,
-			}),
+	test("keeps private SDK history out of transcript extraction and search", async () => {
+		const { path } = writeFixtureSession(dir, {
+			id: "private-history",
+			cwd: "/repo/private",
+			messages: [
+				{ role: "user", text: "visible prompt", timestamp: 2 },
+				{ role: "assistant", text: "visible answer", timestamp: 3 },
+			],
+		});
+		const record = JSON.parse(readFileSync(path, "utf8"));
+		record.history = [{ role: "system", content: "private system instruction" }];
+		writeFileSync(path, JSON.stringify(record));
+		expect(extractSession(JSON.stringify(record))?.entries).toEqual([
+			expect.objectContaining({ text: "visible prompt", role: "user", messageIndex: 0 }),
+			expect.objectContaining({ text: "visible answer", role: "assistant", messageIndex: 1 }),
 		]);
-
 		const result = await new HistoryIndex(dir).search({
 			query: "visible",
 			filter: allowAll,
@@ -111,7 +76,7 @@ describe("HistoryIndex.search", () => {
 		});
 		expect(result.prompts.map((hit) => hit.text)).toEqual(["visible prompt"]);
 		expect(result.messages.map((hit) => hit.text)).toEqual(["visible answer"]);
-		expect(result.prompts.some((hit) => hit.text.includes("private"))).toBe(false);
+		expect(JSON.stringify(result)).not.toContain("private system instruction");
 	});
 
 	test("(b) dedups prompts by normalized text, keeping the newest", async () => {
@@ -209,27 +174,25 @@ describe("HistoryIndex.search", () => {
 		expect(result.messages.map((m) => m.timestamp)).toEqual([6000, 5000]);
 	});
 
-	test("(f) revalidates after the 2s throttle and picks up an appended line", async () => {
-		const path = writeFixtureSession(dir, {
+	test("(f) revalidates after the 2s throttle and picks up an atomic record replacement", async () => {
+		writeFixtureSession(dir, {
 			id: "sess-a",
 			cwd: "/repo/a",
 			messages: [{ role: "user", text: "original prompt one", timestamp: 1000 }],
-		}).path;
+		});
 
 		const index = new HistoryIndex(dir);
 		const first = await index.search({ query: "prompt", filter: allowAll, labels: noLabels });
 		expect(first.prompts.map((p) => p.text)).toEqual(["original prompt one"]);
 
-		appendFileSync(
-			path,
-			`${JSON.stringify({
-				type: "message",
-				id: "sess-a-m1",
-				parentId: "sess-a-m0",
-				timestamp: new Date(9000).toISOString(),
-				message: { role: "user", content: "fresh prompt two", timestamp: 9000 },
-			})}\n`,
-		);
+		writeFixtureSession(dir, {
+			id: "sess-a",
+			cwd: "/repo/a",
+			messages: [
+				{ role: "user", text: "original prompt one", timestamp: 1000 },
+				{ role: "user", text: "fresh prompt two", timestamp: 9000 },
+			],
+		});
 
 		setSystemTime(Date.now() + 2100);
 
@@ -308,16 +271,16 @@ describe("HistoryIndex.search", () => {
 		expect(result.prompts[0]?.text).toBe(big);
 	});
 
-	test("(j) default layout: a no-arg index discovers per-cwd subdirectories under the agent dir", async () => {
-		const prev = process.env.PI_CODING_AGENT_DIR;
-		process.env.PI_CODING_AGENT_DIR = dir;
+	test("(j) default layout: a no-arg index discovers the flat RailDesign sessions directory", async () => {
+		const prev = process.env.THINKRAIL_DATA_DIR;
+		process.env.THINKRAIL_DATA_DIR = dir;
 		try {
-			writeFixtureSession(defaultSessionDirFor(dir, "/repo/a"), {
+			writeFixtureSession(sessionDirFor(dir), {
 				id: "sess-a",
 				cwd: "/repo/a",
 				messages: [{ role: "user", text: "default layout prompt", timestamp: 1000 }],
 			});
-			writeFixtureSession(defaultSessionDirFor(dir, "/repo/b"), {
+			writeFixtureSession(sessionDirFor(dir), {
 				id: "sess-b",
 				cwd: "/repo/b",
 				messages: [{ role: "user", text: "default layout other", timestamp: 2000 }],
@@ -333,14 +296,14 @@ describe("HistoryIndex.search", () => {
 			expect(result.prompts.map((p) => p.sessionId).sort()).toEqual(["sess-a", "sess-b"]);
 			expect(result.prompts.map((p) => p.cwd).sort()).toEqual(["/repo/a", "/repo/b"]);
 		} finally {
-			if (prev === undefined) delete process.env.PI_CODING_AGENT_DIR;
-			else process.env.PI_CODING_AGENT_DIR = prev;
+			if (prev === undefined) delete process.env.THINKRAIL_DATA_DIR;
+			else process.env.THINKRAIL_DATA_DIR = prev;
 		}
 	});
 
-	test("(k) default layout discovers a session directory reached through a top-level symlink", async () => {
-		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-		process.env.PI_CODING_AGENT_DIR = dir;
+	test("(k) default layout does not walk nested or linked session directories", async () => {
+		const previousAgentDir = process.env.THINKRAIL_DATA_DIR;
+		process.env.THINKRAIL_DATA_DIR = dir;
 		try {
 			const target = join(dir, "linked-session-target");
 			writeFixtureSession(target, {
@@ -362,10 +325,10 @@ describe("HistoryIndex.search", () => {
 				labels: noLabels,
 			});
 
-			expect(result.prompts.map((prompt) => prompt.sessionId)).toEqual(["sess-linked"]);
+			expect(result.prompts).toEqual([]);
 		} finally {
-			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+			if (previousAgentDir === undefined) delete process.env.THINKRAIL_DATA_DIR;
+			else process.env.THINKRAIL_DATA_DIR = previousAgentDir;
 		}
 	});
 

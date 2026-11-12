@@ -35,7 +35,7 @@ export function terminalShellStartFailure(
 	preference: TerminalWindowsShell = "auto",
 ): string {
 	if (env.SHELL) {
-		return "Couldn’t start the shell configured by SHELL. Fix or clear SHELL in the host environment, restart ThinkRail, then retry.";
+		return "Couldn’t start the shell configured by SHELL. Fix or clear SHELL in the host environment, restart RailDesign, then retry.";
 	}
 	if (platform !== "win32") {
 		return "Couldn’t start the configured shell. Check the host’s shell installation, then retry.";
@@ -43,7 +43,7 @@ export function terminalShellStartFailure(
 	if (preference === "auto") {
 		return "Couldn’t start the automatically selected Windows shell. Check the host’s shell installation, or choose another shell in Settings → Terminal, then retry.";
 	}
-	return `Couldn’t start ${WINDOWS_SHELL_NAME[preference]} (${WINDOWS_SHELL_BINARY[preference]}). Make sure it is installed and available to ThinkRail. Restart ThinkRail after installation or PATH changes, or choose another shell in Settings → Terminal, then retry.`;
+	return `Couldn’t start ${WINDOWS_SHELL_NAME[preference]} (${WINDOWS_SHELL_BINARY[preference]}). Make sure it is installed and available to RailDesign. Restart RailDesign after installation or PATH changes, or choose another shell in Settings → Terminal, then retry.`;
 }
 
 export function terminalShellArgs(platform: string): string[] {

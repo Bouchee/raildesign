@@ -2,8 +2,68 @@ import { describe, expect, it } from "bun:test";
 import { TooltipProvider } from "@thinkrail/ui/tooltip";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { ActivityGroup } from "./ActivityGroup";
 import { ToolCard } from "./ToolCard";
 import { registerToolRenderer } from "./toolRegistry";
+import { ChatTurnView } from "./turns";
+
+it("declared cards and routine rows wait for an executor before showing running UI", () => {
+	registerToolRenderer("planned-tool", () => "executing body", {
+		summary: () => "executing summary",
+		defaultExpanded: true,
+	});
+	const call = {
+		toolCallId: "planned-call",
+		toolName: "planned-tool",
+		args: {},
+		tool: undefined,
+		streaming: false,
+	};
+	const card = renderToStaticMarkup(createElement(ToolCard, call));
+	const row = renderToStaticMarkup(
+		createElement(ActivityGroup, {
+			id: "planned-activity",
+			steps: [{ ...call, kind: "tool", id: "planned-step", dead: false }],
+			live: true,
+		}),
+	);
+	for (const markup of [card, row]) {
+		expect(markup).toContain('data-status="pending"');
+		expect(markup).not.toContain("animate-spin");
+		expect(markup).not.toContain("executing summary");
+		expect(markup).not.toContain("executing body");
+	}
+	const running = renderToStaticMarkup(
+		createElement(ToolCard, {
+			...call,
+			tool: { status: "running", raw: undefined },
+		}),
+	);
+	expect(running).toContain('data-status="running"');
+	expect(running).toContain("animate-spin");
+	expect(running).toContain("executing summary");
+});
+
+it("a bare tool renderer is not invoked before its executor starts", () => {
+	registerToolRenderer("planned-bare", () => "executing bare body", { chrome: "bare" });
+	const markup = renderToStaticMarkup(
+		createElement(ChatTurnView, {
+			row: {
+				kind: "tool",
+				id: "planned-bare-call",
+				toolCallId: "planned-bare-call",
+				toolName: "planned-bare",
+				args: {},
+				tool: undefined,
+				dead: false,
+				streaming: false,
+			},
+			agentResponded: false,
+			isFinalAnswer: false,
+		}),
+	);
+	expect(markup).not.toContain("executing bare body");
+});
 
 describe("tool result images", () => {
 	it("appends a preview after a registered tool's specialized body", () => {

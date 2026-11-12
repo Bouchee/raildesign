@@ -34,7 +34,7 @@ export function sameWindowsPath(a: string, b: string): boolean {
 }
 
 export function installConfigDir(home: string): string {
-	return join(home, ".config", "thinkrail");
+	return join(home, ".config", "raildesign");
 }
 
 export function installMetaFile(home: string): string {
@@ -58,5 +58,5 @@ function cacheRoot(): string {
 }
 
 export function stagingRoot(): string {
-	return join(cacheRoot(), "thinkrail");
+	return join(cacheRoot(), "raildesign");
 }

@@ -4,8 +4,8 @@ import {
 	DEFAULT_CONFIG,
 	type ExtUiRequest,
 	type HostUpdateNotice,
-	type PiEvent,
 	type Project,
+	type SessionEvent,
 	type SessionEventPayload,
 	type SessionStateRecord,
 	type SessionSummary,
@@ -59,11 +59,12 @@ const emptyHydration = (): HydratedRuntime => ({
 	toolResponses: {},
 	turnIdByMessageIndex: [],
 });
-const agentStart = { type: "agent_start" } as unknown as PiEvent;
-const agentEnd = { type: "agent_end", willRetry: false, messages: [] } as unknown as PiEvent;
-const agentSettled = (terminal: Extract<PiEvent, { type: "agent_settled" }>["terminal"] = null) =>
-	({ type: "agent_settled", terminal }) as PiEvent;
-const recoveredOverflow: PiEvent = {
+const agentStart = { type: "agent_start" } as unknown as SessionEvent;
+const agentEnd = { type: "agent_end", willRetry: false, messages: [] } as unknown as SessionEvent;
+const agentSettled = (
+	terminal: Extract<SessionEvent, { type: "agent_settled" }>["terminal"] = null,
+) => ({ type: "agent_settled", terminal }) as SessionEvent;
+const recoveredOverflow: SessionEvent = {
 	type: "compaction_end",
 	reason: "overflow",
 	result: undefined,
@@ -71,11 +72,11 @@ const recoveredOverflow: PiEvent = {
 	willRetry: true,
 };
 const toolStart = (toolCallId: string) =>
-	({ type: "tool_execution_start", toolCallId, toolName: "bash" }) as unknown as PiEvent;
+	({ type: "tool_execution_start", toolCallId, toolName: "bash" }) as unknown as SessionEvent;
 const toolUpdate = (toolCallId: string, partialResult: unknown) =>
-	({ type: "tool_execution_update", toolCallId, partialResult }) as unknown as PiEvent;
+	({ type: "tool_execution_update", toolCallId, partialResult }) as unknown as SessionEvent;
 const toolEnd = (toolCallId: string, result: unknown, isError = false) =>
-	({ type: "tool_execution_end", toolCallId, result, isError }) as unknown as PiEvent;
+	({ type: "tool_execution_end", toolCallId, result, isError }) as unknown as SessionEvent;
 const retryStart = (attempt: number, maxAttempts: number, delayMs: number) =>
 	({
 		type: "auto_retry_start",
@@ -83,36 +84,39 @@ const retryStart = (attempt: number, maxAttempts: number, delayMs: number) =>
 		maxAttempts,
 		delayMs,
 		errorMessage: "rate limit",
-	}) as unknown as PiEvent;
-const retryEnd = { type: "auto_retry_end", success: true, attempt: 1 } as unknown as PiEvent;
+	}) as unknown as SessionEvent;
+const retryEnd = { type: "auto_retry_end", success: true, attempt: 1 } as unknown as SessionEvent;
 const summarizationScheduled = (
 	attempt: number,
 	maxAttempts: number,
 	delayMs: number,
-): PiEvent => ({
+): SessionEvent => ({
 	type: "summarization_retry_scheduled",
 	attempt,
 	maxAttempts,
 	delayMs,
 	errorMessage: "stream dropped",
 });
-const summarizationFinished: PiEvent = { type: "summarization_retry_finished" };
+const summarizationFinished: SessionEvent = { type: "summarization_retry_finished" };
 const agentEndError = (errorMessage: string) =>
 	({
 		type: "agent_end",
 		willRetry: false,
 		messages: [{ role: "assistant", content: [], stopReason: "error", errorMessage }],
-	}) as unknown as PiEvent;
+	}) as unknown as SessionEvent;
 const assistantStart = {
 	type: "message_start",
 	message: { role: "assistant" },
-} as unknown as PiEvent;
+} as unknown as SessionEvent;
 const userStart = (text: string) =>
 	({
 		type: "message_start",
 		message: { role: "user", content: [{ type: "text", text }], timestamp: 1 },
-	}) as unknown as PiEvent;
-const sessionTitleChanged = (name?: string): PiEvent => ({ type: "session_info_changed", name });
+	}) as unknown as SessionEvent;
+const sessionTitleChanged = (name?: string): SessionEvent => ({
+	type: "session_info_changed",
+	name,
+});
 const assistantText = (text: string) =>
 	({
 		type: "message_update",
@@ -120,7 +124,7 @@ const assistantText = (text: string) =>
 			type: "text",
 			partial: { role: "assistant", content: [{ type: "text", text }] },
 		},
-	}) as unknown as PiEvent;
+	}) as unknown as SessionEvent;
 const emptyBottomRegion = (): WorkspaceLayoutDocument["bottom"] => ({
 	visible: false,
 	height: 0.3,
@@ -150,6 +154,7 @@ beforeEach(() => {
 		routeChatTarget: null,
 		routeChatTargetGeneration: 0,
 		sessions: {},
+		sessionEventsBeforeHydration: {},
 		sessionStateByWorkspace: {},
 		sessionStateClock: 0,
 		sessionStateSnapshotInstalled: false,
@@ -185,9 +190,6 @@ beforeEach(() => {
 		activeLogin: null,
 		settingsOpen: false,
 		settingsSection: "providers",
-		surveyInvitationOpen: false,
-		surveyWindowOpen: false,
-		inAppSurvey: null,
 		chatLineWidth: DEFAULT_CONFIG.chatLineWidth,
 		fileLineWidth: DEFAULT_CONFIG.fileLineWidth,
 		chatLineWidthBounded: DEFAULT_CONFIG.chatLineWidthBounded,
@@ -261,46 +263,60 @@ test("pi events route to the right session runtime; chats stay independent", () 
 	store.openChatSession("ws1", "a", null, "medium");
 	store.openChatSession("ws1", "b", null, "high");
 
-	store.handlePiEvent(agentStart, "a");
-	store.handlePiEvent(toolStart("t1"), "a");
+	store.handleSessionEvent(agentStart, "a");
+	store.handleSessionEvent(toolStart("t1"), "a");
 	expect(rt("a").isStreaming).toBe(true);
 	expect(rt("a").toolResults.t1?.status).toBe("running");
 	expect(rt("b").isStreaming).toBe(false);
 	expect(Object.keys(rt("b").toolResults)).toHaveLength(0);
 
-	store.handlePiEvent(agentStart, "b");
+	store.handleSessionEvent(agentStart, "b");
 	expect(rt("a").isStreaming).toBe(true);
 	expect(rt("b").isStreaming).toBe(true);
 
-	store.handlePiEvent(agentEnd, "a");
+	store.handleSessionEvent(agentEnd, "a");
 	expect(rt("a").isStreaming).toBe(true);
 	expect(rt("a").turns.some((t) => t.kind === "system" && t.text === undefined)).toBe(false);
-	store.handlePiEvent(agentSettled(), "a");
+	store.handleSessionEvent(agentSettled(), "a");
 	expect(rt("a").isStreaming).toBe(false);
 	expect(rt("a").turns.some((t) => t.kind === "system" && t.text === undefined)).toBe(true);
 	expect(rt("b").isStreaming).toBe(true);
 	expect(rt("b").turns).toHaveLength(0);
 });
 
-test("an ordered Pi-event batch commits once while preserving every session revision", () => {
+function sequenceEvents(
+	events: Omit<SessionEventPayload, "runId" | "seq">[],
+): SessionEventPayload[] {
+	const sequences = new Map<string, number>();
+	return events.map((payload) => {
+		const seq =
+			(sequences.get(payload.sessionId) ??
+				useAppStore.getState().sessions[payload.sessionId]?.lastEventSeq ??
+				0) + 1;
+		sequences.set(payload.sessionId, seq);
+		return { ...payload, runId: "run", seq };
+	});
+}
+
+test("an ordered session-event batch commits once while preserving every session revision", () => {
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "a", null, "medium");
 	store.openChatSession("ws1", "b", null, "high");
 	const partial = { content: [{ type: "text", text: "partial" }] };
-	const payloads: SessionEventPayload[] = [
+	const payloads = sequenceEvents([
 		{ sessionId: "a", event: agentStart },
 		{ sessionId: "a", event: toolStart("t1") },
 		{ sessionId: "b", event: agentStart },
 		{ sessionId: "a", event: toolUpdate("t1", partial) },
 		{ sessionId: "a", event: agentEnd },
 		{ sessionId: "missing", event: agentStart },
-	];
+	]);
 	let commits = 0;
 	const unsubscribe = useAppStore.subscribe(() => {
 		commits += 1;
 	});
 
-	store.handlePiEvents(payloads);
+	store.handleSessionEvents(payloads);
 	unsubscribe();
 
 	expect(commits).toBe(1);
@@ -320,23 +336,25 @@ test("a settlement tick survives a batched false-to-false streaming endpoint", (
 		commits += 1;
 	});
 
-	store.handlePiEvents([
-		{ sessionId: "a", event: agentStart },
-		{ sessionId: "a", event: agentEnd },
-		{ sessionId: "a", event: agentSettled() },
-	]);
+	store.handleSessionEvents(
+		sequenceEvents([
+			{ sessionId: "a", event: agentStart },
+			{ sessionId: "a", event: agentEnd },
+			{ sessionId: "a", event: agentSettled() },
+		]),
+	);
 	unsubscribe();
 
 	expect(commits).toBe(1);
 	expect(rt("a").isStreaming).toBe(false);
 	expect(rt("a").settlementTick).toBe(1);
-	store.handlePiEvent(agentEnd, "a");
+	store.handleSessionEvent(agentEnd, "a");
 	expect(rt("a").settlementTick).toBe(1);
-	store.handlePiEvent(agentSettled(), "a");
+	store.handleSessionEvent(agentSettled(), "a");
 	expect(rt("a").settlementTick).toBe(2);
 });
 
-test("stats refresh ticks survive batching at finalized Pi state boundaries", () => {
+test("stats refresh ticks survive batching at finalized session state boundaries", () => {
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "a", null, "medium");
 	let commits = 0;
@@ -344,38 +362,40 @@ test("stats refresh ticks survive batching at finalized Pi state boundaries", ()
 		commits += 1;
 	});
 
-	store.handlePiEvents([
-		{ sessionId: "a", event: agentStart },
-		{ sessionId: "a", event: assistantStart },
-		{ sessionId: "a", event: assistantText("streaming") },
-		{
-			sessionId: "a",
-			event: {
-				type: "message_end",
-				message: { role: "toolResult" },
-			} as unknown as PiEvent,
-		},
-		{ sessionId: "a", event: { type: "compaction_start", reason: "manual" } },
-		{
-			sessionId: "a",
-			event: {
-				type: "compaction_end",
-				reason: "manual",
-				result: { tokensBefore: 1_000, estimatedTokensAfter: 200 },
-				aborted: false,
-				willRetry: false,
+	store.handleSessionEvents(
+		sequenceEvents([
+			{ sessionId: "a", event: agentStart },
+			{ sessionId: "a", event: assistantStart },
+			{ sessionId: "a", event: assistantText("streaming") },
+			{
+				sessionId: "a",
+				event: {
+					type: "message_end",
+					message: { role: "toolResult" },
+				} as unknown as SessionEvent,
 			},
-		},
-		{ sessionId: "a", event: agentEnd },
-		{ sessionId: "a", event: agentSettled() },
-	]);
+			{ sessionId: "a", event: { type: "compaction_start", reason: "manual" } },
+			{
+				sessionId: "a",
+				event: {
+					type: "compaction_end",
+					reason: "manual",
+					result: { tokensBefore: 1_000, estimatedTokensAfter: 200 },
+					aborted: false,
+					willRetry: false,
+				},
+			},
+			{ sessionId: "a", event: agentEnd },
+			{ sessionId: "a", event: agentSettled() },
+		]),
+	);
 	unsubscribe();
 
 	expect(commits).toBe(1);
 	expect(rt("a").statsRefreshTick).toBe(3);
-	store.handlePiEvent(toolEnd("t1", {}), "a");
+	store.handleSessionEvent(toolEnd("t1", {}), "a");
 	expect(rt("a").statsRefreshTick).toBe(3);
-	store.handlePiEvent({ type: "entry_appended", entryType: "custom" }, "a");
+	store.handleSessionEvent({ type: "entry_appended", entryType: "custom" }, "a");
 	expect(rt("a").statsRefreshTick).toBe(3);
 	for (const [index, entryType] of [
 		"usage",
@@ -383,7 +403,7 @@ test("stats refresh ticks survive batching at finalized Pi state boundaries", ()
 		"branch_summary",
 		"context_edit",
 	].entries()) {
-		store.handlePiEvent({ type: "entry_appended", entryType }, "a");
+		store.handleSessionEvent({ type: "entry_appended", entryType }, "a");
 		expect(rt("a").statsRefreshTick).toBe(4 + index);
 	}
 });
@@ -392,15 +412,15 @@ test("a host-fired USER message folds into the transcript; the composer's optimi
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "a", null, "medium");
 
-	store.handlePiEvent(userStart("<review pkg>"), "a");
+	store.handleSessionEvent(userStart("<review pkg>"), "a");
 	expect(rt("a").turns).toHaveLength(1);
 	expect(rt("a").turns[0]?.kind).toBe("user");
 
 	store.appendUserMessage("a", "fix the tests");
-	store.handlePiEvent(userStart("fix the tests"), "a");
+	store.handleSessionEvent(userStart("fix the tests"), "a");
 	expect(rt("a").turns.filter((t) => t.kind === "user")).toHaveLength(2);
 
-	store.handlePiEvent(userStart("[thinkrail:todo-nudge] plan changed"), "a");
+	store.handleSessionEvent(userStart("[thinkrail:todo-nudge] plan changed"), "a");
 	expect(rt("a").turns.filter((t) => t.kind === "user")).toHaveLength(2);
 });
 
@@ -417,7 +437,7 @@ test("a matching user echo adopts the host clock while retaining optimistic iden
 		content: [{ type: "text" as const, text: "fix the tests" }],
 		timestamp: 1_000,
 	};
-	store.handlePiEvent({ type: "message_start", message }, "clock");
+	store.handleSessionEvent({ type: "message_start", message }, "clock");
 	expect(rt("clock").turns).toEqual([{ ...optimistic, message }]);
 	expect(rt("clock").turns[0]).toMatchObject({ attachmentNames: ["screen.png"] });
 });
@@ -429,14 +449,14 @@ test("queue_update folds pi's queue into the runtime; the canonical echo lands t
 			steering,
 			followUp,
 			...(hasImages ? { hasImages: true } : {}),
-		}) as unknown as PiEvent;
+		}) as unknown as SessionEvent;
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "a", null, "medium");
-	store.handlePiEvent(agentStart, "a");
-	store.handlePiEvent(assistantStart, "a");
-	store.handlePiEvent(assistantText("first reply"), "a");
+	store.handleSessionEvent(agentStart, "a");
+	store.handleSessionEvent(assistantStart, "a");
+	store.handleSessionEvent(assistantText("first reply"), "a");
 
-	store.handlePiEvent(queueUpdate(["course-correct"], ["queued question"], true), "a");
+	store.handleSessionEvent(queueUpdate(["course-correct"], ["queued question"], true), "a");
 	expect(rt("a").queue).toEqual({
 		steering: ["course-correct"],
 		followUp: ["queued question"],
@@ -444,10 +464,10 @@ test("queue_update folds pi's queue into the runtime; the canonical echo lands t
 	});
 	expect(rt("a").turns.filter((t) => t.kind === "user")).toHaveLength(0);
 
-	store.handlePiEvent(queueUpdate([], ["queued question"]), "a");
-	store.handlePiEvent(userStart("course-correct"), "a");
-	store.handlePiEvent(queueUpdate([], []), "a");
-	store.handlePiEvent(userStart("queued question"), "a");
+	store.handleSessionEvent(queueUpdate([], ["queued question"]), "a");
+	store.handleSessionEvent(userStart("course-correct"), "a");
+	store.handleSessionEvent(queueUpdate([], []), "a");
+	store.handleSessionEvent(userStart("queued question"), "a");
 
 	const turns = rt("a").turns;
 	expect(turns.map((t) => t.kind)).toEqual(["assistant", "user", "user"]);
@@ -533,7 +553,7 @@ test("Pi's expanded skill echo replaces its matching optimistic slash command in
 	const optimistic = rt("skill").turns[0];
 	if (optimistic?.kind !== "user") throw new Error("optimistic turn missing");
 
-	store.handlePiEvent(userStart(expanded), "skill");
+	store.handleSessionEvent(userStart(expanded), "skill");
 	const turns = rt("skill").turns;
 	expect(turns).toHaveLength(1);
 	const canonical = turns[0];
@@ -542,7 +562,7 @@ test("Pi's expanded skill echo replaces its matching optimistic slash command in
 
 	store.openChatSession("ws1", "mismatch", null, "medium");
 	store.appendUserMessage("mismatch", "/skill:other Focus on src/app.ts.");
-	store.handlePiEvent(userStart(expanded), "mismatch");
+	store.handleSessionEvent(userStart(expanded), "mismatch");
 	expect(rt("mismatch").turns.filter((turn) => turn.kind === "user")).toHaveLength(2);
 });
 
@@ -550,10 +570,10 @@ test("an assistant turn is built (and replaced, not duplicated) from message_upd
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "a", null, "medium");
 
-	store.handlePiEvent(agentStart, "a");
-	store.handlePiEvent(assistantStart, "a");
-	store.handlePiEvent(assistantText("po"), "a");
-	store.handlePiEvent(assistantText("pong"), "a");
+	store.handleSessionEvent(agentStart, "a");
+	store.handleSessionEvent(assistantStart, "a");
+	store.handleSessionEvent(assistantText("po"), "a");
+	store.handleSessionEvent(assistantText("pong"), "a");
 
 	const assistants = rt("a").turns.filter((t) => t.kind === "assistant");
 	expect(assistants).toHaveLength(1);
@@ -561,9 +581,9 @@ test("an assistant turn is built (and replaced, not duplicated) from message_upd
 	expect(turn?.kind === "assistant" && turn.streaming).toBe(true);
 	expect(turn?.kind === "assistant" && turn.message.content[0]?.type === "text").toBe(true);
 
-	store.handlePiEvent(agentEnd, "a");
+	store.handleSessionEvent(agentEnd, "a");
 	expect(rt("a").isStreaming).toBe(true);
-	store.handlePiEvent(agentSettled(), "a");
+	store.handleSessionEvent(agentSettled(), "a");
 	const after = rt("a");
 	expect(after.isStreaming).toBe(false);
 	expect(after.currentAssistantId).toBeNull();
@@ -574,18 +594,18 @@ test("a multi-message turn leaves no assistant turn flagged streaming (no stray 
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "a", null, "medium");
 
-	store.handlePiEvent(agentStart, "a");
-	store.handlePiEvent(assistantStart, "a");
-	store.handlePiEvent(assistantText("first"), "a");
-	store.handlePiEvent(assistantStart, "a");
+	store.handleSessionEvent(agentStart, "a");
+	store.handleSessionEvent(assistantStart, "a");
+	store.handleSessionEvent(assistantText("first"), "a");
+	store.handleSessionEvent(assistantStart, "a");
 	expect(rt("a").turns.filter((t) => t.kind === "assistant" && t.streaming)).toHaveLength(0);
-	store.handlePiEvent(assistantText("second"), "a");
+	store.handleSessionEvent(assistantText("second"), "a");
 	const streamingMid = rt("a").turns.filter((t) => t.kind === "assistant" && t.streaming);
 	expect(streamingMid).toHaveLength(1);
 
-	store.handlePiEvent(agentEnd, "a");
+	store.handleSessionEvent(agentEnd, "a");
 	expect(rt("a").turns.some((t) => t.kind === "assistant" && t.streaming)).toBe(true);
-	store.handlePiEvent(agentSettled(), "a");
+	store.handleSessionEvent(agentSettled(), "a");
 	const after = rt("a");
 	expect(after.turns.filter((t) => t.kind === "assistant")).toHaveLength(2);
 	expect(after.turns.some((t) => t.kind === "assistant" && t.streaming)).toBe(false);
@@ -596,9 +616,9 @@ test("message_end finalizes the turn the moment its message completes (not at ag
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "a", null, "medium");
 
-	store.handlePiEvent(agentStart, "a");
-	store.handlePiEvent(assistantStart, "a");
-	store.handlePiEvent(assistantText("asking…"), "a");
+	store.handleSessionEvent(agentStart, "a");
+	store.handleSessionEvent(assistantStart, "a");
+	store.handleSessionEvent(assistantText("asking…"), "a");
 	expect(rt("a").turns.some((t) => t.kind === "assistant" && t.streaming)).toBe(true);
 
 	const finalMessage = {
@@ -606,7 +626,10 @@ test("message_end finalizes the turn the moment its message completes (not at ag
 		content: [{ type: "toolCall", id: "ask1", name: "ask_user_question", arguments: {} }],
 		stopReason: "toolUse",
 	};
-	store.handlePiEvent({ type: "message_end", message: finalMessage } as unknown as PiEvent, "a");
+	store.handleSessionEvent(
+		{ type: "message_end", message: finalMessage } as unknown as SessionEvent,
+		"a",
+	);
 
 	const after = rt("a");
 	expect(after.isStreaming).toBe(true);
@@ -616,8 +639,8 @@ test("message_end finalizes the turn the moment its message completes (not at ag
 	expect(turn?.kind === "assistant" && turn.message.stopReason).toBe("toolUse");
 
 	const before = rt("a");
-	store.handlePiEvent(
-		{ type: "message_end", message: { role: "toolResult" } } as unknown as PiEvent,
+	store.handleSessionEvent(
+		{ type: "message_end", message: { role: "toolResult" } } as unknown as SessionEvent,
 		"a",
 	);
 	const ignored = rt("a");
@@ -630,7 +653,7 @@ test("a tool-response custom message_end indexes into toolResponses (never the t
 	store.openChatSession("ws1", "a", null, "medium");
 
 	const response = { answers: [{ questionIndex: 0, question: "Q?", kind: "text", answer: "A" }] };
-	store.handlePiEvent(
+	store.handleSessionEvent(
 		{
 			type: "message_end",
 			message: {
@@ -640,14 +663,14 @@ test("a tool-response custom message_end indexes into toolResponses (never the t
 				display: true,
 				details: { toolCallId: "ask1", response },
 			},
-		} as unknown as PiEvent,
+		} as unknown as SessionEvent,
 		"a",
 	);
 	expect(rt("a").toolResponses.ask1).toEqual(response);
 	expect(rt("a").turns.filter((t) => t.kind === "assistant" || t.kind === "user")).toHaveLength(0);
 
 	// The response value is opaque to the store — whatever the tool's extension chose rides through.
-	store.handlePiEvent(
+	store.handleSessionEvent(
 		{
 			type: "message_end",
 			message: {
@@ -657,17 +680,17 @@ test("a tool-response custom message_end indexes into toolResponses (never the t
 				display: true,
 				details: { toolCallId: "ask2", response: "free text" },
 			},
-		} as unknown as PiEvent,
+		} as unknown as SessionEvent,
 		"a",
 	);
 	expect(rt("a").toolResponses).toEqual({ ask1: response, ask2: "free text" });
 
 	const before = rt("a");
-	store.handlePiEvent(
+	store.handleSessionEvent(
 		{
 			type: "message_end",
 			message: { role: "custom", customType: "other", content: "x", display: false },
-		} as unknown as PiEvent,
+		} as unknown as SessionEvent,
 		"a",
 	);
 	const ignored = rt("a");
@@ -684,7 +707,7 @@ test("a legacy ask-user-answers custom message_end (details.result) indexes into
 		answers: [{ questionIndex: 0, question: "Q?", kind: "option", answer: "A" }],
 		cancelled: false,
 	};
-	store.handlePiEvent(
+	store.handleSessionEvent(
 		{
 			type: "message_end",
 			message: {
@@ -694,7 +717,7 @@ test("a legacy ask-user-answers custom message_end (details.result) indexes into
 				display: true,
 				details: { toolCallId: "ask1", result },
 			},
-		} as unknown as PiEvent,
+		} as unknown as SessionEvent,
 		"a",
 	);
 	expect(rt("a").toolResponses.ask1).toEqual(result);
@@ -721,7 +744,7 @@ test("a subagent-completion custom message_end appends a subagentCompletion turn
 		},
 		durationMs: 4200,
 	};
-	store.handlePiEvent(
+	store.handleSessionEvent(
 		{
 			type: "message_end",
 			message: {
@@ -732,7 +755,7 @@ test("a subagent-completion custom message_end appends a subagentCompletion turn
 				details,
 				timestamp: 4_200,
 			},
-		} as unknown as PiEvent,
+		} as unknown as SessionEvent,
 		"a",
 	);
 	const turn = rt("a").turns.at(-1);
@@ -742,7 +765,7 @@ test("a subagent-completion custom message_end appends a subagentCompletion turn
 	expect(turn?.kind === "subagentCompletion" && turn.timestamp).toBe(4_200);
 
 	const before = rt("a");
-	store.handlePiEvent(
+	store.handleSessionEvent(
 		{
 			type: "message_end",
 			message: {
@@ -752,7 +775,7 @@ test("a subagent-completion custom message_end appends a subagentCompletion turn
 				display: true,
 				details: { nope: true },
 			},
-		} as unknown as PiEvent,
+		} as unknown as SessionEvent,
 		"a",
 	);
 	const ignored = rt("a");
@@ -771,7 +794,7 @@ test("a todo-review-fix custom message_end appends a reviewFix turn", () => {
 		note: "Two findings below.",
 		comments: [{ id: "c_1", kind: "inline", body: "off-by-one", path: "src/a.ts", startLine: 4 }],
 	};
-	store.handlePiEvent(
+	store.handleSessionEvent(
 		{
 			type: "message_end",
 			message: {
@@ -781,7 +804,7 @@ test("a todo-review-fix custom message_end appends a reviewFix turn", () => {
 				display: true,
 				details,
 			},
-		} as unknown as PiEvent,
+		} as unknown as SessionEvent,
 		"a",
 	);
 	const turn = rt("a").turns.at(-1);
@@ -791,7 +814,7 @@ test("a todo-review-fix custom message_end appends a reviewFix turn", () => {
 	expect(turn?.kind === "reviewFix" && turn.text).toContain("Address each review comment");
 
 	const reviewBefore = rt("a");
-	store.handlePiEvent(
+	store.handleSessionEvent(
 		{
 			type: "message_end",
 			message: {
@@ -801,7 +824,7 @@ test("a todo-review-fix custom message_end appends a reviewFix turn", () => {
 				display: true,
 				details: { itemId: "t_1" },
 			},
-		} as unknown as PiEvent,
+		} as unknown as SessionEvent,
 		"a",
 	);
 	const reviewIgnored = rt("a");
@@ -816,8 +839,8 @@ test("a continuation request and a handoff message_end append their cards", () =
 		({
 			type: "message_end",
 			message: { role: "custom", customType, content: "x", display: true, details, timestamp: 5 },
-		}) as unknown as PiEvent;
-	store.handlePiEvent(
+		}) as unknown as SessionEvent;
+	store.handleSessionEvent(
 		custom("continue-in-workspace-request", {
 			operationId: "op1",
 			projectId: "p1",
@@ -825,7 +848,7 @@ test("a continuation request and a handoff message_end append their cards", () =
 		}),
 		"a",
 	);
-	store.handlePiEvent(
+	store.handleSessionEvent(
 		custom("chat-handoff", {
 			operationId: "op1",
 			sourceWorkspaceId: "chat-1",
@@ -843,15 +866,15 @@ test("the tool lifecycle folds into toolResults (the status + raw the renderers 
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "a", null, "medium");
 
-	store.handlePiEvent(toolStart("t1"), "a");
+	store.handleSessionEvent(toolStart("t1"), "a");
 	expect(rt("a").toolResults.t1).toEqual({ status: "running", raw: undefined });
 
 	const partial = { content: [{ type: "text", text: "partial" }] };
-	store.handlePiEvent(toolUpdate("t1", partial), "a");
+	store.handleSessionEvent(toolUpdate("t1", partial), "a");
 	expect(rt("a").toolResults.t1).toEqual({ status: "running", raw: partial });
 
 	const final = { content: [{ type: "text", text: "done" }] };
-	store.handlePiEvent(toolEnd("t1", final), "a");
+	store.handleSessionEvent(toolEnd("t1", final), "a");
 	expect(rt("a").toolResults.t1).toEqual({ status: "done", raw: final });
 });
 
@@ -859,9 +882,9 @@ test("a failed tool ends in the error status (the red-path the renderers branch 
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "a", null, "medium");
 
-	store.handlePiEvent(toolStart("t1"), "a");
+	store.handleSessionEvent(toolStart("t1"), "a");
 	const errResult = { content: [{ type: "text", text: "boom" }] };
-	store.handlePiEvent(toolEnd("t1", errResult, true), "a");
+	store.handleSessionEvent(toolEnd("t1", errResult, true), "a");
 	expect(rt("a").toolResults.t1).toEqual({ status: "error", raw: errResult });
 });
 
@@ -869,14 +892,14 @@ test("auto-retry adds a countdown turn, and resolving it clears the indicator", 
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "a", null, "medium");
 
-	store.handlePiEvent(retryStart(2, 3, 5_000), "a");
+	store.handleSessionEvent(retryStart(2, 3, 5_000), "a");
 	const retry = rt("a").turns.find((t) => t.kind === "retry");
 	expect(retry?.kind === "retry" && retry.source).toBe("turn");
 	expect(retry?.kind === "retry" && retry.attempt).toBe(2);
 	expect(retry?.kind === "retry" && retry.maxAttempts).toBe(3);
 	expect(retry?.kind === "retry" && retry.delayMs).toBe(5_000);
 
-	store.handlePiEvent(retryEnd, "a");
+	store.handleSessionEvent(retryEnd, "a");
 	expect(rt("a").turns.some((t) => t.kind === "retry")).toBe(false);
 });
 
@@ -884,17 +907,17 @@ test("summarization retries show their own countdown; re-scheduling replaces, fi
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "a", null, "medium");
 
-	store.handlePiEvent(summarizationScheduled(1, 3, 2_000), "a");
+	store.handleSessionEvent(summarizationScheduled(1, 3, 2_000), "a");
 	const first = rt("a").turns.find((t) => t.kind === "retry");
 	expect(first?.kind === "retry" && first.source).toBe("summarization");
 	expect(first?.kind === "retry" && first.attempt).toBe(1);
 
-	store.handlePiEvent(summarizationScheduled(2, 3, 4_000), "a");
+	store.handleSessionEvent(summarizationScheduled(2, 3, 4_000), "a");
 	const retries = rt("a").turns.filter((t) => t.kind === "retry");
 	expect(retries.length).toBe(1);
 	expect(retries[0]?.kind === "retry" && retries[0].attempt).toBe(2);
 
-	store.handlePiEvent(summarizationFinished, "a");
+	store.handleSessionEvent(summarizationFinished, "a");
 	expect(rt("a").turns.some((t) => t.kind === "retry")).toBe(false);
 });
 
@@ -902,16 +925,16 @@ test("overlapping turn + summarization retries never clear each other", () => {
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "a", null, "medium");
 
-	store.handlePiEvent(retryStart(1, 3, 1_000), "a");
-	store.handlePiEvent(summarizationScheduled(1, 3, 2_000), "a");
+	store.handleSessionEvent(retryStart(1, 3, 1_000), "a");
+	store.handleSessionEvent(summarizationScheduled(1, 3, 2_000), "a");
 	expect(rt("a").turns.filter((t) => t.kind === "retry").length).toBe(2);
 
-	store.handlePiEvent(retryEnd, "a");
+	store.handleSessionEvent(retryEnd, "a");
 	const left = rt("a").turns.filter((t) => t.kind === "retry");
 	expect(left.length).toBe(1);
 	expect(left[0]?.kind === "retry" && left[0].source).toBe("summarization");
 
-	store.handlePiEvent(summarizationFinished, "a");
+	store.handleSessionEvent(summarizationFinished, "a");
 	expect(rt("a").turns.some((t) => t.kind === "retry")).toBe(false);
 });
 
@@ -919,11 +942,11 @@ test("a lingering retry countdown is swept up only when the run settles", () => 
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "a", null, "medium");
 
-	store.handlePiEvent(agentStart, "a");
-	store.handlePiEvent(retryStart(1, 3, 1_000), "a");
-	store.handlePiEvent(agentEnd, "a");
+	store.handleSessionEvent(agentStart, "a");
+	store.handleSessionEvent(retryStart(1, 3, 1_000), "a");
+	store.handleSessionEvent(agentEnd, "a");
 	expect(rt("a").turns.some((t) => t.kind === "retry")).toBe(true);
-	store.handlePiEvent(agentSettled(), "a");
+	store.handleSessionEvent(agentSettled(), "a");
 	expect(rt("a").turns.some((t) => t.kind === "retry")).toBe(false);
 	expect(rt("a").turns.some((t) => t.kind === "system" && t.text === undefined)).toBe(true);
 });
@@ -932,10 +955,10 @@ test("auto-retry drops the failed attempt's turn — the retried message must no
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "a", null, "medium");
 
-	store.handlePiEvent(agentStart, "a");
-	store.handlePiEvent(assistantStart, "a");
-	store.handlePiEvent(assistantText("The answer is"), "a");
-	store.handlePiEvent(
+	store.handleSessionEvent(agentStart, "a");
+	store.handleSessionEvent(assistantStart, "a");
+	store.handleSessionEvent(assistantText("The answer is"), "a");
+	store.handleSessionEvent(
 		{
 			type: "message_end",
 			message: {
@@ -944,20 +967,20 @@ test("auto-retry drops the failed attempt's turn — the retried message must no
 				stopReason: "error",
 				errorMessage: "fetch failed",
 			},
-		} as unknown as PiEvent,
+		} as unknown as SessionEvent,
 		"a",
 	);
-	store.handlePiEvent(
-		{ type: "agent_end", willRetry: true, messages: [] } as unknown as PiEvent,
+	store.handleSessionEvent(
+		{ type: "agent_end", willRetry: true, messages: [] } as unknown as SessionEvent,
 		"a",
 	);
-	store.handlePiEvent(retryStart(1, 3, 2_000), "a");
+	store.handleSessionEvent(retryStart(1, 3, 2_000), "a");
 	expect(rt("a").turns.some((t) => t.kind === "retry")).toBe(true);
 
-	store.handlePiEvent(agentStart, "a");
-	store.handlePiEvent(assistantStart, "a");
-	store.handlePiEvent(assistantText("The answer is 4"), "a");
-	store.handlePiEvent(
+	store.handleSessionEvent(agentStart, "a");
+	store.handleSessionEvent(assistantStart, "a");
+	store.handleSessionEvent(assistantText("The answer is 4"), "a");
+	store.handleSessionEvent(
 		{
 			type: "message_end",
 			message: {
@@ -965,11 +988,11 @@ test("auto-retry drops the failed attempt's turn — the retried message must no
 				content: [{ type: "text", text: "The answer is 4" }],
 				stopReason: "stop",
 			},
-		} as unknown as PiEvent,
+		} as unknown as SessionEvent,
 		"a",
 	);
-	store.handlePiEvent(agentEnd, "a");
-	store.handlePiEvent(agentSettled(), "a");
+	store.handleSessionEvent(agentEnd, "a");
+	store.handleSessionEvent(agentSettled(), "a");
 
 	const after = rt("a");
 	const assistants = after.turns.filter((t) => t.kind === "assistant");
@@ -987,12 +1010,12 @@ test("auto-retry with no assistant message yet (error before message_start) drop
 	store.openChatSession("ws1", "a", null, "medium");
 	store.appendUserMessage("a", "hi");
 
-	store.handlePiEvent(agentStart, "a");
-	store.handlePiEvent(
-		{ type: "agent_end", willRetry: true, messages: [] } as unknown as PiEvent,
+	store.handleSessionEvent(agentStart, "a");
+	store.handleSessionEvent(
+		{ type: "agent_end", willRetry: true, messages: [] } as unknown as SessionEvent,
 		"a",
 	);
-	store.handlePiEvent(retryStart(1, 3, 2_000), "a");
+	store.handleSessionEvent(retryStart(1, 3, 2_000), "a");
 	expect(rt("a").turns.filter((t) => t.kind === "user")).toHaveLength(1);
 	expect(rt("a").turns.some((t) => t.kind === "retry")).toBe(true);
 });
@@ -1001,10 +1024,10 @@ test("a turn that ends in a provider error surfaces the error (not a false Done)
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "a", null, "medium");
 
-	store.handlePiEvent(agentStart, "a");
-	store.handlePiEvent(agentEndError("model 'gpt-5.5' not found"), "a");
+	store.handleSessionEvent(agentStart, "a");
+	store.handleSessionEvent(agentEndError("model 'gpt-5.5' not found"), "a");
 	expect(rt("a").isStreaming).toBe(true);
-	store.handlePiEvent(
+	store.handleSessionEvent(
 		agentSettled({ stopReason: "error", errorMessage: "model 'gpt-5.5' not found" }),
 		"a",
 	);
@@ -1038,16 +1061,16 @@ test("a run's closer lands before a mid-run result that woke nobody, as hydratio
 				output: { text: "", truncated: false },
 			},
 		},
-	} as unknown as PiEvent;
+	} as unknown as SessionEvent;
 	for (const [terminal, closer] of [
 		[{ stopReason: "error", errorMessage: "provider overloaded" }, "error"],
 		[null, "system"],
 	] as const) {
 		store.openChatSession("ws1", "a", null, "medium");
-		store.handlePiEvent(agentStart, "a");
-		store.handlePiEvent(stopped, "a");
-		store.handlePiEvent(agentEnd, "a");
-		store.handlePiEvent(agentSettled(terminal), "a");
+		store.handleSessionEvent(agentStart, "a");
+		store.handleSessionEvent(stopped, "a");
+		store.handleSessionEvent(agentEnd, "a");
+		store.handleSessionEvent(agentSettled(terminal), "a");
 		expect(
 			rt("a")
 				.turns.map((turn) => turn.kind)
@@ -1061,9 +1084,9 @@ test("a terminal length stop is a visible failure, never a false Done", () => {
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "a", null, "medium");
 
-	store.handlePiEvent(agentStart, "a");
-	store.handlePiEvent(agentEnd, "a");
-	store.handlePiEvent(agentSettled({ stopReason: "length" }), "a");
+	store.handleSessionEvent(agentStart, "a");
+	store.handleSessionEvent(agentEnd, "a");
+	store.handleSessionEvent(agentSettled({ stopReason: "length" }), "a");
 
 	const after = rt("a");
 	const error = after.turns.find((turn) => turn.kind === "error");
@@ -1078,7 +1101,7 @@ test("a local follow-on consumes only its session's failure recovery", () => {
 	store.openChatSession("ws1", "a", null, "medium");
 	store.openChatSession("ws1", "b", null, "medium");
 	for (const sessionId of ["a", "b"]) {
-		store.handlePiEvent(
+		store.handleSessionEvent(
 			agentSettled({ stopReason: "error", errorMessage: "fetch failed" }),
 			sessionId,
 		);
@@ -1095,13 +1118,13 @@ test("another client's agent start consumes only its session's failure recovery"
 	store.openChatSession("ws1", "a", null, "medium");
 	store.openChatSession("ws1", "b", null, "medium");
 	for (const sessionId of ["a", "b"]) {
-		store.handlePiEvent(
+		store.handleSessionEvent(
 			agentSettled({ stopReason: "error", errorMessage: "fetch failed" }),
 			sessionId,
 		);
 	}
 
-	store.handlePiEvent(agentStart, "b");
+	store.handleSessionEvent(agentStart, "b");
 
 	expect(failureRecovery("a")).toBe("try-again");
 	expect(failureRecovery("b")).toBeUndefined();
@@ -1111,10 +1134,10 @@ test("a successful overflow compaction removes the superseded assistant attempt"
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "a", null, "medium");
 
-	store.handlePiEvent(agentStart, "a");
-	store.handlePiEvent(assistantStart, "a");
-	store.handlePiEvent(assistantText("incomplete"), "a");
-	store.handlePiEvent(
+	store.handleSessionEvent(agentStart, "a");
+	store.handleSessionEvent(assistantStart, "a");
+	store.handleSessionEvent(assistantText("incomplete"), "a");
+	store.handleSessionEvent(
 		{
 			type: "message_end",
 			message: {
@@ -1122,13 +1145,13 @@ test("a successful overflow compaction removes the superseded assistant attempt"
 				content: [{ type: "text", text: "incomplete" }],
 				stopReason: "length",
 			},
-		} as unknown as PiEvent,
+		} as unknown as SessionEvent,
 		"a",
 	);
-	store.handlePiEvent(agentEnd, "a");
+	store.handleSessionEvent(agentEnd, "a");
 	expect(rt("a").turns.filter((turn) => turn.kind === "assistant")).toHaveLength(1);
 
-	store.handlePiEvent(recoveredOverflow, "a");
+	store.handleSessionEvent(recoveredOverflow, "a");
 	expect(rt("a").turns.filter((turn) => turn.kind === "assistant")).toHaveLength(0);
 	expect(rt("a").isStreaming).toBe(true);
 });
@@ -1137,10 +1160,10 @@ test("overflow recovery never removes an older failure when this attempt was not
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "a", null, "medium");
 
-	store.handlePiEvent(agentStart, "a");
-	store.handlePiEvent(assistantStart, "a");
-	store.handlePiEvent(assistantText("old failed answer"), "a");
-	store.handlePiEvent(
+	store.handleSessionEvent(agentStart, "a");
+	store.handleSessionEvent(assistantStart, "a");
+	store.handleSessionEvent(assistantText("old failed answer"), "a");
+	store.handleSessionEvent(
 		{
 			type: "message_end",
 			message: {
@@ -1149,25 +1172,29 @@ test("overflow recovery never removes an older failure when this attempt was not
 				stopReason: "error",
 				errorMessage: "old failure",
 			},
-		} as unknown as PiEvent,
+		} as unknown as SessionEvent,
 		"a",
 	);
-	store.handlePiEvent(agentEndError("old failure"), "a");
-	store.handlePiEvent(agentSettled({ stopReason: "error", errorMessage: "old failure" }), "a");
+	store.handleSessionEvent(agentEndError("old failure"), "a");
+	store.handleSessionEvent(agentSettled({ stopReason: "error", errorMessage: "old failure" }), "a");
 	expect(rt("a").turns.filter((turn) => turn.kind === "assistant")).toHaveLength(1);
 
-	store.handlePiEvent(agentStart, "a");
-	store.handlePiEvent(agentEnd, "a");
-	store.handlePiEvent(recoveredOverflow, "a");
+	store.handleSessionEvent(agentStart, "a");
+	store.handleSessionEvent(agentEnd, "a");
+	store.handleSessionEvent(recoveredOverflow, "a");
 
 	expect(rt("a").turns.filter((turn) => turn.kind === "assistant")).toHaveLength(1);
 });
 
-const compactionStart = (reason: "manual" | "threshold" | "overflow" = "threshold"): PiEvent => ({
+const compactionStart = (
+	reason: "manual" | "threshold" | "overflow" = "threshold",
+): SessionEvent => ({
 	type: "compaction_start",
 	reason,
 });
-const compactionEnd = (over: Partial<Extract<PiEvent, { type: "compaction_end" }>> = {}): PiEvent =>
+const compactionEnd = (
+	over: Partial<Extract<SessionEvent, { type: "compaction_end" }>> = {},
+): SessionEvent =>
 	({
 		type: "compaction_end",
 		reason: "threshold",
@@ -1175,7 +1202,7 @@ const compactionEnd = (over: Partial<Extract<PiEvent, { type: "compaction_end" }
 		aborted: false,
 		willRetry: false,
 		...over,
-	}) as PiEvent;
+	}) as SessionEvent;
 const compactionTurns = (sessionId: string) =>
 	rt(sessionId).turns.filter(
 		(turn): turn is Extract<ChatTurn, { kind: "compaction" }> => turn.kind === "compaction",
@@ -1185,9 +1212,9 @@ test("compaction lifecycle: a running notice settles in place (same id) with the
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "a", null, "medium");
 
-	store.handlePiEvent(agentStart, "a");
-	store.handlePiEvent(agentEnd, "a");
-	store.handlePiEvent(compactionStart(), "a");
+	store.handleSessionEvent(agentStart, "a");
+	store.handleSessionEvent(agentEnd, "a");
+	store.handleSessionEvent(compactionStart(), "a");
 	const running = compactionTurns("a");
 	expect(running).toMatchObject([{ status: "running" }]);
 	expect(rt("a").isStreaming).toBe(true);
@@ -1195,12 +1222,12 @@ test("compaction lifecycle: a running notice settles in place (same id) with the
 		rt("a").turns.filter((turn) => turn.kind === "system" && turn.text === undefined),
 	).toHaveLength(0);
 
-	store.handlePiEvent(compactionEnd(), "a");
+	store.handleSessionEvent(compactionEnd(), "a");
 	expect(compactionTurns("a")).toMatchObject([
 		{ id: running[0]?.id, status: "done", tokensBefore: 268_909, tokensAfter: 12_000 },
 	]);
 
-	store.handlePiEvent(agentSettled(), "a");
+	store.handleSessionEvent(agentSettled(), "a");
 	const turns = rt("a").turns;
 	expect(turns.at(-1)).toMatchObject({ kind: "system" });
 	expect(turns.at(-2)).toMatchObject({ kind: "compaction", status: "done" });
@@ -1210,21 +1237,21 @@ test("the incident sequence: truncated response → compacting → compacted-res
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "a", null, "medium");
 
-	store.handlePiEvent(agentStart, "a");
-	store.handlePiEvent(assistantStart, "a");
-	store.handlePiEvent(assistantText(""), "a");
-	store.handlePiEvent(
+	store.handleSessionEvent(agentStart, "a");
+	store.handleSessionEvent(assistantStart, "a");
+	store.handleSessionEvent(assistantText(""), "a");
+	store.handleSessionEvent(
 		{
 			type: "message_end",
 			message: { role: "assistant", content: [], stopReason: "length" },
-		} as unknown as PiEvent,
+		} as unknown as SessionEvent,
 		"a",
 	);
-	store.handlePiEvent(agentEnd, "a");
-	store.handlePiEvent(compactionStart("overflow"), "a");
+	store.handleSessionEvent(agentEnd, "a");
+	store.handleSessionEvent(compactionStart("overflow"), "a");
 	expect(compactionTurns("a")).toMatchObject([{ status: "running" }]);
 
-	store.handlePiEvent(
+	store.handleSessionEvent(
 		compactionEnd({ reason: "overflow", willRetry: true, result: { tokensBefore: 268_909 } }),
 		"a",
 	);
@@ -1237,11 +1264,11 @@ test("the incident sequence: truncated response → compacting → compacted-res
 		rt("a").turns.filter((turn) => turn.kind === "system" && turn.text === undefined),
 	).toHaveLength(0);
 
-	store.handlePiEvent(agentStart, "a");
-	store.handlePiEvent(assistantStart, "a");
-	store.handlePiEvent(assistantText("finished the rebase"), "a");
-	store.handlePiEvent(agentEnd, "a");
-	store.handlePiEvent(agentSettled(), "a");
+	store.handleSessionEvent(agentStart, "a");
+	store.handleSessionEvent(assistantStart, "a");
+	store.handleSessionEvent(assistantText("finished the rebase"), "a");
+	store.handleSessionEvent(agentEnd, "a");
+	store.handleSessionEvent(agentSettled(), "a");
 	expect(rt("a").turns.at(-1)).toMatchObject({ kind: "system" });
 	expect(rt("a").isStreaming).toBe(false);
 	expect(compactionTurns("a")[0]?.resuming).toBeUndefined();
@@ -1251,8 +1278,8 @@ test("a failed compaction settles into a visible, actionable notice — and a ca
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "a", null, "medium");
 
-	store.handlePiEvent(compactionStart("manual"), "a");
-	store.handlePiEvent(
+	store.handleSessionEvent(compactionStart("manual"), "a");
+	store.handleSessionEvent(
 		compactionEnd({ reason: "manual", result: undefined, errorMessage: "Compaction failed: boom" }),
 		"a",
 	);
@@ -1260,8 +1287,11 @@ test("a failed compaction settles into a visible, actionable notice — and a ca
 		{ status: "failed", detail: "Compaction failed: boom" },
 	]);
 
-	store.handlePiEvent(compactionStart("manual"), "a");
-	store.handlePiEvent(compactionEnd({ reason: "manual", result: undefined, aborted: true }), "a");
+	store.handleSessionEvent(compactionStart("manual"), "a");
+	store.handleSessionEvent(
+		compactionEnd({ reason: "manual", result: undefined, aborted: true }),
+		"a",
+	);
 	expect(compactionTurns("a")).toMatchObject([{ status: "failed" }, { status: "cancelled" }]);
 });
 
@@ -1274,8 +1304,8 @@ test("manual compaction rejection appends one failed row only when no lifecycle 
 	expect(compactionTurns("a")).toMatchObject([{ status: "failed", detail: "host unavailable" }]);
 
 	const beforePiFailure = selectCompactionTurnIds(useAppStore.getState(), "a");
-	store.handlePiEvent(compactionStart("manual"), "a");
-	store.handlePiEvent(
+	store.handleSessionEvent(compactionStart("manual"), "a");
+	store.handleSessionEvent(
 		compactionEnd({ reason: "manual", result: undefined, errorMessage: "Nothing to compact" }),
 		"a",
 	);
@@ -1291,7 +1321,7 @@ test("a compaction_end with no observed start still lands a settled notice (conn
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "a", null, "medium");
 
-	store.handlePiEvent(compactionEnd(), "a");
+	store.handleSessionEvent(compactionEnd(), "a");
 	expect(compactionTurns("a")).toMatchObject([
 		{ status: "done", tokensBefore: 268_909, tokensAfter: 12_000 },
 	]);
@@ -1301,16 +1331,16 @@ test("compact-and-retry produces one completion marker at final settlement", () 
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "a", null, "medium");
 
-	store.handlePiEvent(agentStart, "a");
-	store.handlePiEvent(agentEnd, "a");
-	store.handlePiEvent(recoveredOverflow, "a");
-	store.handlePiEvent(agentStart, "a");
-	store.handlePiEvent(agentEnd, "a");
+	store.handleSessionEvent(agentStart, "a");
+	store.handleSessionEvent(agentEnd, "a");
+	store.handleSessionEvent(recoveredOverflow, "a");
+	store.handleSessionEvent(agentStart, "a");
+	store.handleSessionEvent(agentEnd, "a");
 	expect(
 		rt("a").turns.filter((turn) => turn.kind === "system" && turn.text === undefined),
 	).toHaveLength(0);
 
-	store.handlePiEvent(agentSettled(), "a");
+	store.handleSessionEvent(agentSettled(), "a");
 	expect(
 		rt("a").turns.filter((turn) => turn.kind === "system" && turn.text === undefined),
 	).toHaveLength(1);
@@ -1332,9 +1362,9 @@ test("appendErrorTurn surfaces a failed send (a rejected prompt) as a visible er
 test("a rejected queued send cannot settle work the host is still running", () => {
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "a", null, "medium");
-	store.handlePiEvent(agentStart, "a");
-	store.handlePiEvent(assistantStart, "a");
-	store.handlePiEvent(assistantText("still working"), "a");
+	store.handleSessionEvent(agentStart, "a");
+	store.handleSessionEvent(assistantStart, "a");
+	store.handleSessionEvent(assistantText("still working"), "a");
 	const currentAssistantId = rt("a").currentAssistantId;
 
 	store.appendErrorTurn("a", "follow-up rejected");
@@ -1348,11 +1378,11 @@ test("a message_update with no prior message_start still builds the turn (mid-st
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "a", null, "medium");
 
-	store.handlePiEvent(assistantText("partial reply"), "a");
+	store.handleSessionEvent(assistantText("partial reply"), "a");
 	expect(rt("a").turns.filter((t) => t.kind === "assistant")).toHaveLength(1);
 	expect(rt("a").currentAssistantId).not.toBeNull();
 
-	store.handlePiEvent(assistantText("partial reply"), "a");
+	store.handleSessionEvent(assistantText("partial reply"), "a");
 	expect(rt("a").turns.filter((t) => t.kind === "assistant")).toHaveLength(1);
 });
 
@@ -1363,7 +1393,7 @@ test("a durable session title event renames an open chat without moving attentio
 	const activeTab = before.activeTabByWorkspace.ws1;
 	const navTick = before.navTickByWorkspace.ws1;
 
-	store.handlePiEvent(sessionTitleChanged("Fix auth redirect"), "named");
+	store.handleSessionEvent(sessionTitleChanged("Fix auth redirect"), "named");
 
 	const after = useAppStore.getState();
 	expect(
@@ -1401,12 +1431,12 @@ test("a durable session title event renames the chat's plan tab with it, open or
 		return queued?.kind === "open" ? queued.tab.name : undefined;
 	};
 
-	store.handlePiEvent(sessionTitleChanged("Auth refactor"), "planned");
+	store.handleSessionEvent(sessionTitleChanged("Auth refactor"), "planned");
 	expect(planName()).toBe("Auth refactor");
 	expect(queuedPlanName()).toBe("Auth refactor");
 
 	store.closeChatToHistory("planned", true, "ws1");
-	store.handlePiEvent(sessionTitleChanged("Auth refactor, take two"), "planned");
+	store.handleSessionEvent(sessionTitleChanged("Auth refactor, take two"), "planned");
 	expect(planName()).toBe("Auth refactor, take two");
 	expect(useAppStore.getState().closedChatsByWorkspace.ws1?.[0]?.title).toBe(
 		"Auth refactor, take two",
@@ -1451,7 +1481,7 @@ test("a durable title refreshes a placed plan document's name without requesting
 		},
 	}));
 
-	store.handlePiEvent(sessionTitleChanged("Auth refactor"), "placed-plan");
+	store.handleSessionEvent(sessionTitleChanged("Auth refactor"), "placed-plan");
 
 	const state = useAppStore.getState();
 	expect(state.tabsByWorkspace.ws1?.find((tab) => tab.id === "plan-cache")?.name).toBe(
@@ -1478,9 +1508,9 @@ test("a durable session title event renames closed history and clears it back to
 	store.openChatSession("ws1", "closed-title", null, "medium");
 	store.closeChatToHistory("closed-title", true, "ws1");
 
-	store.handlePiEvent(sessionTitleChanged("Closed work"), "closed-title");
+	store.handleSessionEvent(sessionTitleChanged("Closed work"), "closed-title");
 	expect(useAppStore.getState().closedChatsByWorkspace.ws1?.[0]?.title).toBe("Closed work");
-	store.handlePiEvent(sessionTitleChanged(), "closed-title");
+	store.handleSessionEvent(sessionTitleChanged(), "closed-title");
 	expect(useAppStore.getState().closedChatsByWorkspace.ws1?.[0]?.title).toBe("");
 });
 
@@ -1502,7 +1532,7 @@ test("a durable title updates a known tab without conjuring a runtime or title-e
 
 	useAppStore
 		.getState()
-		.handlePiEvent(sessionTitleChanged("Named before hydrate"), "tab-only-title");
+		.handleSessionEvent(sessionTitleChanged("Named before hydrate"), "tab-only-title");
 
 	const after = useAppStore.getState();
 	expect(after.tabsByWorkspace.ws1?.[0]?.name).toBe("Named before hydrate");
@@ -1512,8 +1542,8 @@ test("a durable title updates a known tab without conjuring a runtime or title-e
 
 test("an event for an unknown session is a no-op (no runtime is conjured)", () => {
 	const before = useAppStore.getState();
-	before.handlePiEvent(agentStart, "ghost");
-	useAppStore.getState().handlePiEvent(sessionTitleChanged("Ghost title"), "ghost");
+	before.handleSessionEvent(agentStart, "ghost");
+	useAppStore.getState().handleSessionEvent(sessionTitleChanged("Ghost title"), "ghost");
 	const after = useAppStore.getState();
 	expect(after.sessions).toBe(before.sessions);
 	expect(after.sessions.ghost).toBeUndefined();
@@ -1525,7 +1555,7 @@ test("closeChatRuntime drops only its own runtime", () => {
 	const store = useAppStore.getState();
 	store.openChatSession("ws1", "a", null, "medium");
 	store.openChatSession("ws1", "b", null, "medium");
-	store.handlePiEvent(agentStart, "b");
+	store.handleSessionEvent(agentStart, "b");
 
 	store.closeChatRuntime("a");
 	expect(useAppStore.getState().sessions.a).toBeUndefined();
@@ -1968,7 +1998,7 @@ test("closing a chat moves it to history with its runtime kept; reopening restor
 	const store = useAppStore.getState();
 	useAppStore.setState({ activeWorkspaceId: "ws1" });
 	store.openChatSession("ws1", "a", null, "medium");
-	store.handlePiEvent(agentStart, "a");
+	store.handleSessionEvent(agentStart, "a");
 	useAppStore.setState({
 		chatLocationRequest: {
 			workspaceId: "ws1",
@@ -2245,9 +2275,9 @@ test("reconcileSession replaces stale host state while preserving browser-local 
 	store.openChatSession("ws1", "sync", null, "medium");
 	store.setChatDraft("sync", "keep my draft");
 	store.appendUserMessage("sync", "old summarized prompt");
-	store.handlePiEvent(agentStart, "sync");
-	store.handlePiEvent({ type: "compaction_start", reason: "overflow" }, "sync");
-	store.handlePiEvent(
+	store.handleSessionEvent(agentStart, "sync");
+	store.handleSessionEvent({ type: "compaction_start", reason: "overflow" }, "sync");
+	store.handleSessionEvent(
 		{
 			type: "compaction_end",
 			reason: "overflow",
@@ -2319,7 +2349,7 @@ test("reconcileSession rejects a transcript read crossed by even a UI-ignored Pi
 	store.appendUserMessage("sync-race", "keep this turn");
 	const expectedRevision = rt("sync-race").eventRevision;
 
-	store.handlePiEvent({ type: "turn_start" } as PiEvent, "sync-race");
+	store.handleSessionEvent({ type: "turn_start" } as SessionEvent, "sync-race");
 	const crossed = rt("sync-race");
 	expect(crossed.eventRevision).toBe(expectedRevision + 1);
 
@@ -2949,7 +2979,6 @@ test("installWelcomeSnapshot lands one complete snapshot and advances its own ge
 	useAppStore.getState().installWelcomeSnapshot(44, [p1, closed], [p1, closed], {
 		...DEFAULT_CONFIG,
 		theme: "test-theme",
-		analyticsEnabled: false,
 		terminalReplayKb: 256,
 	});
 	unsubscribe();
@@ -3953,41 +3982,6 @@ test("openSettings deep-links to a section (default providers); closeSettings hi
 	expect(useAppStore.getState().settingsSection).toBe("providers");
 });
 
-test("the survey invitation show action is idempotent and hide clears it", () => {
-	let updates = 0;
-	const unsubscribe = useAppStore.subscribe(() => {
-		updates += 1;
-	});
-
-	useAppStore.getState().showSurveyInvitation();
-	useAppStore.getState().showSurveyInvitation();
-	expect(useAppStore.getState().surveyInvitationOpen).toBe(true);
-	expect(updates).toBe(1);
-
-	useAppStore.getState().hideSurveyInvitation();
-	expect(useAppStore.getState().surveyInvitationOpen).toBe(false);
-	expect(updates).toBe(2);
-	unsubscribe();
-});
-
-test("opening the survey window closes the invitation and Settings in one update", () => {
-	useAppStore.setState({ surveyInvitationOpen: true, settingsOpen: true });
-	let updates = 0;
-	const unsubscribe = useAppStore.subscribe(() => {
-		updates += 1;
-	});
-	useAppStore.getState().openSurveyWindow();
-	expect(useAppStore.getState()).toMatchObject({
-		surveyWindowOpen: true,
-		surveyInvitationOpen: false,
-		settingsOpen: false,
-	});
-	expect(updates).toBe(1);
-	useAppStore.getState().closeSurveyWindow();
-	expect(useAppStore.getState().surveyWindowOpen).toBe(false);
-	unsubscribe();
-});
-
 test("an error frame is terminal: sets status/error and clears the live input + progress", () => {
 	const s = useAppStore.getState();
 	s.beginLogin("l1", "anthropic");
@@ -4243,22 +4237,6 @@ test("applyConfig projects disabled extensions and an older host's missing list 
 	const { disabledExtensions: _omitted, ...olderHost } = DEFAULT_CONFIG;
 	useAppStore.getState().applyConfig(olderHost as typeof DEFAULT_CONFIG);
 	expect(useAppStore.getState().disabledExtensions).toEqual([]);
-});
-
-test("applyConfig projects JetBrains quota display and cadence", () => {
-	expect(useAppStore.getState()).toMatchObject({
-		jbcentralQuotaEnabled: true,
-		jbcentralQuotaRefreshSeconds: 30,
-	});
-	useAppStore.getState().applyConfig({
-		...DEFAULT_CONFIG,
-		jbcentralQuotaEnabled: false,
-		jbcentralQuotaRefreshSeconds: 1,
-	});
-	expect(useAppStore.getState()).toMatchObject({
-		jbcentralQuotaEnabled: false,
-		jbcentralQuotaRefreshSeconds: 1,
-	});
 });
 
 test("chat presentation preferences are client-local and cannot be overwritten by host config", () => {

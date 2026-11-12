@@ -7,6 +7,12 @@ parent: module-web
 depends-on: [module-contracts]
 ---
 
+## RailDesign SDK execution contract
+
+The application owns its message, tool, usage and event types in `sessionProtocol.ts`; browser code does not import engine types. `session.event` carries `{sessionId, runId, seq, event}` with increasing per-session sequence numbers. SDK details and checkpoints remain on the host. The initial transcript snapshot carries its event sequence watermark; events arriving before hydration are buffered and only later events are applied. Stable message IDs join streamed snapshots and final messages. Basic tool approvals use the existing confirmation UI with session, run, interaction and revision ownership; failures keep the pending card visible.
+
+Host state is the authority for owned approval dialogs. Shared state projection restores the current request on live attach, refresh and reconnect; an already installed state push takes precedence over a transcript summary. A cleared or superseded request cannot return through a late dialog frame or stale summary. Transport does not separately replay dialog requests from state snapshots.
+
 ## Responsibility
 
 The single Zustand store: connection status, projects/workspaces, one frontend-local workbench frame plus
@@ -423,14 +429,14 @@ re-read while a server starts. The state vocabulary and the attention/active pre
   connected generation and advances the revision so two reads cannot regress one another. When the latest
   live compaction matches the durable record, its id + estimated-after count survive, and `resuming` survives
   only while the returned summary is still streaming. The
-  pure **`reduceSessionEvent`** folds a `PiEvent` into a runtime. Every `message_end`, `compaction_end`,
+  pure **`reduceSessionEvent`** folds a `SessionEvent` into a runtime. Every `message_end`, `compaction_end`,
   `agent_settled`, and `entry_appended` of a spend- or context-bearing entry (`usage`, `compaction`,
   `branch_summary`, `context_edit`) also advances `statsRefreshTick`, even when that event changes no rendered turn, so a
   finalized Pi usage/context boundary cannot be lost behind presentation filtering or a batched
-  `isStreaming` false→false endpoint. **`handlePiEvents` folds an ordered batch in one atomic store write
+  `isStreaming` false→false endpoint. **`handleSessionEvents` folds an ordered batch in one atomic store write
   while incrementing each affected runtime's revision once per event, even for a UI-ignored event**, because
   ignored still means it crossed the snapshot ordering boundary. The
-  single-event **`handlePiEvent`** delegates to that same path so tests and non-wire callers cannot drift.
+  single-event **`handleSessionEvent`** delegates to that same path so tests and non-wire callers cannot drift.
   Transport flushes a pending batch before delivering any later response or non-Pi push, preserving the
   revision fence's received-message ordering. **Only idle sends enter the transcript
   optimistically** (`ChatView.onSubmit` → `appendUserMessage`); the last-turn echo dedup below is
@@ -445,7 +451,7 @@ re-read while a server starts. The state vocabulary and the attention/active pre
   For the idle echo: an equal Pi `message_start` echo is ignored, while Pi's canonical expanded `<skill>`
   echo **replaces** the immediately preceding matching raw `/skill:<name> …` turn in place (same turn id),
   so live and hydrated transcripts both contain one canonical skill invocation; a malformed or mismatched
-  block appends normally. **`handlePiEvent(event,
+  block appends normally. **`handleSessionEvent(event,
   sessionId)`** and **`applyExtUi(request)`** route by id via the `withRuntime` helper (a no-op for an
   unknown session). A `notify` at `error` level becomes an **`error`** turn (the same
   banner a session error gets — an extension crash must not read as chatter); every other level stays a
@@ -884,7 +890,7 @@ branch's review — a commit sha means nothing in another worktree — and dropp
   `EMPTY_RUNTIME` (ChatView's pre-creation fallback), `ChatLocationRequest` (type), `reduceSessionEvent`.
 - **Allowed deps:** `contracts` (`Project`/`Workspace`/`Model`/`ThinkingLevel`/`SessionStats`/
   `SlashCommandInfo`/`ExtUiRequest`/`LoginPush`/`WorkspaceFsChangedPayload`/`LayoutPreset`/`AppConfig`/`ThemeId`;
-  `DEFAULT_CONFIG` for the pre-welcome default; `PiEvent`/`LoginFrame`, **type-only**); `lib` (the shared
+  `DEFAULT_CONFIG` for the pre-welcome default; `SessionEvent`/`LoginFrame`, **type-only**); `lib` (the shared
   path + array + canonical-message primitives — `normalizePath`/`isAbsolutePath` for
   `matchesWorktreePath`, `shallowEqualArrays` for the snapshot-identity guard, `userText` plus the skill
   invocation parser/matcher for user-message echo reconciliation, the MCP attention/active predicates; a

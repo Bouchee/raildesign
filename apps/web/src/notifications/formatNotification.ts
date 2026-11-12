@@ -30,8 +30,8 @@ export interface NotificationSpec {
 }
 
 const BODY_MAX = 100;
-const APP_NAME = "ThinkRail";
-const AGGREGATE_TAG = "thinkrail-attention";
+const APP_NAME = "RailDesign";
+const AGGREGATE_TAG = "raildesign-attention";
 
 export function reasonLabel(reason: AttentionReason): string {
 	if (reason.kind === "needs-input") return t("notifications.reason.needsInput");
@@ -63,7 +63,7 @@ export function formatNotification(events: readonly AttentionEvent[]): Notificat
 	if (!event) return null;
 	if (events.length === 1) {
 		const name = event.worktreeName.trim();
-		// Title is always the bold ThinkRail mark; the worktree is the subtitle, the reason the body.
+		// Title is always the bold RailDesign mark; the worktree is the subtitle, the reason the body.
 		return {
 			title: APP_NAME,
 			...(name ? { subtitle: name } : {}),

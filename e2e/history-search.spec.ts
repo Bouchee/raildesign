@@ -126,7 +126,7 @@ test("Ctrl+R opens history recall, cycles scope to all, zooms to messages, inser
 	await expect(overlay).toHaveAttribute("data-stage", "zoomed");
 	const debounceHit = messageItems.filter({ hasText: "debounce window overlaps" });
 	await expect(debounceHit).toBeVisible();
-	await expect(debounceHit).toContainText("not a ThinkRail workspace");
+	await expect(debounceHit).toContainText("not a RailDesign workspace");
 	await expect(page.getByTestId("history-counts").last()).toHaveText("1/1");
 
 	await query.press("ArrowDown");
@@ -748,20 +748,30 @@ test("with the scope picker open a press closes only the picker, and a press on 
 	const input = page.getByTestId("chat-input");
 	const emptyTopbar = () =>
 		page.getByTestId("topbar").click({ position: { x: 4, y: 20 }, force: true });
+	const openScopePicker = async () => {
+		await scopeBadge.click();
+		await expect(options).toHaveCount(4);
+		await expect(page.getByRole("menu")).toBeVisible();
+		// Radix installs its outside-pointer listener in a later task; wait for the open menu to paint.
+		await page.evaluate(
+			() =>
+				new Promise<void>((resolve) =>
+					requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+				),
+		);
+	};
 
 	await input.fill("draft");
 	await historyButton.click();
 	await expect(overlay).toBeVisible();
 
-	await scopeBadge.click();
-	await expect(options).toHaveCount(4);
+	await openScopePicker();
 	await query.click({ force: true });
 	await expect(options).toHaveCount(0);
 	await expect(overlay).toBeVisible();
 	await expect(query).toBeFocused();
 
-	await scopeBadge.click();
-	await expect(options).toHaveCount(4);
+	await openScopePicker();
 	await emptyTopbar();
 	await expect(options).toHaveCount(0);
 	await expect(overlay).toBeVisible();

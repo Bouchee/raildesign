@@ -37,6 +37,7 @@ function fixture(): string {
 	const dependencies: Record<string, Record<string, string>> = {
 		"packages/artifact-tests": {
 			"@thinkrail/cli": "workspace:*",
+			"@thinkrail/contracts": "workspace:*",
 			"@thinkrail/server": "workspace:*",
 			"@thinkrail/shared": "workspace:*",
 		},
@@ -88,7 +89,7 @@ test("accepts the declared package rings and thin launcher edges", () => {
 	write(
 		root,
 		"packages/artifact-tests/src/value.ts",
-		'import "@thinkrail/server/history-test-fixtures"; import "@thinkrail/cli/artifact";',
+		'import "@thinkrail/server/history-test-fixtures"; import "@thinkrail/cli/artifact"; import { PROTOCOL_VERSION } from "@thinkrail/contracts";',
 	);
 	write(
 		root,

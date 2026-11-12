@@ -5,6 +5,7 @@ import type {
 	Project,
 	SessionState,
 	SessionSummary,
+	ThinkingLevel,
 	WireModel,
 	Workspace,
 	WorkspaceKickoff,
@@ -14,10 +15,6 @@ import {
 	listSessions,
 	listSettledModels,
 	readFinalAssistantTexts,
-	type StartedWorkspace,
-	type StartWorkspaceParams,
-	type WorkspaceStatusParams,
-	type WorkspaceToolsHost,
 } from "../agent";
 import { listBranches, prefetchBranch } from "../git";
 import { logger } from "../log";
@@ -34,6 +31,37 @@ import {
 	workspaceDiffStats,
 } from "../workspaces";
 import { nudgeBaseRefWorkspaces } from "./fsNudge";
+
+export interface StartWorkspaceParams {
+	prompt: string;
+	project?: string;
+	base_branch?: string;
+	model?: string;
+	effort?: ThinkingLevel;
+	attachments?: string[];
+}
+export interface WorkspaceStatusParams {
+	project?: string;
+	workspaces?: string[];
+}
+export interface StartedWorkspace {
+	workspaceId: string;
+	projectId: string;
+	sessionId: string;
+	name: string;
+	branch: string;
+	baseBranch: string;
+	model: string | null;
+	effort: string;
+}
+export interface WorkspaceToolsHost {
+	start: (
+		callerSessionId: string,
+		params: StartWorkspaceParams,
+		signal?: AbortSignal,
+	) => Promise<StartedWorkspace>;
+	status: (callerSessionId: string, params: WorkspaceStatusParams) => Promise<string>;
+}
 
 const log = logger("host");
 

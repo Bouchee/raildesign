@@ -34,6 +34,7 @@ never what a particular child's output means.
   **`idleTimeoutMs`** is a second, resettable deadline: any stdout or stderr bytes restart it, and its expiry
   is reported exactly like `timeoutMs` (`timedOut: true`, tree killed) — the bound for a child that may
   legitimately run for hours as long as it keeps talking (a large `git checkout --progress`).
+  Optional `maxOutputBytes` bounds the combined captured stdout/stderr bytes. Overflow kills the process tree and returns `outputLimitExceeded: true` with `ok: false`; neither stream can allocate an unbounded capture. The option is omitted for callers whose existing contract captures full output.
   **`onStderr`** receives each decoded stderr chunk as it arrives (the full text is still captured in
   `err`); it is a pass-through, never parsed here, and a callback that throws is ignored so the drain and the
   idle deadline keep working.

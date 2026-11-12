@@ -8,7 +8,6 @@ import type { MessageKey } from "@thinkrail/locales";
 import { useT } from "@thinkrail/locales/react";
 import { IconButton } from "@thinkrail/ui/button";
 import { useEffect, useState } from "react";
-import { useContinuations } from "../chat/continuations";
 import { openFindInFiles } from "../findInFiles";
 import {
 	applyFontPreference,
@@ -18,12 +17,9 @@ import {
 } from "../fonts";
 import { platformShortcutLabel } from "../lib";
 import { NotificationPermissionPrompt, useAttentionNotifications } from "../notifications";
-import { AnalyticsConsentDialog } from "../panels/AnalyticsConsentDialog";
 import { canStartProjectlessChat } from "../panels/chatActions";
 import { NewWorkspaceDialog } from "../panels/NewWorkspaceDialog";
 import { SettingsDialog } from "../panels/SettingsDialog";
-import { SurveyInvitationDialog } from "../panels/SurveyInvitationDialog";
-import { SurveyWindow } from "../panels/SurveyWindow";
 import { Toaster } from "../panels/Toaster";
 import { useBranchStatus } from "../panels/useBranchStatus";
 import { useCreationChatHandoff, WorkspaceCreationView } from "../panels/WorkspaceCreation";
@@ -32,10 +28,8 @@ import {
 	isChatWorkspace,
 	SettingsSection,
 	selectActiveWorkspace,
-	selectAnalyticsConsentPromptOpen,
 	selectContextProject,
 	selectContextRepoProject,
-	selectOnboardingActive,
 	useAppStore,
 } from "../store";
 import {
@@ -59,7 +53,6 @@ import { AppShortcuts } from "./AppShortcuts";
 import { BrandLogo } from "./BrandLogo";
 import { toggleBottomPanel, toggleLeftSide, toggleRightSide } from "./chordActions";
 import { FindInFilesHost } from "./FindInFilesHost";
-import { JbcentralQuotaTopbar } from "./JbcentralQuotaTopbar";
 import { LayoutSettings } from "./LayoutSettings";
 import { useLocalLayoutState } from "./layoutState";
 import { LocationBar } from "./locationBar";
@@ -88,10 +81,7 @@ export function Shell() {
 	const t = useT();
 	useLocalLayoutState();
 	useAttentionNotifications();
-	useContinuations();
 	const status = useAppStore((s) => s.status);
-	const analyticsConsentOpen = useAppStore(selectAnalyticsConsentPromptOpen);
-	const onboardingActive = useAppStore(selectOnboardingActive);
 	const StatusDot = status === "connected" ? RiCircleFill : Circle;
 	const activeWorkspaceId = useAppStore((s) => s.activeWorkspaceId);
 	const activeWorkspace = useAppStore(selectActiveWorkspace);
@@ -242,7 +232,6 @@ export function Shell() {
 						data-testid="open-search"
 						onClick={() => useAppStore.getState().openSearch()}
 					/>
-					<JbcentralQuotaTopbar />
 					<span
 						data-testid="connection-status"
 						data-status={status}
@@ -322,12 +311,6 @@ export function Shell() {
 					{...(activeCreation ? { main: <WorkspaceCreationView creation={activeCreation} /> } : {})}
 				/>
 			)}
-			{onboardingActive ? null : analyticsConsentOpen ? (
-				<AnalyticsConsentDialog />
-			) : (
-				<SurveyInvitationDialog />
-			)}
-			<SurveyWindow />
 			<SearchPaletteHost
 				onNewWorkspace={(_projectId, initialPrompt) => openNewWork(initialPrompt)}
 				onToggleProjectsHome={homeProjects.toggle}

@@ -36,8 +36,8 @@ export function setChatPublishers(next: ChatPublishers | null): void {
 
 const CHATS_STORE_PROBLEMS: Record<ChatsStoreProblem, string> = {
 	"set-aside":
-		"The chats store was unreadable and was set aside; restart ThinkRail to write chats again.",
-	newer: "The chats store was written by a newer ThinkRail; update ThinkRail to write chats.",
+		"The chats store was unreadable and was set aside; restart RailDesign to write chats again.",
+	newer: "The chats store was written by a newer RailDesign; update RailDesign to write chats.",
 	unreadable: "The chats store could not be read; try again.",
 };
 
@@ -68,7 +68,7 @@ export function ensureChatsContainer(): Project {
 		lastOpened: Date.now(),
 		kind: "chats",
 		trusted: false,
-		piResourceTrust: "untrusted",
+		resourceTrust: "untrusted",
 	};
 	projects.push(container);
 	saveProjects(projects);

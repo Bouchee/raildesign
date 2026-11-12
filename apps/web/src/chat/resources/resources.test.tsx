@@ -162,14 +162,6 @@ test("resource trigger distinguishes an authoritative count from an unknown coun
 	expect(unknown).not.toContain("animate-working");
 });
 
-test("ChatView mounts the trigger, dock and inspector and retires resource-only layers", () => {
-	const source = readFileSync(`${import.meta.dir}/../ChatView.tsx`, "utf8");
-	expect(source).toContain("<ResourcesDock");
-	expect(source).toContain("<ResourcesInspector");
-	expect(source).toContain("if (!resources.knownUnsupported) return;");
-	expect(source).toContain("resources.visible && !inspectorOpen ? (");
-});
-
 test("the dock lists live rows oldest-first with escaped text, one inspect control and stop, and collapses past four behind an active toggle", () => {
 	const empty = renderToStaticMarkup(<resources.ResourcesDock {...dockProps} />);
 	expect(empty).toBe("");

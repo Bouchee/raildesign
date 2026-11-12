@@ -1,5 +1,7 @@
-import { appendFileSync, realpathSync, utimesSync } from "node:fs";
+import { readFileSync, realpathSync, renameSync, utimesSync, writeFileSync } from "node:fs";
 import { expect, type Locator, type Page, test } from "@playwright/test";
+import type { AssistantMessage, ToolResultMessage } from "@thinkrail/contracts";
+import type { SessionRecord } from "@thinkrail/server/agent";
 import { defaultWorkspaceRow, enterDefaultWorkspace, openFixtureProject } from "./fixtures/app";
 import {
 	moveMouseToChatViewport,
@@ -21,18 +23,21 @@ const usage = {
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 };
 
-function appendMessage(path: string, id: string, parentId: string, message: object): string {
-	appendFileSync(
-		path,
-		`${JSON.stringify({
-			type: "message",
-			id,
-			parentId,
-			timestamp: new Date(BASE_TS).toISOString(),
-			message,
-		})}\n`,
+type AppendedMessage =
+	| Omit<AssistantMessage, "id" | "api" | "provider" | "model">
+	| Omit<ToolResultMessage, "id">;
+
+function appendMessage(path: string, id: string, message: AppendedMessage): void {
+	const record = JSON.parse(readFileSync(path, "utf8")) as SessionRecord;
+	record.messages.push(
+		message.role === "assistant"
+			? { ...message, id, api: "openai-responses", provider: "fixture", model: "fixture" }
+			: { ...message, id },
 	);
-	return id;
+	record.updatedAt = Math.max(record.updatedAt, message.timestamp);
+	const staged = `${path}.fixture-update`;
+	writeFileSync(staged, `${JSON.stringify(record)}\n`);
+	renameSync(staged, path);
 }
 
 async function selectMessageOrder(
@@ -71,7 +76,7 @@ function seedNestedActivityChat(name: string) {
 		],
 	});
 	const assistantId = `${chat.id}-a1`;
-	appendMessage(chat.path, assistantId, `${chat.id}-m2`, {
+	appendMessage(chat.path, assistantId, {
 		role: "assistant",
 		content: [
 			{ type: "toolCall", id: "read-prefix", name: "read", arguments: { path: "watch.ts" } },
@@ -89,7 +94,6 @@ function seedNestedActivityChat(name: string) {
 		stopReason: "toolUse",
 		timestamp: BASE_TS + 1_000,
 	});
-	let parentId = assistantId;
 	for (const [toolCallId, toolName, output] of [
 		["read-prefix", "read", "watcher source"],
 		[
@@ -105,7 +109,7 @@ function seedNestedActivityChat(name: string) {
 			),
 		],
 	] as const) {
-		parentId = appendMessage(chat.path, `${chat.id}-${toolCallId}`, parentId, {
+		appendMessage(chat.path, `${chat.id}-${toolCallId}`, {
 			role: "toolResult",
 			toolCallId,
 			toolName,
@@ -114,7 +118,7 @@ function seedNestedActivityChat(name: string) {
 			timestamp: BASE_TS + 2_000,
 		});
 	}
-	appendMessage(chat.path, `${chat.id}-a2`, parentId, {
+	appendMessage(chat.path, `${chat.id}-a2`, {
 		role: "assistant",
 		content: [
 			{
@@ -145,7 +149,7 @@ test("a model-authored Thinking heading stays bounded and appears only while fol
 	});
 	const assistantId = `${chat.id}-a1`;
 	const toolNames = ["get_search_content", "fetch_content", "web_search", "spec_grep", "read"];
-	appendMessage(chat.path, assistantId, `${chat.id}-m0`, {
+	appendMessage(chat.path, assistantId, {
 		role: "assistant",
 		content: [
 			{
@@ -154,7 +158,7 @@ test("a model-authored Thinking heading stays bounded and appears only while fol
 					"**Evaluating formatting process**\n\nI should inspect the formatted file before continuing.",
 			},
 			...toolNames.map((name, index) => ({
-				type: "toolCall",
+				type: "toolCall" as const,
 				id: `summary-tool-${index}`,
 				name,
 				arguments: {},
@@ -164,9 +168,8 @@ test("a model-authored Thinking heading stays bounded and appears only while fol
 		stopReason: "toolUse",
 		timestamp: BASE_TS + 1_000,
 	});
-	let parentId = assistantId;
 	for (const [index, toolName] of toolNames.entries()) {
-		parentId = appendMessage(chat.path, `${chat.id}-summary-tool-${index}`, parentId, {
+		appendMessage(chat.path, `${chat.id}-summary-tool-${index}`, {
 			role: "toolResult",
 			toolCallId: `summary-tool-${index}`,
 			toolName,
@@ -175,7 +178,7 @@ test("a model-authored Thinking heading stays bounded and appears only while fol
 			timestamp: BASE_TS + 2_000 + index,
 		});
 	}
-	appendMessage(chat.path, `${chat.id}-a2`, parentId, {
+	appendMessage(chat.path, `${chat.id}-a2`, {
 		role: "assistant",
 		content: [{ type: "text", text: "The formatter output is consistent." }],
 		usage,

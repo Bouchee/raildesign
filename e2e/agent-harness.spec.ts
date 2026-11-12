@@ -1,36 +1,29 @@
-import { spawn, spawnSync } from "node:child_process";
-import {
-	existsSync,
-	mkdirSync,
-	mkdtempSync,
-	readFileSync,
-	rmSync,
-	statSync,
-	writeFileSync,
-} from "node:fs";
+import { spawn } from "node:child_process";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import {
-	assertCentralPlaywrightRunner,
-	CENTRAL_PLAYWRIGHT_RUNNER_AUTH_ENV,
+	assertLivePlaywrightRunner,
 	createAgentRunPlan,
+	LIVE_PLAYWRIGHT_RUNNER_AUTH_ENV,
 	WEB_BUILD_READY_ENV,
 } from "./agentRunPlan";
-import { AMBIENT_PI_CREDENTIAL_ENV_NAMES, stripAmbientPiCredentials } from "./ambientCredentials";
 import {
-	CENTRAL_STUB_READ_ONLY_ENV,
+	AMBIENT_MODEL_CREDENTIAL_ENV_NAMES,
+	stripAmbientModelCredentials,
+} from "./ambientCredentials";
+import { resolveBunExecutable } from "./fixtures/executables";
+import {
 	DEFAULT_E2E_MODEL,
 	isExactE2eModel,
-	isRealCentralE2e,
-	REAL_CENTRAL_E2E_ENV,
-	removeLocalAgentModelAndAuth,
+	isLiveAgentE2e,
+	LIVE_AGENT_E2E_ENV,
+	readLiveAgentKey,
 	resolveE2eModel,
-	stageGlobalCentralArtifact,
-	writeE2eAgentSettings,
-} from "./fixtures/centralAgent";
-import { resolveBunExecutable } from "./fixtures/executables";
+	seedAgentConfiguration,
+} from "./fixtures/sdkAgent";
 import { countSelectedPlaywrightTests, selectFocusedFullRunPhases } from "./fullRunPlan";
 import { e2eProcessDetached, signalExitCode } from "./processRunner";
 
@@ -38,9 +31,45 @@ function temporaryDirectory(): string {
 	return mkdtempSync(join(tmpdir(), "thinkrail-agent-harness-"));
 }
 
+test("SDK test setup keeps no-agent configuration free of keys", () => {
+	const root = temporaryDirectory();
+	try {
+		seedAgentConfiguration(root, {});
+		const config = JSON.parse(readFileSync(join(root, "models.json"), "utf8"));
+		expect(config.endpoints[0].baseUrl).toBe("https://opencode.ai/inference/go/openai/v1");
+		expect(config.endpoints[0].apiKey).toBe("");
+		expect(config.endpoints[0].models[0].id).toBe("deepseek-v4.1-flash");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("live setup rejects unprotected keys and a different endpoint", () => {
+	const root = temporaryDirectory();
+	const path = join(root, "live.json");
+	const config = {
+		apiKey: "test-only-key",
+		baseURL: "https://opencode.ai/inference/go/openai/v1",
+		model: "deepseek-v4.1-flash",
+	};
+	try {
+		writeFileSync(path, JSON.stringify(config), { mode: 0o600 });
+		expect(readLiveAgentKey(path)).toBe("test-only-key");
+		writeFileSync(path, JSON.stringify({ ...config, baseURL: "https://example.test/v1" }));
+		expect(() => readLiveAgentKey(path)).toThrow(/verified Go\/DeepSeek/);
+		if (process.platform !== "win32") {
+			writeFileSync(path, JSON.stringify(config));
+			chmodSync(path, 0o644);
+			expect(() => readLiveAgentKey(path)).toThrow(/only by its owner/);
+		}
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
 test("agent model parsing preserves provider-qualified ids and rejects malformed targets", () => {
-	expect(resolveE2eModel({})).toEqual({ provider: "anthropic", id: "claude-opus-4-8" });
-	expect(DEFAULT_E2E_MODEL).toBe("anthropic/claude-opus-4-8");
+	expect(resolveE2eModel({})).toEqual({ provider: "custom-e2e", id: "deepseek-v4.1-flash" });
+	expect(DEFAULT_E2E_MODEL).toBe("custom-e2e/deepseek-v4.1-flash");
 	expect(resolveE2eModel({ THINKRAIL_E2E_MODEL: "gateway/team/model" })).toEqual({
 		provider: "gateway",
 		id: "team/model",
@@ -58,87 +87,31 @@ test("exact model matching never accepts the first model from another provider",
 	expect(isExactE2eModel(null, target)).toBe(false);
 });
 
-test("Central agent staging copies only the restricted artifact and settings", () => {
-	const root = temporaryDirectory();
-	try {
-		const source = join(root, "source.ts");
-		const seed = join(root, "seed.ts");
-		const artifact = join(root, "home", ".pi", "agent", "extensions", "jetbrains-central.ts");
-		const agentDir = join(root, "pi-agent");
-		writeFileSync(source, "export default function central() {}\n");
-		mkdirSync(agentDir, { recursive: true });
-		for (const file of ["auth.json", "models.json", "auth.json.bak", "models.json.bak"]) {
-			writeFileSync(join(agentDir, file), "sensitive\n");
-		}
-
-		stageGlobalCentralArtifact(source, seed, artifact);
-		writeE2eAgentSettings(agentDir, { THINKRAIL_E2E_MODEL: "anthropic/exact-model" });
-		removeLocalAgentModelAndAuth(agentDir);
-
-		expect(readFileSync(seed, "utf8")).toBe(readFileSync(source, "utf8"));
-		expect(readFileSync(artifact, "utf8")).toBe(readFileSync(source, "utf8"));
-		if (process.platform !== "win32") {
-			expect(statSync(seed).mode & 0o777).toBe(0o600);
-			expect(statSync(artifact).mode & 0o777).toBe(0o600);
-		}
-		for (const file of ["auth.json", "models.json", "auth.json.bak", "models.json.bak"]) {
-			expect(existsSync(join(agentDir, file))).toBe(false);
-		}
-		expect(JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf8"))).toEqual({
-			defaultProvider: "anthropic",
-			defaultModel: "exact-model",
-			defaultThinkingLevel: "low",
-		});
-	} finally {
-		rmSync(root, { recursive: true, force: true });
-	}
-});
-
-test("credential denylist covers every environment name in pi-ai's pinned discovery source", () => {
-	const source = readFileSync(
-		fileURLToPath(
-			new URL(
-				"../packages/contracts/node_modules/@earendil-works/pi-ai/dist/env-api-keys.js",
-				import.meta.url,
-			),
-		),
-		"utf8",
-	);
-	const discoveredNames = new Set(
-		[...source.matchAll(/"([A-Z][A-Z0-9_]{3,})"/g)]
-			.map((match) => match[1])
-			.filter((name): name is string => name !== undefined),
-	);
-	const denied = new Set<string>(AMBIENT_PI_CREDENTIAL_ENV_NAMES);
-	expect(discoveredNames.size).toBeGreaterThan(0);
-	for (const name of discoveredNames) expect(denied.has(name)).toBe(true);
-});
-
 test("ambient credential removal is case-insensitive", () => {
 	const env: NodeJS.ProcessEnv = {
 		aNtHrOpIc_ApI_kEy: "secret",
 		AwS_pRoFiLe: "developer",
 		UNRELATED_E2E_ENV: "preserved",
 	};
-	expect(stripAmbientPiCredentials(env)).toBe(env);
+	expect(stripAmbientModelCredentials(env)).toBe(env);
 	expect(env).toEqual({ UNRELATED_E2E_ENV: "preserved" });
 });
 
-test("Central Playwright execution requires the public runner authorization and skip-build", () => {
-	const centralEnv = { [REAL_CENTRAL_E2E_ENV]: "1" };
-	expect(() => assertCentralPlaywrightRunner(centralEnv, [])).toThrow(/e2e:agent.*e2e:full/);
+test("Live SDK Playwright execution requires the public runner authorization and skip-build", () => {
+	const centralEnv = { [LIVE_AGENT_E2E_ENV]: "1" };
+	expect(() => assertLivePlaywrightRunner(centralEnv, [])).toThrow(/e2e:agent.*e2e:full/);
 	expect(() =>
-		assertCentralPlaywrightRunner({ ...centralEnv, THINKRAIL_E2E_SKIP_BUILD: "1" }, []),
+		assertLivePlaywrightRunner({ ...centralEnv, THINKRAIL_E2E_SKIP_BUILD: "1" }, []),
 	).toThrow(/e2e:agent.*e2e:full/);
 	const plan = createAgentRunPlan("bun", [], centralEnv);
-	expect(() => assertCentralPlaywrightRunner(plan.env, [])).not.toThrow();
-	expect(() => assertCentralPlaywrightRunner(centralEnv, ["--list"])).not.toThrow();
-	expect(() => assertCentralPlaywrightRunner({}, [])).not.toThrow();
+	expect(() => assertLivePlaywrightRunner(plan.env, [])).not.toThrow();
+	expect(() => assertLivePlaywrightRunner(centralEnv, ["--list"])).not.toThrow();
+	expect(() => assertLivePlaywrightRunner({}, [])).not.toThrow();
 });
 
 test("agent run plan ignores ambient skip, trusts only internal build readiness, and sanitizes Playwright", () => {
 	const ambientCredentials = Object.fromEntries(
-		AMBIENT_PI_CREDENTIAL_ENV_NAMES.map((name) => [name, `ambient-${name}`]),
+		AMBIENT_MODEL_CREDENTIAL_ENV_NAMES.map((name) => [name, `ambient-${name}`]),
 	);
 	const sourceEnv: NodeJS.ProcessEnv = {
 		...ambientCredentials,
@@ -162,17 +135,17 @@ test("agent run plan ignores ambient skip, trusts only internal build readiness,
 	]);
 	expect(plan.env.PATH).toBe(sourceEnv.PATH);
 	expect(plan.env.UNRELATED_E2E_ENV).toBe("preserved");
-	for (const name of AMBIENT_PI_CREDENTIAL_ENV_NAMES) {
+	for (const name of AMBIENT_MODEL_CREDENTIAL_ENV_NAMES) {
 		expect(plan.env[name]).toBeUndefined();
 		expect(sourceEnv[name]).toBe(`ambient-${name}`);
 	}
 	expect(plan.env.THINKRAIL_E2E_SKIP_BUILD).toBe("1");
-	expect(plan.env[CENTRAL_PLAYWRIGHT_RUNNER_AUTH_ENV]).toBe("1");
-	expect(plan.env[REAL_CENTRAL_E2E_ENV]).toBe("1");
+	expect(plan.env[LIVE_PLAYWRIGHT_RUNNER_AUTH_ENV]).toBe("1");
+	expect(plan.env[LIVE_AGENT_E2E_ENV]).toBe("1");
 	expect(plan.env.THINKRAIL_E2E_LANE).toBeUndefined();
 	expect(plan.env.PLAYWRIGHT_BLOB_OUTPUT_FILE).toBeUndefined();
 	expect(plan.env[WEB_BUILD_READY_ENV]).toBeUndefined();
-	expect(isRealCentralE2e(plan.env)).toBe(true);
+	expect(isLiveAgentE2e(plan.env)).toBe(true);
 	expect(
 		createAgentRunPlan("bun", ["e2e/agent.live.spec.ts"], sourceEnv, {
 			webBuildReady: true,
@@ -289,29 +262,3 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 		}
 	});
 }
-
-test("read-only Central fake permits inspection and rejects mutations", () => {
-	test.skip(process.platform === "win32");
-	const root = temporaryDirectory();
-	try {
-		const script = fileURLToPath(new URL("./fixtures/bin/central", import.meta.url));
-		const state = join(root, "state");
-		const log = join(root, "log");
-		writeFileSync(state, "");
-		const env = {
-			...process.env,
-			HOME: root,
-			CENTRAL_STUB_STATE: state,
-			CENTRAL_STUB_LOG: log,
-			[CENTRAL_STUB_READ_ONLY_ENV]: "1",
-		};
-		expect(spawnSync(script, ["--version"], { env }).status).toBe(0);
-		expect(spawnSync(script, ["status"], { env }).status).toBe(0);
-		expect(spawnSync(script, ["add", "pi"], { env }).status).toBe(15);
-		expect(existsSync(join(root, ".pi", "agent", "extensions", "jetbrains-central.ts"))).toBe(
-			false,
-		);
-	} finally {
-		rmSync(root, { recursive: true, force: true });
-	}
-});

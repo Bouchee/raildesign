@@ -449,11 +449,13 @@ test("prefetchBranch fetches a remote ref and no-ops on a local ref or unknown p
 	git(clone, "commit", "-m", "remote-only");
 	git(clone, "push", "origin", "main");
 
-	const gitOut = (cwd: string, ...args: string[]): string =>
-		new TextDecoder()
-			.decode(Bun.spawnSync(["git", "-C", cwd, ...args], { stdout: "pipe" }).stdout)
-			.trim();
-	const remoteTip = gitOut(remoteRepo, "rev-parse", "main");
+	const gitOut = (cwd: string, ...args: string[]): string => {
+		const result = Bun.spawnSync(["git", "-C", cwd, ...args], { stdout: "pipe", stderr: "pipe" });
+		if (!result.success)
+			throw new Error(`git ${args.join(" ")} failed: ${new TextDecoder().decode(result.stderr)}`);
+		return new TextDecoder().decode(result.stdout).trim();
+	};
+	const remoteTip = gitOut(remoteRepo, "--git-dir=.", "rev-parse", "main");
 	expect(gitOut(repo, "rev-parse", "origin/main")).not.toBe(remoteTip);
 
 	expect(await prefetchBranch("p1", "origin/main")).toEqual({ ok: true, moved: true });
@@ -987,8 +989,8 @@ test("gitCommitPaths commits EXACTLY the named paths and returns the sha; commit
 	seedWorkspace();
 	writeFileSync(join(repo, "impl.ts"), "export {};\n");
 	writeFileSync(join(repo, "other.ts"), "export const other = 1;\n");
-	mkdirSync(join(repo, ".thinkrail", "context"), { recursive: true });
-	writeFileSync(join(repo, ".thinkrail", "context", "todos.json"), "{}");
+	mkdirSync(join(repo, ".raildesign", "context"), { recursive: true });
+	writeFileSync(join(repo, ".raildesign", "context", "todos.json"), "{}");
 
 	const before = gitHeadSha("w1");
 	const committed = gitCommitPaths("w1", "feat: step", ["impl.ts"]);
@@ -999,7 +1001,7 @@ test("gitCommitPaths commits EXACTLY the named paths and returns the sha; commit
 	expect(unfolded.changes.map((c) => c.path)).toEqual(["impl.ts"]);
 	const status = await gitStatus("w1", { kind: "uncommitted" });
 	expect(status.changes.map((c) => c.path).sort()).toEqual([
-		".thinkrail/context/todos.json",
+		".raildesign/context/todos.json",
 		"other.ts",
 	]);
 	expect(stagedPaths()).toEqual([]);
@@ -1041,8 +1043,8 @@ test("gitCommitPaths treats paths literally — a pathspec-magic filename never 
 	const magic = ":(top)*";
 	writeFileSync(join(repo, magic), "the item's own work\n");
 	writeFileSync(join(repo, "other.ts"), "export const other = 1;\n");
-	mkdirSync(join(repo, ".thinkrail", "context"), { recursive: true });
-	writeFileSync(join(repo, ".thinkrail", "context", "todos.json"), "{}");
+	mkdirSync(join(repo, ".raildesign", "context"), { recursive: true });
+	writeFileSync(join(repo, ".raildesign", "context", "todos.json"), "{}");
 
 	const committed = gitCommitPaths("w1", "feat: magic name", [magic]);
 	expect(committed).not.toBeNull();
@@ -1053,7 +1055,7 @@ test("gitCommitPaths treats paths literally — a pathspec-magic filename never 
 	).toEqual([magic]);
 	expect(
 		(await gitStatus("w1", { kind: "uncommitted" })).changes.map((c) => c.path).sort(),
-	).toEqual([".thinkrail/context/todos.json", "other.ts"]);
+	).toEqual([".raildesign/context/todos.json", "other.ts"]);
 	expect(stagedPaths()).toEqual([]);
 });
 

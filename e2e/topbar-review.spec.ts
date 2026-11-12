@@ -5,7 +5,7 @@ import { expect, type Page, type TestInfo, test } from "@playwright/test";
 import type { Workspace } from "@thinkrail/contracts";
 import { createWorkspaceViaDialog, openFixtureProject } from "./fixtures/app";
 import { expectDialogContained } from "./fixtures/dialogContainment";
-import { commitFile, gitAs } from "./fixtures/git";
+import { commitFile, gitAs, gitBare } from "./fixtures/git";
 import {
 	type FakePr,
 	ghMutations,
@@ -238,7 +238,7 @@ test("the Sync dialog hands a diverged branch to the agent to integrate", async 
 	const bare = mkdtempSync(join(tmpdir(), "thinkrail-sync-origin-"));
 	const other = mkdtempSync(join(tmpdir(), "thinkrail-sync-clone-"));
 	try {
-		gitAs(bare, "init", "-q", "--bare");
+		gitBare(bare, "init", "-q", "--bare");
 		commitFile(workspace.worktreePath, "ship.ts", "export const ship = 1;\n", "feat: ship");
 		gitAs(workspace.worktreePath, "remote", "add", "origin", bare);
 		const branch = gitAs(workspace.worktreePath, "rev-parse", "--abbrev-ref", "HEAD");

@@ -31,7 +31,7 @@ let dirs: TemplateDirs;
 beforeEach(() => {
 	root = mkdtempSync(join(tmpdir(), "trpi-templates-test-"));
 	globalDir = join(root, "agent-home", "prompts");
-	projectDir = join(root, "worktree", ".pi", "prompts");
+	projectDir = join(root, "worktree", ".raildesign", "prompts");
 	dirs = { globalDir, projectDir };
 });
 
@@ -40,10 +40,10 @@ afterEach(() => {
 });
 
 describe("templateDirs", () => {
-	test("computes globalDir under agentDir/prompts and projectDir under cwd/.pi/prompts", () => {
+	test("computes globalDir under dataDir/prompts and projectDir under cwd/.raildesign/prompts", () => {
 		const result = templateDirs("/some/cwd", "/some/agent-dir");
 		expect(result.globalDir).toBe(join("/some/agent-dir", "prompts"));
-		expect(result.projectDir).toBe(join("/some/cwd", ".pi", "prompts"));
+		expect(result.projectDir).toBe(join("/some/cwd", ".raildesign", "prompts"));
 	});
 
 	test("projectDir is absent when cwd is omitted", () => {
@@ -340,24 +340,24 @@ describe("symlink containment", () => {
 		expect(existsSync(outsideTarget)).toBe(true);
 	});
 
-	for (const level of ["prompts", ".pi"] as const) {
-		test(`a symlinked ${level === ".pi" ? ".pi" : ".pi/prompts"} directory: writes refuse, list/get treat the project dir as empty`, () => {
+	for (const level of ["prompts", ".raildesign"] as const) {
+		test(`a symlinked ${level === ".raildesign" ? ".raildesign" : ".raildesign/prompts"} directory: writes refuse, list/get treat the project dir as empty`, () => {
 			const evilRoot = mkdtempSync(join(tmpdir(), "trpi-templates-evil-"));
 			try {
 				const elsewhere = join(evilRoot, "elsewhere");
-				const elsewherePrompts = level === ".pi" ? join(elsewhere, "prompts") : elsewhere;
+				const elsewherePrompts = level === ".raildesign" ? join(elsewhere, "prompts") : elsewhere;
 				mkdirSync(elsewherePrompts, { recursive: true });
 				writeFileSync(join(elsewherePrompts, "secret.md"), "outside content");
 				const worktree = join(evilRoot, "worktree");
 				let promptsDir: string;
-				if (level === ".pi") {
+				if (level === ".raildesign") {
 					mkdirSync(worktree, { recursive: true });
-					symlinkSync(elsewhere, join(worktree, ".pi"));
-					promptsDir = join(worktree, ".pi", "prompts");
+					symlinkSync(elsewhere, join(worktree, ".raildesign"));
+					promptsDir = join(worktree, ".raildesign", "prompts");
 				} else {
-					mkdirSync(join(worktree, ".pi"), { recursive: true });
-					symlinkSync(elsewhere, join(worktree, ".pi", "prompts"));
-					promptsDir = join(worktree, ".pi", "prompts");
+					mkdirSync(join(worktree, ".raildesign"), { recursive: true });
+					symlinkSync(elsewhere, join(worktree, ".raildesign", "prompts"));
+					promptsDir = join(worktree, ".raildesign", "prompts");
 				}
 				const evilDirs: TemplateDirs = { globalDir, projectDir: promptsDir };
 
@@ -387,7 +387,7 @@ describe("symlink containment", () => {
 	});
 });
 
-describe("frontmatter value fidelity (pi's real YAML parser)", () => {
+describe("frontmatter value fidelity (the YAML parser)", () => {
 	test("a single-quoted scalar parses to its value — quotes are never part of the description", () => {
 		mkdirSync(globalDir, { recursive: true });
 		writeFileSync(join(globalDir, "sq.md"), "---\ndescription: 'Review safely'\n---\nBody\n");

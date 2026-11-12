@@ -20,6 +20,26 @@ function deferred<T>() {
 }
 
 describe("request replay cache", () => {
+	test("drain waits for pending and abandoned requests even when another request rejects", async () => {
+		const cache = new RequestReplayCache<string>();
+		const held = deferred<string>();
+		const failed = cache.run("one", "failure", "failure", () => {
+			throw new Error("failed");
+		});
+		const pending = cache.run("two", "held", "held", () => held.promise);
+		cache.acknowledge("two", ["held"]);
+		let drained = false;
+		const drain = cache.drain().then(() => {
+			drained = true;
+		});
+		await expect(failed).rejects.toThrow("failed");
+		expect(drained).toBe(false);
+		held.resolve("done");
+		await pending;
+		await drain;
+		expect(drained).toBe(true);
+	});
+
 	test("concurrent and settled replays execute once and share the result", async () => {
 		const cache = new RequestReplayCache<string>();
 		const run = deferred<string>();

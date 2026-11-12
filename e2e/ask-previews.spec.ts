@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
@@ -15,7 +15,7 @@ import { E2E_FIXTURE_REPO } from "./fixtures/paths";
 import { seedWorkspaceSession } from "./fixtures/sessions";
 
 const BASE_TS = 1_700_860_000_000;
-const MOCKUPS = ".thinkrail/context/mockups";
+const MOCKUPS = ".raildesign/context/mockups";
 
 const mockup = (title: string) =>
 	`<!doctype html><html><body><main><h1>${title}</h1><p>Theme · Line width · Font</p></main></body></html>`;
@@ -26,7 +26,7 @@ function writeMockups(files: Record<string, string>): () => void {
 		mkdirSync(dirname(path), { recursive: true });
 		writeFileSync(path, content);
 	}
-	return () => rmSync(join(E2E_FIXTURE_REPO, ".thinkrail"), { recursive: true, force: true });
+	return () => rmSync(join(E2E_FIXTURE_REPO, ".raildesign"), { recursive: true, force: true });
 }
 
 function seedQuestionnaire(
@@ -37,6 +37,15 @@ function seedQuestionnaire(
 	const ack: ToolResponsePendingDetails = { kind: "ack" };
 	const session = seedWorkspaceSession(realpathSync(E2E_FIXTURE_REPO), {
 		name,
+		state: {
+			execution: "idle",
+			runId: `${toolCallId}-run`,
+			needsInput: { interactionId: toolCallId, kind: "tool-response", toolCallId },
+			completion: null,
+			completionUnread: false,
+			queuedCount: 0,
+			backgroundWork: false,
+		},
 		messages: [
 			{ role: "user", text: "Ask me about the settings layout.", timestamp: BASE_TS },
 			{
@@ -131,7 +140,7 @@ async function openRound(page: Page, name: string): Promise<Locator> {
 	return card;
 }
 
-test("previews show the question's subject and the picked option in fixed frames, and the answer carries the file path", async ({
+test("previews show the question's subject and the picked option in fixed frames", async ({
 	page,
 }) => {
 	await page.setViewportSize({ width: 1400, height: 1100 });
@@ -180,13 +189,10 @@ test("previews show the question's subject and the picked option in fixed frames
 		await expect(pane).toHaveAttribute("data-preview", "file");
 		await card.getByTestId("ask-continue").click();
 		await card.getByTestId("ask-option").first().click();
-		await card.getByTestId("ask-submit").click();
-		await expect(
-			page.locator('[data-testid="ask-user-question"][data-tone="answered"]'),
-		).toBeVisible();
-		await expect
-			.poll(() => readFileSync(session.path, "utf8"))
-			.toContain(`"previewFile":"${MOCKUPS}/sidebar.html"`);
+		await expect(card.getByTestId("ask-submit")).toBeEnabled();
+		// SDK answer persistence is a Stage 3 execution gate.
+		await card.getByTestId("ask-tab").first().click();
+		await expect(pane).toHaveAttribute("data-preview", "file");
 	} finally {
 		rmSync(session.path, { force: true });
 		cleanup();

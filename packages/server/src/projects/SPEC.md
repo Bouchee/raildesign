@@ -76,30 +76,27 @@ bootstrap it into one so it can be opened.
   trust is granted explicitly and revocably; the grant snapshots the currently discovered project aliases
   as acknowledged so later arrivals remain pending; and disabled skill/group sets form the project baseline
   beneath any workspace override. The host composes discovery with these mutation operations; this module
-  stores no skill catalog and imports no agent code. Project records also carry the pi-level trust state
-  `piResourceTrust` (trust for the project's native `.pi/` resources — settings, extensions, skills,
-  prompts, themes, `SYSTEM.md`, subagent definitions — distinct from the alias-skill grant). A newly added
-  project starts `untrusted`, or `granted` when pi itself already trusts its path; that answer arrives
-  through the host-injected `setPiTrustSeed` (this module imports no pi code). There is **no
-  grandfathering**: a record that predates the field is left as stored and reads as untrusted, so a project
-  added before pi-level trust existed asks once through the trust notice instead of keeping code-running
-  resources nobody consented to (user decision, PR #690 review). pi-level trust never enables MCP by itself:
-  the record also carries `mcpApprovals` (repo-defined MCP server name → fingerprint of the whole original
-  project-file entry), `mcpOverrides` (per-project enablement/exposure of user-level servers, kept out of
-  the tracked `.pi/mcp.json`) and `mcpToolGrants` (per server, the "Always allow" tools and the `target` of
-  the entry they were granted for — out of the repository so it can never ship pre-granted).
+  stores no skill catalog and imports no agent code. Project records also carry application resource
+  trust in `resourceTrust`, distinct from alias-Skill acknowledgement. New projects start `untrusted`;
+  only the explicit current-application trust operation can grant access. Missing grants remain
+  untrusted. Old runtime trust stores are not read or imported. Current application content lives
+  under `.raildesign` and project `.agents/skills`; the trust summary lists detected resource kinds
+  without executing them. Resource trust never enables repository MCP by itself: `mcpApprovals` binds
+  each repo server to the complete entry fingerprint. `mcpOverrides` stores project enablement/exposure
+  of user-level servers outside tracked `.raildesign/mcp.json`, while `mcpToolGrants` binds each allowed
+  tool set to its target entry. A repository cannot ship itself pre-granted access.
   `grantProjectMcpTool(id, name, target, tool)` appends a tool, starting the list over when `target`
   changed; `revokeProjectMcpTool` drops one and removes the server, then the field, once empty. Both store
   server names as own properties, so a server named `__proto__` is just a name. `setProjectMcpOverride` synchronously merges only supplied fields into the
   latest stored override, so overlapping enablement and exposure patches do not lose each other. An empty
   patch is a no-op; `null` clears the override. It rejects non-boolean enablement and exposure outside
   `deferred`, `direct`, `hidden` before persistence. `setProjectTrust(id, trusted, acknowledged?,
-  { resources? })` keeps the two grants separate because they consent to different things: pi-level
-  resources include code (extensions, settings packages), so only a surface that names them asks for them.
-  `trusted: true` sets the alias grant and sets `piResourceTrust: "granted"` only with `resources: true`,
+  { resources? })` keeps the two grants separate because they consent to different content roots; only a surface that names application resources
+  asks for that grant. A content grant does not activate an obsolete extension runtime.
+  `trusted: true` sets the alias grant and sets `resourceTrust: "granted"` only with `resources: true`,
   leaving it untouched otherwise; `trusted: false` revokes both. A trust change persists and publishes the
   record, so every client shows the persisted trust even when the host request that made it then fails
-  (an open chat could not reload).
+  (for example, MCP connection reconciliation failed).
 ## The reserved Chats root
 
 Chats without a project keep their folders under `<dataDir>/chats` ([[submodule-server-workspaces]]),
@@ -140,8 +137,7 @@ and truncating first can separate a secret suffix from the URL prefix needed to 
   `refreshRecentProjectFolders`, `closeProject`, `renameProject`,
   `getProjects`, `setProjectPublisher`, `setProjectPathGuard`, `inspectProjectPath`, `initProject`, `createProject`, `setProjectTrust`,
   `setProjectSkillEnabled`, `setProjectGroupEnabled`, `acknowledgeProjectSkills`,
-  `approveProjectMcpServer`, `setProjectMcpOverride`, `grantProjectMcpTool`, `revokeProjectMcpTool`,
-  `setPiTrustSeed`.
+  `approveProjectMcpServer`, `setProjectMcpOverride`, `grantProjectMcpTool`, `revokeProjectMcpTool`.
 - **Allowed deps:** `persistence`; the `git` sub-module (shared `git()` runner, which now owns the
   environment its children spawn under — this module passes none); `contracts` (`Project`, `ProjectPathStatus`);
   `shared/codedError` (the two named open failures); Node/Bun.

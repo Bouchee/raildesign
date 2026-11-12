@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 import {
@@ -24,7 +24,7 @@ async function hostReportsConnectedProvider(page: Page): Promise<boolean> {
 	}
 }
 
-test("opens a clean ThinkRail with no projects imported", async ({ page }) => {
+test("opens a clean RailDesign with no projects imported", async ({ page }) => {
 	await openAppFresh(page);
 
 	await expect(page.getByTestId("welcome")).toBeVisible();
@@ -32,7 +32,7 @@ test("opens a clean ThinkRail with no projects imported", async ({ page }) => {
 	await expect(page.getByTestId("right-panel")).toHaveCount(0);
 	await expect(page.getByTestId("terminal-panel")).toHaveCount(0);
 
-	await expect(page.getByTestId("welcome-title")).toHaveText("ThinkRail");
+	await expect(page.getByTestId("welcome-title")).toHaveText("RailDesign");
 	await expect(page.getByTestId("onboarding-wizard")).toHaveCount(0);
 	await expect(page.getByTestId("welcome-cta")).toContainText("Start a new project");
 	await expect(page.getByTestId("welcome-action")).toHaveCount(2);
@@ -42,153 +42,21 @@ test("opens a clean ThinkRail with no projects imported", async ({ page }) => {
 	await expect(page.getByTestId("menu-open-project")).toBeVisible();
 });
 
-test("the Welcome provider warning only shows when no provider is connected, and opens the focused connect dialog", async ({
-	page,
-}) => {
+test("the Welcome provider action opens the shared SDK endpoint form", async ({ page }) => {
 	await openAppFresh(page);
-
-	const banner = page.getByTestId("welcome-provider-warning");
-	if (await hostReportsConnectedProvider(page)) {
-		await expect(banner).toHaveCount(0);
-	} else {
-		await expect(banner).toContainText("No model provider connected");
+	if (!(await hostReportsConnectedProvider(page))) {
 		await page.getByTestId("welcome-connect-provider").click();
-		const dialog = page.getByTestId("connect-provider-dialog");
-		await expect(dialog).toBeVisible();
-		await expect(dialog.getByTestId("connect-provider-list")).toBeVisible();
-		await expect(dialog.getByTestId("connect-detected")).toHaveCount(0);
-		await expect(
-			dialog.locator('[data-testid="provider-signin-row"][data-provider="anthropic"]'),
-		).toHaveCount(1);
-		await expect(
-			dialog
-				.getByTestId("connect-detected-central")
-				.or(dialog.getByTestId("connect-provider-list").getByTestId("jetbrains-ai-row")),
-		).toBeVisible();
-		await expect(dialog.getByTestId("jbcentral-quota-settings")).toHaveCount(0);
+		await expect(page.getByTestId("connect-provider-dialog")).toBeVisible();
+		await expect(page.getByTestId("custom-endpoints-add")).toBeVisible();
+		await expect(page.getByTestId("jetbrains-ai-card")).toHaveCount(0);
 	}
 });
 
-test("Settings → Providers lists in-app auth options", async ({ page }) => {
-	await openAppFresh(page);
-
-	await page.getByTestId("open-settings").click();
-	await expect(page.getByTestId("settings-dialog")).toBeVisible();
-	await expect(page.getByTestId("settings-providers")).toBeVisible();
-
-	const anyRow = page.getByTestId("provider-row").or(page.getByTestId("provider-signin-row"));
-	await expect(anyRow.first()).toBeVisible();
-	await expect(page.getByTestId("providers-error")).toHaveCount(0);
-});
-
-test("a real provider's API key round-trips through the login dialog (add in Settings, sign out)", {
-	tag: "@dev-seam",
-}, async ({ page }) => {
+test("Settings → Providers opens the SDK endpoint settings", async ({ page }) => {
 	await openAppFresh(page);
 	await page.getByTestId("open-settings").click();
 	await expect(page.getByTestId("settings-providers")).toBeVisible();
-
-	const keyBtn = page.getByTestId("provider-apikey").first();
-	await expect(keyBtn).toBeVisible();
-	const providerId = await keyBtn.getAttribute("data-provider");
-	expect(providerId).toBeTruthy();
-	await keyBtn.click();
-
-	const dialog = page.getByTestId("login-dialog");
-	await expect(dialog).toBeVisible();
-	for (let i = 0; i < 8; i++) {
-		if (await page.getByTestId("login-success").isVisible()) break;
-		const option = page.getByTestId("login-option").first();
-		const input = page.getByTestId("login-input");
-		if (await option.isVisible()) {
-			await option.click();
-		} else if (await input.isVisible()) {
-			await input.fill(`e2e-dummy-${i}`);
-			await page.getByTestId("login-submit").click();
-		} else {
-			await page.waitForTimeout(200);
-		}
-	}
-	await expect(page.getByTestId("login-success")).toBeVisible();
-	await page.getByTestId("login-close").click();
-	await expect(dialog).toHaveCount(0);
-
-	const configuredRow = page.locator(
-		`[data-testid="provider-row"][data-provider="${providerId}"][data-configured="true"]`,
-	);
-	await expect(configuredRow).toBeVisible();
-
-	await page.locator(`[data-testid="provider-signout"][data-provider="${providerId}"]`).click();
-	await expect(configuredRow).toHaveCount(0);
-});
-
-test("clicking Sign in (Settings) opens the in-app login dialog, and Cancel dismisses it", {
-	tag: "@dev-seam",
-}, async ({ page }) => {
-	await openAppFresh(page);
-	await page.getByTestId("open-settings").click();
-	await expect(page.getByTestId("settings-providers")).toBeVisible();
-
-	const signIn = page.getByTestId("provider-signin").first();
-	await expect(signIn).toBeVisible();
-	await signIn.click();
-
-	const dialog = page.getByTestId("login-dialog");
-	await expect(dialog).toBeVisible();
-
-	await page.getByTestId("login-cancel").click();
-	await expect(dialog).toHaveCount(0);
-});
-
-test("Settings → Providers offers JetBrains AI with host-authoritative Central guidance", async ({
-	page,
-}) => {
-	await openAppFresh(page);
-	await page.getByTestId("open-settings").click();
-	await expect(page.getByTestId("settings-providers")).toBeVisible();
-
-	const card = page.getByTestId("jetbrains-ai-card");
-	await expect(card).toBeVisible();
-	await expect(card).toContainText("JetBrains AI");
-
-	if ((await card.getAttribute("data-installed")) === "false") {
-		await expect(page.getByTestId("jetbrains-needs-install")).toBeVisible();
-		await expect(page.getByTestId("jetbrains-connect")).toHaveCount(0);
-	} else if ((await card.getAttribute("data-configured")) === "true") {
-		await expect(page.getByTestId("jetbrains-disconnect")).toBeVisible();
-	} else {
-		await expect(page.getByTestId("jetbrains-connect")).toBeVisible();
-	}
-});
-
-test("the Welcome trust notice names a project's Pi resources, grants them, and revokes on confirmation", async ({
-	page,
-}) => {
-	const prompts = join(E2E_FIXTURE_REPO, ".pi", "prompts");
-	mkdirSync(prompts, { recursive: true });
-	writeFileSync(join(prompts, "e2e-kickoff.md"), "---\ndescription: Kick off\n---\nGo\n");
-	try {
-		await openFixtureProject(page);
-		const notice = page.getByTestId("project-trust-notice");
-		await expect(notice).toHaveAttribute("data-state", "untrusted");
-		await expect(notice).toContainText("1 skill and its own Pi resources");
-		await expect(page.getByTestId("project-trust-enables")).toHaveText("Trust loads its prompts.");
-		await expect(page.getByTestId("project-untrust-button")).toHaveCount(0);
-
-		await page.getByTestId("project-trust-button").click();
-		await expect(notice).toHaveAttribute("data-state", "trusted");
-		await expect(notice).toContainText("1 project skill trusted.");
-
-		await page.getByTestId("project-untrust-button").click();
-		await expect(page.getByRole("alertdialog")).toContainText(
-			"Its project skills, Pi resources and MCP servers stop loading",
-		);
-		await page.getByTestId("project-untrust-confirm").click();
-		await expect(notice).toHaveAttribute("data-state", "untrusted");
-		await expect(page.getByTestId("project-untrust-button")).toHaveCount(0);
-	} finally {
-		rmSync(join(E2E_FIXTURE_REPO, ".pi"), { recursive: true, force: true });
-	}
+	await expect(page.getByTestId("settings-custom-endpoints")).toBeVisible();
 });
 
 test("a project with specs offers Start building over Set up, beside the project-folder fork", async ({

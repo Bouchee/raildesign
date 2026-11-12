@@ -102,11 +102,11 @@ export function AgentCard({ toolCallId, args, result, status }: ToolRenderProps)
 					) : null}
 				</div>
 			) : null}
-			{actions && details?.childSessionId ? (
+			{actions?.openSubagentTranscript && details?.childSessionId ? (
 				<button
 					type="button"
 					data-testid="agent-open-transcript"
-					onClick={() => actions.openSubagentTranscript(details.childSessionId)}
+					onClick={() => actions.openSubagentTranscript?.(details.childSessionId)}
 					className="flex items-center gap-4 self-start text-primary tr-text-metadata hover:underline"
 				>
 					<ScrollText className="size-12 shrink-0" />

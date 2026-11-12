@@ -723,7 +723,7 @@ const plans: Record<string, StoredPlanFile[]> = {
 	"/repos/one-auth": [
 		{
 			sessionId: "s1",
-			path: "/repos/one-auth/.thinkrail/context/todos/s1.json",
+			path: "/repos/one-auth/.raildesign/context/todos/s1.json",
 			read: () => ({
 				todos: [],
 				groups: [
@@ -746,7 +746,7 @@ const plans: Record<string, StoredPlanFile[]> = {
 		},
 		{
 			sessionId: "orphan",
-			path: "/repos/one-auth/.thinkrail/context/todos/orphan.json",
+			path: "/repos/one-auth/.raildesign/context/todos/orphan.json",
 			read: () => ({
 				todos: [
 					{
@@ -1345,7 +1345,7 @@ describe("chats without a project", () => {
 	};
 	const chatPlan: StoredPlanFile = {
 		sessionId: "s-chat",
-		path: `${chatRecord.worktreePath}/.thinkrail/context/todos/s-chat.json`,
+		path: `${chatRecord.worktreePath}/.raildesign/context/todos/s-chat.json`,
 		read: () => ({
 			todos: [
 				{

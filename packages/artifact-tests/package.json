@@ -12,6 +12,7 @@
 	},
 	"dependencies": {
 		"@thinkrail/cli": "workspace:*",
+		"@thinkrail/contracts": "workspace:*",
 		"@thinkrail/server": "workspace:*",
 		"@thinkrail/shared": "workspace:*"
 	},

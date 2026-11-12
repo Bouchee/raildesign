@@ -27,7 +27,7 @@ plan UX ([[submodule-web-chat]]'s "Chat TODO plan"), modeled on [[module-spec-gr
   instead.) The rule rides as the `pi-todos` entry of pi's `systemPromptOptions.sections`, mutated in place
   and never returned as a forced `systemPrompt` — same mechanism and rationale as [[module-spec-graph]].
 - **`core/`** — the pi-free model ([[submodule-pi-todos-core]]): the `Todo` types and the per-session
-  `TodoStore` (read-modify-write `.thinkrail/context/todos/<sessionId>.json`). No `@earendil-works/*` imports, so
+  `TodoStore` (read-modify-write `.raildesign/context/todos/<sessionId>.json`). No `@earendil-works/*` imports, so
   the host can value-import `pi-todos/core` to power the plan viewer — reading the plan and writing the
   user's own edits (the `spec/` → `spec.graph` pattern).
 - **`tools/`** — the six `todo_*` custom tools ([[submodule-pi-todos-tools]]), thin wrappers over `core/`.
@@ -72,7 +72,7 @@ of the conversation it runs in.
 ## Scope & persistence — one list per chat
 
 The list is **scoped to a chat session**, not the worktree: one JSON file per session,
-`.thinkrail/context/todos/<sessionId>.json` under the worktree root — inside the ephemeral `context/`
+`.raildesign/context/todos/<sessionId>.json` under the worktree root — inside the ephemeral `context/`
 scratch dir the host seeds and git ignores, so the plans live alongside the other per-conversation
 working files. It is the agent's working plan for that conversation; the user can add items to it (from
 the UI), and the agent picks them up on its next turn (`todo_list`) and progresses those exact items via

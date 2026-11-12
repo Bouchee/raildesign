@@ -58,7 +58,7 @@ or else "couldn't start the installer". The final two transitions happen in one 
 before quit, so their pushes are best-effort.
 
 Electrobun's native helper has no UI and writes only a final result, which the SDK reconciles once
-after relaunch and immediately marks observed. ThinkRail therefore keeps one validated, bounded
+after relaunch and immediately marks observed. RailDesign therefore keeps one validated, bounded
 `update-journal.json` in userData with two states:
 - **pending.** From/to version, start time and log. Written synchronously at `launching-new-version`,
   the checkpoint after the helper is armed. A write failure stays local, outside the SDK's cleanup

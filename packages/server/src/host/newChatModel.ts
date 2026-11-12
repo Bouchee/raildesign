@@ -6,18 +6,17 @@ import {
 } from "@thinkrail/contracts";
 import {
 	clampThinkingForModel,
+	defaultModelRef,
 	listSettledModels,
-	piDefaultModelRef,
 	preferredDefaultModel,
 } from "../agent";
 import { getConfig, noteRecentModel } from "../settings";
-import { trackChatStarted } from "./authAnalytics";
 
 export type NewChatModelRequest = { model?: WireModel; thinkingLevel?: ThinkingLevel };
 type ResolverDependencies = {
 	getConfig: () => AppConfig;
 	listSettledModels: typeof listSettledModels;
-	piDefaultModelRef: typeof piDefaultModelRef;
+	defaultModelRef: typeof defaultModelRef;
 	clampThinkingForModel: typeof clampThinkingForModel;
 };
 
@@ -26,7 +25,7 @@ export async function resolveNewChatModel(
 	dependencies: ResolverDependencies = {
 		getConfig,
 		listSettledModels,
-		piDefaultModelRef,
+		defaultModelRef,
 		clampThinkingForModel,
 	},
 ): Promise<{ model: WireModel | null; thinkingLevel: ThinkingLevel }> {
@@ -37,7 +36,7 @@ export async function resolveNewChatModel(
 	const model =
 		requested.model ??
 		findAvailable(config.defaultModel) ??
-		findAvailable(dependencies.piDefaultModelRef()) ??
+		findAvailable(dependencies.defaultModelRef()) ??
 		preferredDefaultModel(availableModels);
 	const level = requested.thinkingLevel ?? config.defaultEffort ?? "medium";
 	if (!model) return { model: null, thinkingLevel: level };
@@ -50,12 +49,10 @@ export async function resolveNewChatModel(
 	};
 }
 
-/** A new chat's bookkeeping: an explicit pick becomes recent, and analytics hear the model the chat got. */
 export function noteNewChat(
 	requested: NewChatModelRequest,
-	resolved: { model: WireModel | null },
+	_resolved: { model: WireModel | null },
 	created: { sessionId: string; model: WireModel | null },
 ): void {
 	if (requested.model && created.model) noteRecentModel(created.model);
-	trackChatStarted({ sessionId: created.sessionId, model: resolved.model ? created.model : null });
 }

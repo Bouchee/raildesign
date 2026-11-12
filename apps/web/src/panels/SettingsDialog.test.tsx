@@ -60,9 +60,7 @@ describe("settingsNavGroups", () => {
 				[
 					SettingsSection.Workspaces,
 					SettingsSection.Github,
-					SettingsSection.Extensions,
 					SettingsSection.Notifications,
-					SettingsSection.Privacy,
 					SettingsSection.Updates,
 				],
 			],
@@ -82,7 +80,6 @@ describe("settingsNavGroups", () => {
 		const gates = [
 			[SettingsSection.Models, DEFAULT_MODEL_PROTOCOL_VERSION],
 			[SettingsSection.Mcp, MCP_PROTOCOL_VERSION],
-			[SettingsSection.Extensions, EXTENSION_CATALOG_PROTOCOL_VERSION],
 			[SettingsSection.Workspaces, WORKSPACE_SETTLE_PROTOCOL_VERSION],
 		] as const;
 		for (const [id, version] of gates) {
@@ -144,14 +141,14 @@ describe("resolveSettingsSection", () => {
 		for (const id of ids(LATEST, true)) expect(resolveSettingsSection(id, groups)).toBe(id);
 	});
 
-	test("Feedback is always resolvable", () => {
+	test("removed feedback sections resolve to Appearance", () => {
 		for (const version of [LATEST, 1, null]) {
 			const groups = settingsNavGroups(version, false);
 			expect(resolveSettingsSection(SettingsSection.Feedback, groups)).toBe(
-				SettingsSection.Feedback,
+				SettingsSection.Appearance,
 			);
 		}
-		expect(resolveSettingsSection(SettingsSection.Feedback, [])).toBe(SettingsSection.Feedback);
+		expect(resolveSettingsSection(SettingsSection.Feedback, [])).toBe(SettingsSection.Appearance);
 	});
 
 	test("unavailable sections fall back to Appearance", () => {
@@ -178,10 +175,10 @@ describe("resolveSettingsSection", () => {
 				label: "settings.nav.group.system",
 				sections: settingsNavGroups(LATEST, true)
 					.flatMap((g) => g.sections)
-					.filter((s) => s.id === SettingsSection.Privacy),
+					.filter((s) => s.id === SettingsSection.Providers),
 			},
 		];
-		expect(resolveSettingsSection(SettingsSection.Models, groups)).toBe(SettingsSection.Privacy);
+		expect(resolveSettingsSection(SettingsSection.Models, groups)).toBe(SettingsSection.Providers);
 		expect(resolveSettingsSection(SettingsSection.Models, [])).toBe(SettingsSection.Appearance);
 	});
 });

@@ -68,10 +68,9 @@ through a reviewed `logger(scope)` call with an intentionally bounded message.
 
 ## Logged-error observer
 
-`observeLoggedErrors(observer | null)` is the single seam through which a `warn`/`error` call that carries
-an error object is also handed to one observer (scope + error), independent of the level threshold;
-observer failures are swallowed. The host wires it to analytics error reports at server start and clears
-it on stop, so `log` stays free of any analytics edge.
+`observeLoggedErrors(observer | null)` lets local diagnostic tests observe `warn`/`error` calls carrying
+an error object independently of the level threshold; observer failures are swallowed. The host installs
+no telemetry observer. Browser error reports use the host's bounded, closed-classification logger path.
 
 ## Boundary
 

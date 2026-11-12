@@ -25,8 +25,8 @@ test("selects real Bun and preserves the physical runtime resources without reti
 	expect(result.exitCode).toBe(0);
 	const config = JSON.parse(result.stdout.toString());
 	expect(config.app).toEqual({
-		name: "ThinkRail",
-		identifier: "ai.thinkrail.app",
+		name: "RailDesign",
+		identifier: "io.github.bouchee.raildesign",
 		version,
 	});
 	expect(config.runtime).toEqual({ exitOnLastWindowClosed: true });
@@ -44,14 +44,14 @@ test("selects real Bun and preserves the physical runtime resources without reti
 	expect(config.build).not.toHaveProperty("useAsar");
 });
 
-test("generated server runtime threads the opener and desktop proxies explicit readiness", () => {
+test("development packaging has only the fork update channel and no telemetry upload", async () => {
+	const { default: config } = await import("../electrobun.config");
+	expect(config.release.baseUrl).toBe(
+		"https://github.com/Bouchee/thinkrail/releases/download/desktop-updates",
+	);
 	const source = readFileSync(resolve(desktopDir, "preBuild.ts"), "utf8");
-	expect(source).toContain("options.openExternal ? { openExternal: options.openExternal } : {}");
-	const runtimeContract = readFileSync(resolve(desktopDir, "src/serverRuntime.ts"), "utf8");
-	expect(runtimeContract).toContain("startAttributionClaim(): void");
-	const launcher = readFileSync(resolve(desktopDir, "src/index.ts"), "utf8");
-	expect(launcher).toContain('mainWindow.webview.on("dom-ready"');
-	expect(launcher).toContain("host.server.startAttributionClaim()");
+	expect(source).not.toContain("posthog");
+	expect(source).not.toContain("startAttributionClaim");
 });
 
 test("uses the exact npm bootstrap pin while Bun owns the workspace dependency graph", () => {

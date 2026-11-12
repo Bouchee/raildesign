@@ -8,23 +8,19 @@ import {
 	RiLoader4Line as Loader,
 	type RemixiconComponentType,
 } from "@remixicon/react";
-import type { DetectedAccount, ProviderStatus } from "@thinkrail/contracts";
+import type { ProviderStatus } from "@thinkrail/contracts";
 import type { MessageKey } from "@thinkrail/locales";
 import { useT } from "@thinkrail/locales/react";
 import { Button } from "@thinkrail/ui/button";
 import { cn } from "@thinkrail/ui/utils";
 import { type ReactNode, useEffect, useEffectEvent, useState } from "react";
 import { PRODUCT_NAME } from "@/constants/branding";
-import { selectAnalyticsConsentPromptOpen, useAppStore } from "@/store";
+import { useAppStore } from "@/store";
 import { getTransport } from "@/transport";
-import { AnalyticsConsentChoice } from "./AnalyticsPreferences";
 import { ConnectedLine, type ConnectedSummary } from "./ConnectedLine";
 import { ConnectProviderOptions, connectedProviderName } from "./ConnectProviderOptions";
-import { detectAccounts } from "./detectAccounts";
-import { useConsentDraft } from "./useAnalyticsConsent";
-import { cancelUnownedLogin, type ProviderAuth, useProviderAuth } from "./useProviderAuth";
 
-type Step = "intro" | "privacy" | "connect";
+type Step = "intro" | "connect";
 
 const FADE_OUT_MS = 200;
 
@@ -63,15 +59,7 @@ export function OnboardingWizard({
 	const [provider, setProvider] = useState<ProviderStatus | null>(null);
 	const [connected, setConnected] = useState<ConnectedSummary | null>(null);
 	const [done, setDone] = useState(false);
-	const consentOpen = useAppStore(selectAnalyticsConsentPromptOpen);
-	const [detected, setDetected] = useState<DetectedAccount[] | null>(null);
-	const settingsOpen = useAppStore((s) => s.settingsOpen);
-	const auth = useProviderAuth({ ownsLoginDialog: !settingsOpen && step === "connect" });
-
-	const skip = () => {
-		cancelUnownedLogin();
-		onSkip();
-	};
+	const skip = onSkip;
 
 	return (
 		<div
@@ -82,18 +70,13 @@ export function OnboardingWizard({
 			{step === "intro" ? (
 				<IntroStep
 					onStart={() => {
-						setStep(consentOpen ? "privacy" : "connect");
-						void detectAccounts().then(setDetected);
+						setStep("connect");
 					}}
 				/>
-			) : step === "privacy" ? (
-				<PrivacyStep onContinue={() => setStep("connect")} />
 			) : done && connected ? (
 				<DoneStep connected={connected} projectCards={projectCards} />
 			) : (
 				<ConnectStep
-					auth={auth}
-					detected={detected}
 					provider={provider}
 					connected={connected}
 					onPick={(fresh) => {
@@ -112,7 +95,6 @@ export function OnboardingWizard({
 			)}
 
 			{step === "intro" ? <SkipButton onSkip={skip} /> : null}
-			{auth.loginDialog}
 		</div>
 	);
 }
@@ -184,8 +166,6 @@ function DoneStep({
 }
 
 function ConnectStep({
-	auth,
-	detected,
 	provider,
 	connected,
 	onPick,
@@ -193,8 +173,6 @@ function ConnectStep({
 	onVerified,
 	onSkip,
 }: {
-	auth: ProviderAuth;
-	detected: DetectedAccount[] | null;
 	provider: ProviderStatus | null;
 	connected: ConnectedSummary | null;
 	onPick: (provider: ProviderStatus) => void;
@@ -219,57 +197,13 @@ function ConnectStep({
 			</div>
 			<div className="relative w-full">
 				<div inert={provider !== null}>
-					<ConnectProviderOptions
-						auth={auth}
-						detected={detected}
-						configuredAtStart={[]}
-						onConnected={onPick}
-					/>
+					<ConnectProviderOptions configuredAtStart={[]} onConnected={onPick} />
 				</div>
 				{provider ? (
 					<VerifyConnection provider={provider} onBack={onBack} onVerified={onVerified} />
 				) : null}
 			</div>
 			<SkipButton onSkip={onSkip} />
-		</div>
-	);
-}
-
-function PrivacyStep({ onContinue }: { onContinue: () => void }) {
-	const t = useT();
-	const { draft, toggle, pending, error, confirm } = useConsentDraft();
-
-	return (
-		<div
-			data-testid="onboarding-privacy"
-			className="flex w-full max-w-[480px] flex-col items-center gap-24"
-		>
-			<div className="flex flex-col items-center gap-8 text-center">
-				<h1 data-testid="welcome-title" className="tr-heading-xl text-primary">
-					{t("panels.analyticsConsent.title")}
-				</h1>
-				<p className="tr-text-reading text-text-muted">{t("panels.analyticsConsent.subtitle")}</p>
-			</div>
-			<AnalyticsConsentChoice enabled={draft} disabled={pending} onChange={toggle} />
-			{error ? (
-				<p role="alert" className="tr-text-metadata text-feedback-error">
-					{error}
-				</p>
-			) : null}
-			<Button
-				variant="primary"
-				size="l"
-				iconRight={ArrowRight}
-				data-testid="onboarding-privacy-continue"
-				disabled={pending}
-				onClick={() => {
-					void confirm().then((saved) => {
-						if (saved) onContinue();
-					});
-				}}
-			>
-				{t("common.continue")}
-			</Button>
 		</div>
 	);
 }
@@ -286,7 +220,7 @@ function VerifyConnection({
 	const t = useT();
 	const [empty, setEmpty] = useState(false);
 	const [attempt, setAttempt] = useState(0);
-	const name = connectedProviderName(provider, t);
+	const name = connectedProviderName(provider);
 	const verified = useEffectEvent(onVerified);
 
 	useEffect(() => {

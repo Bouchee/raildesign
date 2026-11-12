@@ -11,7 +11,6 @@ import {
 } from "./domain";
 import {
 	AGENT_REVIEW_SETTING_PROTOCOL_VERSION,
-	ANALYTICS_CONSENT_PROTOCOL_VERSION,
 	ASK_DISCUSS_PROTOCOL_VERSION,
 	BRANCH_STATUS_PROTOCOL_VERSION,
 	CACHE_WARMING_MODES,
@@ -29,9 +28,7 @@ import {
 	DEFAULT_MODEL_PROTOCOL_VERSION,
 	EXTENSION_CATALOG_PROTOCOL_VERSION,
 	EXTENSION_SETTINGS_PROTOCOL_VERSION,
-	FEEDBACK_SURVEY_PROTOCOL_VERSION,
 	FONTS_PROTOCOL_VERSION,
-	GITHUB_STAR_PROTOCOL_VERSION,
 	HOST_ENVIRONMENT_PROTOCOL_VERSION,
 	HOST_UPDATE_RUN_PROTOCOL_VERSION,
 	isBackgroundCommandCompletionMessage,
@@ -39,7 +36,6 @@ import {
 	isCustomEndpointId,
 	isTodoReviewFixMessage,
 	isToolResponsePending,
-	JBCENTRAL_QUOTA_PROTOCOL_VERSION,
 	LOCALES_PROTOCOL_VERSION,
 	MCP_PROTOCOL_VERSION,
 	MCP_TOOL_GRANTS_PROTOCOL_VERSION,
@@ -69,7 +65,6 @@ import {
 	SPEECH_PROTOCOL_VERSION,
 	SUBAGENT_CONCURRENCY_PROTOCOL_VERSION,
 	SUBAGENT_SETTINGS_PROTOCOL_VERSION,
-	SURVEY_TRANSLATIONS_PROTOCOL_VERSION,
 	TEXT_SEARCH_PROTOCOL_VERSION,
 	THEME_SYSTEM_PROTOCOL_VERSION,
 	TODO_REVIEW_FIX_CUSTOM_TYPE,
@@ -101,12 +96,6 @@ test("subagent settings advance the protocol and name the workspace override mut
 	expect(WS_METHODS.workspaceSetSubagentsOverride).toBe("workspace.setSubagentsOverride");
 });
 
-test("JetBrains quota advances the protocol and names its read", () => {
-	expect(JBCENTRAL_QUOTA_PROTOCOL_VERSION).toBe(59);
-	expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(JBCENTRAL_QUOTA_PROTOCOL_VERSION);
-	expect(WS_METHODS.providerJbcentralQuota).toBe("provider.jbcentralQuota");
-});
-
 test("Windows shell settings advance the protocol", () => {
 	expect(WINDOWS_SHELL_SETTINGS_PROTOCOL_VERSION).toBe(62);
 	expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(WINDOWS_SHELL_SETTINGS_PROTOCOL_VERSION);
@@ -122,11 +111,6 @@ test("host update execution advances the additive lifecycle protocol", () => {
 	expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(HOST_UPDATE_RUN_PROTOCOL_VERSION);
 	expect(WS_CHANNELS.hostUpdateAvailable).toBe("host.updateAvailable");
 	expect(WS_METHODS.hostUpdate).toBe("host.update");
-});
-
-test("explicit analytics consent is available from protocol v65", () => {
-	expect(ANALYTICS_CONSENT_PROTOCOL_VERSION).toBe(65);
-	expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(ANALYTICS_CONSENT_PROTOCOL_VERSION);
 });
 
 test("session rename is versioned and bounded", () => {
@@ -337,7 +321,7 @@ test("find in files is pinned to v112", () => {
 });
 
 test("the question panel height setting is pinned to v114", () => {
-	expect(PROTOCOL_VERSION).toBe(114);
+	expect(PROTOCOL_VERSION).toBe(115);
 	expect(QUESTION_PANEL_PROTOCOL_VERSION).toBe(114);
 	expect(DEFAULT_CONFIG.questionPanelHeight).toBe(60);
 });
@@ -404,23 +388,10 @@ test("project create and the onboarding dismissal are pinned to v94", () => {
 	expect(DEFAULT_CONFIG.onboardingDismissed).toBe(false);
 });
 
-test("the GitHub star ask is pinned to v103", () => {
-	expect(GITHUB_STAR_PROTOCOL_VERSION).toBe(103);
-	expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(GITHUB_STAR_PROTOCOL_VERSION);
-	expect(WS_CHANNELS.feedbackGithubStar).toBe("feedback.githubStar");
-});
-
 test("the other agents' skills opt-in is pinned to v108", () => {
 	expect(OTHER_AGENT_SKILLS_PROTOCOL_VERSION).toBe(108);
 	expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(OTHER_AGENT_SKILLS_PROTOCOL_VERSION);
 	expect(DEFAULT_CONFIG.otherAgentSkills).toBe(false);
-});
-
-test("in-app surveys are pinned to v97", () => {
-	expect(FEEDBACK_SURVEY_PROTOCOL_VERSION).toBe(97);
-	expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(FEEDBACK_SURVEY_PROTOCOL_VERSION);
-	expect(WS_METHODS.feedbackSurvey).toBe("feedback.survey");
-	expect(WS_METHODS.feedbackSurveySubmit).toBe("feedback.survey.submit");
 });
 
 test("repository cloning and cancellation are registered", () => {
@@ -642,11 +613,6 @@ describe("tool response guards", () => {
 			}),
 		).toBeNull();
 	});
-});
-
-test("survey translations and separate Other text are pinned to v98", () => {
-	expect(SURVEY_TRANSLATIONS_PROTOCOL_VERSION).toBe(98);
-	expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(SURVEY_TRANSLATIONS_PROTOCOL_VERSION);
 });
 
 test("provider warnings are pinned to v99", () => {

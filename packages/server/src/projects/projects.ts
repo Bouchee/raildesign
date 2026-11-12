@@ -90,14 +90,6 @@ function ensureSlugs(projects: Project[]): boolean {
 	return changed;
 }
 
-/** Whether pi itself already trusts a path; seeds a newly added project's pi-level trust. */
-export type PiTrustSeed = (path: string) => boolean;
-let piTrustSeed: PiTrustSeed | null = null;
-
-export function setPiTrustSeed(seed: PiTrustSeed | null): void {
-	piTrustSeed = seed;
-}
-
 export function getProjects(): Project[] {
 	const projects = loadProjects();
 	if (ensureSlugs(projects)) saveProjects(projects);
@@ -135,7 +127,7 @@ export function openProject(inputPath: string, displayName?: string): Project {
 	if (loadWorkspaces().some((ws) => canonicalPath(ws.worktreePath) === wanted))
 		throw new CodedError(
 			"ALREADY_OPEN",
-			`This folder is already open in ThinkRail as a workspace: ${root}`,
+			`This folder is already open in RailDesign as a workspace: ${root}`,
 		);
 
 	const taken = new Set(projects.map((p) => p.slug));
@@ -146,7 +138,7 @@ export function openProject(inputPath: string, displayName?: string): Project {
 		path: root,
 		slug: uniqueSlug(slugify(basename(root)), taken),
 		lastOpened: Date.now(),
-		piResourceTrust: piTrustSeed?.(root) ? "granted" : "untrusted",
+		resourceTrust: "untrusted",
 	};
 	projects.push(project);
 	saveProjects(projects);
@@ -239,8 +231,8 @@ export function setProjectTrust(
 	const project = projects.find((p) => p.id === id);
 	if (!project) throw new Error(`Unknown project: ${id}`);
 	project.trusted = trusted;
-	if (!trusted) project.piResourceTrust = "untrusted";
-	else if (options.resources === true) project.piResourceTrust = "granted";
+	if (!trusted) project.resourceTrust = "untrusted";
+	else if (options.resources === true) project.resourceTrust = "granted";
 	if (acknowledgedSkills !== undefined) project.acknowledgedSkills = acknowledgedSkills;
 	saveProjects(projects);
 	emit(project);
@@ -465,7 +457,7 @@ function bootstrapRepository(path: string): void {
 		const identity: string[] = [];
 		const identityProbe = { action: "read the git identity" };
 		if (!git(path, ["config", "user.name"], identityProbe).out)
-			identity.push("-c", "user.name=ThinkRail");
+			identity.push("-c", "user.name=RailDesign");
 		if (!git(path, ["config", "user.email"], identityProbe).out)
 			identity.push("-c", "user.email=thinkrail@localhost");
 		const commit = git(path, [...identity, "commit", "--allow-empty", "-m", "Initial commit"], {

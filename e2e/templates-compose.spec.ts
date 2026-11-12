@@ -2,7 +2,7 @@ import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { openWorkspaceChat } from "./fixtures/app";
-import { E2E_PI_AGENT_DIR } from "./fixtures/paths";
+import { E2E_DATA_DIR } from "./fixtures/paths";
 
 async function readSelection(
 	input: Locator,
@@ -86,7 +86,7 @@ test.describe("prompt templates in the composer", () => {
 		await openWorkspaceChat(page);
 		const input = page.getByTestId("chat-input");
 		const rows = page.locator('[data-testid="slash-command"][data-source="prompt"]');
-		const freshFile = join(E2E_PI_AGENT_DIR, "prompts", "freshly-added.md");
+		const freshFile = join(E2E_DATA_DIR, "prompts", "freshly-added.md");
 
 		try {
 			await input.fill("/rev");
@@ -332,13 +332,16 @@ test.describe("prompt templates in the composer", () => {
 		expect(await input.inputValue()).not.toContain("leftover draft text");
 	});
 
-	test("the merged menu still shows non-template commands", async ({ page }) => {
+	test("template completion does not offer unavailable skill commands", async ({ page }) => {
 		await openWorkspaceChat(page);
 		const input = page.getByTestId("chat-input");
 		await input.fill("/skill:spec-graph");
 		const row = page.locator('[data-testid="slash-command"][data-source="skill"]');
-		await expect(row).toHaveCount(1);
-		await expect(row).toContainText("skill:spec-graph");
+		await expect(row).toHaveCount(0);
+		await input.fill("/review");
+		await expect(page.locator('[data-testid="slash-command"][data-source="prompt"]')).toHaveCount(
+			1,
+		);
 	});
 
 	test("filling an unfilled slot across several keystrokes never steals characters from a zero-gap sibling", async ({

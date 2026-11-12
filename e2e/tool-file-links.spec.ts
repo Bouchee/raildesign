@@ -1,4 +1,4 @@
-import { appendFileSync, realpathSync, utimesSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
 import { defaultWorkspaceRow, enterDefaultWorkspace, openFixtureProject } from "./fixtures/app";
@@ -92,61 +92,34 @@ const TOOLS: ToolFixture[] = [
 	},
 ];
 
-function appendToolResults(path: string, sessionId: string): void {
-	const assistantId = `${sessionId}-tools`;
-	const entries: object[] = [
+function toolResultMessages(): Parameters<typeof seedWorkspaceSession>[1]["messages"] {
+	return [
 		{
-			type: "message",
-			id: assistantId,
-			parentId: `${sessionId}-m0`,
-			timestamp: new Date(BASE_TS + 1_000).toISOString(),
-			message: {
-				role: "assistant",
-				content: TOOLS.map((tool) => ({
-					type: "toolCall",
-					id: tool.id,
-					name: tool.name,
-					arguments: tool.args,
-				})),
-				stopReason: "toolUse",
-				timestamp: BASE_TS + 1_000,
-			},
-		},
-	];
-	let parentId = assistantId;
-	for (const [index, tool] of TOOLS.entries()) {
-		const id = `${sessionId}-result-${index}`;
-		entries.push({
-			type: "message",
-			id,
-			parentId,
-			timestamp: new Date(BASE_TS + 2_000 + index).toISOString(),
-			message: {
-				role: "toolResult",
-				toolCallId: tool.id,
-				toolName: tool.name,
-				content: [{ type: "text", text: tool.text }],
-				details: tool.details,
-				isError: false,
-				timestamp: BASE_TS + 2_000 + index,
-			},
-		});
-		parentId = id;
-	}
-	entries.push({
-		type: "message",
-		id: `${sessionId}-done`,
-		parentId,
-		timestamp: new Date(BASE_TS + 3_000).toISOString(),
-		message: {
 			role: "assistant",
-			content: [{ type: "text", text: "Finished inspecting the tool outputs." }],
-			stopReason: "stop",
+			content: TOOLS.map((tool) => ({
+				type: "toolCall" as const,
+				id: tool.id,
+				name: tool.name,
+				arguments: tool.args,
+			})),
+			stopReason: "toolUse",
+			timestamp: BASE_TS + 1_000,
+		},
+		...TOOLS.map((tool, index) => ({
+			role: "toolResult" as const,
+			toolCallId: tool.id,
+			toolName: tool.name,
+			content: [{ type: "text" as const, text: tool.text }],
+			details: tool.details,
+			isError: false,
+			timestamp: BASE_TS + 2_000 + index,
+		})),
+		{
+			role: "assistant",
+			text: "Finished inspecting the tool outputs.",
 			timestamp: BASE_TS + 3_000,
 		},
-	});
-	appendFileSync(path, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
-	utimesSync(path, new Date(BASE_TS), new Date(BASE_TS));
+	];
 }
 
 async function toolStep(page: Page, toolName: string, index = 0): Promise<Locator> {
@@ -221,11 +194,13 @@ test("structured tool paths reuse the preview tab while rich tool results stay i
 	page,
 }) => {
 	await openFixtureProject(page);
-	const chat = seedWorkspaceSession(repoCwd(), {
+	seedWorkspaceSession(repoCwd(), {
 		name: "tool file links",
-		messages: [{ role: "user", text: "inspect structured tool outputs", timestamp: BASE_TS }],
+		messages: [
+			{ role: "user", text: "inspect structured tool outputs", timestamp: BASE_TS },
+			...toolResultMessages(),
+		],
 	});
-	appendToolResults(chat.path, chat.id);
 
 	await expect(defaultWorkspaceRow(page)).toBeVisible();
 	await enterDefaultWorkspace(page);

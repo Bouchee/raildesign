@@ -1,4 +1,3 @@
-import "./env";
 import { completeOnce } from "@thinkrail/server/agent";
 import type { EventLog } from "./events";
 

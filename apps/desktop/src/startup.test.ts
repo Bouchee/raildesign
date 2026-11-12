@@ -40,7 +40,7 @@ for (const { failure, userData, home, pendingInstall } of cases) {
 				? "behind an update splash"
 				: "behind a startup splash";
 	test(`${outcomes[failure]} even if the error dialog fails; ${location} ${splash} (user data from ${userData})`, () => {
-		const root = mkdtempSync(join(tmpdir(), "thinkrail-desktop-startup-"));
+		const root = mkdtempSync(join(tmpdir(), "raildesign-desktop-startup-"));
 		try {
 			const runtimePath = join(root, "app", "runtime", "server-runtime.ts");
 			const userDataPath = join(root, "user-data");
@@ -78,12 +78,11 @@ mock.module(${JSON.stringify(runtimePath)}, () => {
   cwd.runtime = process.cwd();
   return {
     startDesktopHost: async (options) => {
-      if (typeof options.openExternal !== "function") throw new Error("missing packaged opener");
       calls.push("host");
       cwd.host = process.cwd();
       cwd.child = Bun.spawnSync([process.execPath, "-e", "process.stdout.write(process.cwd())"]).stdout.toString();
       if (failure === "boot") throw new Error("boot failed");
-      return { port: 12345, server: { startAttributionClaim: () => calls.push("claim-ready"), shutdown: async () => {
+      return { port: 12345, server: { shutdown: async () => {
         calls.push("shutdown-start");
         await Bun.sleep(10);
         calls.push("shutdown-end");
@@ -125,7 +124,7 @@ mock.module("electrobun/main", () => ({
       calls.push("updates");
       cwd.updates = process.cwd();
       if (failure === "updates") throw new Error("update metadata failed");
-      return { identifier: "ai.thinkrail.app", channel: "canary", version: "0.0.1", hash: "abc", baseUrl: "https://example.invalid/u", name: "ThinkRail-canary" };
+      return { identifier: "io.github.bouchee.raildesign", channel: "canary", version: "0.0.1", hash: "abc", baseUrl: "https://example.invalid/u", name: "RailDesign-canary" };
     },
     updateInfo: () => updateInfo,
     onStatusChange: () => {},
@@ -176,7 +175,7 @@ console.log(JSON.stringify({ calls, cwd, splashText }));
 			};
 			if (failure !== "updates") {
 				expect(run.splashText).toContain(
-					pendingInstall ? "Finishing update to 0.0.2…" : "Starting ThinkRail…",
+					pendingInstall ? "Finishing update to 0.0.2…" : "Starting RailDesign…",
 				);
 			}
 			expect(run.calls).toEqual([

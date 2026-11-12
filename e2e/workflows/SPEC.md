@@ -2,134 +2,57 @@
 id: module-workflow-tests
 type: module-design
 status: active
-title: e2e/workflows — headless workflow-test harness + scenarios
+title: e2e/workflows — deterministic workflow test helpers
 parent: architecture
-references: [module-thinkrail-workflow, submodule-server-agent, submodule-workflow-skills, module-server]
-tags: [testing, workflow-system, pi]
+references: [submodule-server-agent, module-server]
+tags: [testing, workflow-system]
 ---
 
-## Responsibility
+## Scope / trigger
 
-The headless workflow-test suite: drives a **real in-process pi agent** through the workflow skills
-([[module-thinkrail-workflow]]) with **no browser and no HTTP host**, and decides pass/fail with a
-strict verdict model. Run on demand via `bun run test:workflows` (own Playwright config,
-`e2e/playwright.workflows.config.ts` — no `webServer`; deliberately retains the local PI-auth setup rather than
-the browser agent suite's real-Central mode). Its isolated `PI_CODING_AGENT_DIR` + pinned model are cloned by
-`env.ts` **per worker process** (pid-suffixed, auth + settings copied in): workers must never share one agent
-dir — a dying worker's session dispose overlapping the next worker's newborn session in the shared
-`sessions/` tree turned
-one failure into an ENOENT cascade across every later live-session test. `env.ts` also sets an isolated
-`HOME`/vendor-home set so portable skill discovery never reads a developer's personal libraries. Needs
-pi auth and spends real provider tokens — never
-part of `bun run test`, pre-commit, CI gates, or the browser `e2e`/`e2e:agent` scripts (the main
-config `testIgnore`s this directory).
+Stage 1 retains deterministic helpers for checking event logs, tool/skill discipline, files, YAML spec
+metadata, budgets and structured model replies. The old pi headless scenario runner, question mailbox,
+credential-copying environment and JSONL transcript presets are retired. They are not SDK acceptance.
 
-**Verdict model (the invariant everything here serves): an LLM never decides *pass*.**
-- *Binding:* deterministic checks + signals over the captured event log and workspace — a skill load
-  is the `read` of its `SKILL.md`; artifacts are asserted on disk; forbidden tools/paths are absent.
-- *Input/diagnosis only:* the persona responder and user simulator (cheap LLM) generate user-side
-  input; the watchdog's on-track assessment only aborts-with-diagnosis (a test then fails via its
-  unfired stop-signal); the judge grades a per-scenario rubric **advisorily** (warn + run log, never
-  a test failure).
+## Signatures
 
-## Harness (`harness/`, barrel `index.ts` — the only import surface for spec files)
+Specs import through `harness/index.ts`. It exposes `EventLog`, captured tool events, signal watchers,
+checks, budget helpers, reply parsers, artifact presets, Markdown masking and throwaway workspace
+helpers. The installed SDK owns one-shot model calls used by optional diagnostic helpers; the unit
+suite only tests their pure parsing and decision logic.
 
-Adding a workflow test = one `defineScenario` call: `{ name, skill, workspace, preset?, entry?,
-user?, dialog?, stopWhen?, forbid?, watchdog?, expect, judge?, record? }`.
+## Contracts
 
-- `session` — lifecycle over the production `@thinkrail/server/agent` barrel (`createSession` etc.);
-  sets `PI_CODING_AGENT_DIR`, `HOME`, and supported vendor-home overrides before the pi runtime initializes
-  (`env.ts`, imported first); an abort
-  from a stop-signal is an expected outcome — but only a *requested* one (`promptTurn` swallows an
-  abort-shaped error solely when the caller confirms a signal/budget asked for it; an unrequested
-  "aborted" is a provider/network crash and rethrows). Never `setModel`.
-- `events` — `EventLog`: one process-wide `setSessionPublisher` subscriber buffers every session's
-  events unconditionally (capture can't miss early events); queries + `waitFor` + compact transcript
-  rendering; deltas APPEND, `partialResult` REPLACES.
-- `workspace` — throwaway git cwds under the e2e data dir (`empty` / `code-only` / `specced` /
-  custom seed).
-- `dialog` — answers `ask_user_question` rounds through the **production `respondToTool` bridge**,
-  walking a ladder: script matchers → persona (validated; malformed → next rung) → deterministic
-  fallback (`skip` / `pickRecommended`). An unscripted interview can never hang a run, and neither
-  can a *throwing* script (scenario-author code): it degrades straight to the deterministic fallback
-  with the error recorded on the round — never an unhandled rejection. Delivery failures are rounds
-  too: `respondToTool` can reject after the fact (a slow persona answer superseded by the user
-  simulator's next message), which is recorded on the round, not thrown — scenarios that must win
-  that race script their rounds (the script rung answers synchronously at `tool_execution_start`).
-  A live answer resolves the blocking tool and continues its current run; a restart-repaired ack answer
-  triggers a new turn. The dialog tracks every delivery and exposes `settle()` — resolve when all resulting
-  work has ended (cascading rounds included, runaway turns bounded by the budget tripwire) — which the
-  scenario awaits before verdicts: checks never race the work an answer set in motion.
-- `presets` — mid-flow entry: artifact presets (workflow-native — the task-spec is the workflow's
-  spine) and transcript fixtures (`SessionManager.open` via the server's `setSessionManagerFactory`
-  seam; a fixture = `session.jsonl` + `workspace/` snapshot with recorded-cwd rewritten in a temp
-  copy). Fixtures are born via record mode: `THINKRAIL_WORKFLOW_RECORD=1` + a scenario's `record`
-  name → `fixtures/<name>/`. **Fixture markdown is masked at rest** — every `*.md` in a snapshot is
-  stored as `*.md.test` (masked on record, unmasked on replay into the throwaway cwd) so fixture
-  specs (`id: acme-root`, …) never appear in the host repo's own spec graph: spec discovery globs
-  `*.md` with only a hardcoded dir ignore-list, so unmasked fixtures would surface in the product's
-  Specs rail and every `spec_grep`. *Rejected alternative:* extending `pi-spec-graph`'s ignore-list —
-  ignoring `e2e/` would swallow this real spec, a name-based "fixtures" ignore would change a
-  portable package's semantics for a repo-local test concern, and masking also shields every other
-  `*.md` scanner, not just spec discovery.
-- `signals` — predicates over the log; `stopWhen` (pass → abort, the main cost control) and `forbid`
-  (fail → abort immediately).
-- `watchdog` — deterministic budget tripwires (turns / tool calls / wall time, defaults on every
-  scenario) + optional between-turns on-track assessment.
-- `userSim` — the simulated human (shares the scenario's persona brief with `dialog`): composes the
-  opening and follow-up chat messages until a signal, budget, or `DONE`.
-- `checks` / `judge` / `runlog` — binding verdicts; the advisory rubric grader; one JSON line per run
-  appended to the **gitignored** `e2e/.workflow-runs.jsonl` (outside the wiped e2e data dir — local
-  evidence by decision; rule 14's suspension rationale lives in [[submodule-workflow-skills]]). A run
-  that throws before its verdict records `crashed` + a failed deterministic verdict — the log never
-  claims a pass whose checks never ran (`THINKRAIL_WORKFLOW_RUNLOG` redirects the file so unit tests
-  can assert on records without polluting the local evidence).
-- `scenario` — orchestration (seed → presets → start → attach → conversation loop → dialog settle →
-  verdicts → run record) with teardown in `finally` — covering the earliest steps too: the transcript-fixture factory
-  swap and `startSession` live inside the guarded region, so a throw there still restores the
-  process-wide seam; `workflowTest` registers a scenario as a Playwright test (tagged `@agent`).
+`EventLog` consumes application `SessionEvent` records. A completed user turn is `agent_settled`.
+Tool starts/ends share their call ID. Deterministic checks decide pass/fail; model-based suggestions,
+user simulation and rubric diagnostics never establish a passing result. Masked fixture Markdown
+cannot enter repository spec discovery. Artifact copying excludes `.git`, keeping `.gitignore` and
+`.github`.
 
-Dependency direction is one-way: `scenario` → everything; `dialog`/`signals`/`userSim`/`watchdog` →
-`events`/`session`; `checks`/`judge` read the frozen log; only `session`/`presets`/`dialog`/`judge`/
-`userSim`/`watchdog` touch the server barrel (sessions, the answer bridge, `completeOnce`).
+## Validation and errors
 
-## Boundary
+Malformed structured replies return the existing rejected/unclear result. Missing stop signals or
+budget violations cannot be recorded as success. No helper copies another agent's credentials, opens
+pi sessions or restores an old session factory. File/worktree fixtures remain disposable and isolated.
 
-- **Allowed deps:** `@thinkrail/server/agent` (the subpath export added for this harness — recorded
-  in [[module-server]]; the barrel's behavior is [[submodule-server-agent]]),
-  `@earendil-works/pi-coding-agent` (`SessionManager`),
-  `@thinkrail/contracts` (types), `@playwright/test`, `../fixtures/paths`, Node.
-- **Forbidden:** `@thinkrail/server`'s root export (evaluates the Bun-only `host`), `apps/*`, any
-  browser/page fixture, model selection (`setModel` would persist a default into the shared isolated
-  agent dir mid-run).
-- **Node-loadable server barrel.** The harness runs in Playwright's Node process, so the module graph
-  behind `@thinkrail/server/agent` must load without Bun-only resolution: no directory or extensionless
-  deep imports, no raw `require` of TypeScript under `node_modules`. A violation fails every live
-  scenario at session creation, before any skill runs — the suite was silently unrunnable this way
-  until 2026-10.
+## Good / base / bad cases
 
-## Suites
+Pure unit cases can compare skill-read order and reject an invalid questionnaire option without a
+provider. A missing/invalid model reply is not evidence that a workflow passed. A historical pi JSONL
+fixture cannot seed a RailDesign session.
 
-- `harness.unit.spec.ts` — the pure parts (parsers, predicates, checks, budget tripwires) against
-  synthetic logs; no live agent, no auth needed.
-- `routing.live.spec.ts` — the routing suite (slice 2): one scenario per route of the two routers'
-  classification tables — workflow-eligible root routes are reached through the always-on rule; the
-  dispatcher is force-loaded via the app's exact `/skill:` seed (which injects the skill content, so
-  no read of its own SKILL.md is expected). The brainstorming route is pinned from both edges of its
-  default entry: a small, explicitly specified behavior change and a bug report (which must reach the
-  bug branch before any source edit). Pass = the routed worker's skill-load signal; direct-work
-  rows bypass worker skills and produce a grounded outcome. Direct-edit assertions pin the resulting
-  worktree, not incidental report vocabulary or which valid mutation tool the agent chose.
-- `smoke.live.spec.ts` — the infra-proving live scenarios: a mid-flow `brainstorming` round-trip that
-  must resume without re-entering the root router
-  (artifact preset + persona answer + user simulator + on-disk decision), and transcript continuation
-  (reopened fixture recalls mid-flow state).
-- `importing.live.spec.ts` — the first slice-3 worker coverage: `importing-a-codebase` end-to-end on a
-  docs-rich fixture — the doc-adoption offer (candidates offered and adopted **in place**, a finished
-  plan file never offered nor touched, the filled architecture slot not re-drafted) — plus a
-  no-candidates regression variant (only README/CHANGELOG/TODO present → the offer must not fire, the
-  plain import path unchanged). Fixture docs are seeded inline from scenario code (no `*.md` fixture
-  files at rest — the masking concern above doesn't arise).
-- Follow-up (scenario definitions only): the remaining worker flows end-to-end (slice 3:
-  `starting-a-new-project` / `brainstorming` full runs) — tracked in [[module-thinkrail-workflow]]
-  § Testing.
+## Tests required
+
+`harness.unit.spec.ts` retains event capture/query, signal ordering, pure questionnaire choices/parsing,
+watchdog budgets, judge/user-simulation parsing, snapshot masking and file/spec checks. It does not
+exercise a model, advanced tool registration or session recovery.
+
+## Wrong / correct
+
+Use the isolated stage-1 browser/SDK scenario for production workflow acceptance. Do not resurrect
+`respondToTool`, `SessionManager`, pi-auth copying or a fake-success runtime adapter just to compile an
+old harness. Stage 2 must add SDK session/summary acceptance; stage 3 must add SDK Skills/Plan/questions
+and their live workflow cases before those functions become available.
+
+Retired live scope: workflow routing/importing/smoke scenarios, Skill-search and Skill/Todo compaction
+scenarios and their shared JSONL reader. Their original implementations remain in Git history.

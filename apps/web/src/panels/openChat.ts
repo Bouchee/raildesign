@@ -178,7 +178,9 @@ export async function promptWorkspaceChat(
 	const runtime = useAppStore.getState().sessions[sessionId];
 	if (!runtime) return;
 	if (runtime.isStreaming) {
-		await getTransport().request("session.followUp", { sessionId, text });
+		useAppStore
+			.getState()
+			.setChatDraft(sessionId, [runtime.draft, text].filter((value) => value.trim()).join("\n\n"));
 		return;
 	}
 	sendPrompt(sessionId, text);

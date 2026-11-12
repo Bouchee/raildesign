@@ -107,15 +107,17 @@ export function VisibleModelsSettings({ models }: Props) {
 												{model.name}
 											</span>
 											<span className="truncate tr-text-metadata text-text-muted">
-												{model.reasoning
-													? t("settings.visibleModels.metaReasoning", {
-															provider: model.provider,
-															window: formatContext(model.contextWindow),
-														})
-													: t("settings.visibleModels.meta", {
-															provider: model.provider,
-															window: formatContext(model.contextWindow),
-														})}
+												{model.contextWindow <= 0
+													? model.provider
+													: model.reasoning
+														? t("settings.visibleModels.metaReasoning", {
+																provider: model.provider,
+																window: formatContext(model.contextWindow),
+															})
+														: t("settings.visibleModels.meta", {
+																provider: model.provider,
+																window: formatContext(model.contextWindow),
+															})}
 											</span>
 										</span>
 										<SettingsSwitch

@@ -76,7 +76,7 @@ import {
 	selectWorkspaceById,
 	useAppStore,
 } from "../store";
-import { errorText, getTransport, respondToTool, supportsPlanReview } from "../transport";
+import { errorText, getTransport, respondToTool } from "../transport";
 import { DiffStatBadge } from "./DiffStatBadge";
 import { openChatInTab } from "./openChat";
 import { openDiffInTab, openFileInTab } from "./openTabs";
@@ -863,7 +863,7 @@ function SessionBlock({
 					</span>
 				</button>
 			) : null}
-			<div hidden={glance === "waiting_question" || idleEmpty}>
+			<div hidden={glance === "working" || glance === "waiting_question" || idleEmpty}>
 				<PlanComposer
 					icon={MessageSquare}
 					testId="plan-session-chat"
@@ -914,9 +914,8 @@ export default function PlanPane({
 		if (connection !== "connected" || hasRuntime) return;
 		hydrateSessionRuntime(workspaceId, sessionId).catch(() => {});
 	}, [connection, hasRuntime, workspaceId, sessionId]);
-	const protocolVersion = useAppStore((s) => s.protocolVersion);
 	const workspaceSettlingSupported = useAppStore((s) => s.workspaceSettlingSupported);
-	const canReview = supportsPlanReview(protocolVersion) && !chat;
+	const canReview = false;
 	const {
 		review: branchReview,
 		url: branchReviewUrl,
@@ -1404,16 +1403,11 @@ export default function PlanPane({
 							const store = useAppStore.getState();
 							const runtime = store.sessions[sessionId];
 							if (!runtime) throw new Error(t("plan.session.chatLoadFailed"));
-							if (runtime.isStreaming) {
-								await getTransport().request("session.steer", { sessionId, text });
-							} else {
-								store.appendUserMessage(sessionId, text);
-								void getTransport()
-									.request("session.prompt", { sessionId, text })
-									.catch((err) =>
-										useAppStore.getState().appendErrorTurn(sessionId, errorText(err)),
-									);
-							}
+							if (runtime.isStreaming) throw new Error(t("chat.view.runInProgress"));
+							store.appendUserMessage(sessionId, text);
+							void getTransport()
+								.request("session.prompt", { sessionId, text })
+								.catch((err) => useAppStore.getState().appendErrorTurn(sessionId, errorText(err)));
 						};
 						await send().catch((err: unknown) => {
 							pushToast({

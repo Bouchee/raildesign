@@ -11,14 +11,14 @@ test("a record names the fault, the build and the uptime, and keeps the stack", 
 	error.stack = "Error: provider stream died\n    at stream (pi.js:1:1)";
 	const record = formatCrashRecord("uncaughtException", error, AT, 11_523.4, "0.4.1");
 	expect(record).toBe(
-		"[2026-08-16T18:22:03.911Z] uncaughtException (thinkrail 0.4.1, up 11523s)\n" +
+		"[2026-08-16T18:22:03.911Z] uncaughtException (RailDesign 0.4.1, up 11523s)\n" +
 			"Error: provider stream died\n    at stream (pi.js:1:1)\n\n",
 	);
 });
 
 test("a run from source says so, and a stack-less throw still reports what it was", () => {
 	const record = formatCrashRecord("unhandledRejection", "just a string", AT, 2);
-	expect(record).toContain("unhandledRejection (thinkrail source, up 2s)");
+	expect(record).toContain("unhandledRejection (RailDesign source, up 2s)");
 	expect(record).toContain("Non-Error thrown: just a string");
 });
 
@@ -91,7 +91,7 @@ test("an uncaught exception is written to the crash log, echoed to stderr, and s
 		`setTimeout(() => { throw new Error("boom from the agent"); }, 0);`,
 	);
 	expect(exitCode).toBe(1);
-	expect(log).toContain("uncaughtException (thinkrail 9.9.9-test");
+	expect(log).toContain("uncaughtException (RailDesign 9.9.9-test");
 	expect(log).toContain("boom from the agent");
 	expect(stderr).toContain("boom from the agent");
 	expect(stderr).toContain("wrote crash report to");
@@ -102,7 +102,7 @@ test("an unhandled rejection is recorded the same way", async () => {
 		`setTimeout(() => { void Promise.reject(new Error("rejected mid-turn")); }, 0);`,
 	);
 	expect(exitCode).toBe(1);
-	expect(log).toContain("unhandledRejection (thinkrail 9.9.9-test");
+	expect(log).toContain("unhandledRejection (RailDesign 9.9.9-test");
 	expect(log).toContain("rejected mid-turn");
 });
 
@@ -123,35 +123,4 @@ test("a test runner's own process is left alone — it reports faults itself", a
 	});
 	expect(await new Response(proc.stderr).text()).toBe("0");
 	expect(await proc.exited).toBe(0);
-});
-
-test("a crash is reported to PostHog as a fatal exception before the process exits", async () => {
-	const batches: Array<{ event: string; properties: Record<string, unknown> }> = [];
-	const collector = Bun.serve({
-		port: 0,
-		hostname: "127.0.0.1",
-		async fetch(request) {
-			batches.push(...((await request.json()) as { batch: typeof batches }).batch);
-			return new Response("{}");
-		},
-	});
-	try {
-		const { exitCode, log } = await runCrashing(
-			`import { initializeAnalytics } from ${JSON.stringify(join(import.meta.dir, "..", "analytics", "index.ts"))};\n` +
-				`initializeAnalytics({ posthogApiKey: "phc_test", posthogHost: "http://127.0.0.1:${collector.port}", build: "binary", additionalEnabled: false, env: {} });\n` +
-				`setTimeout(() => { throw new Error("boom in " + ${JSON.stringify(tmpdir())} + "/private-project"); }, 0);`,
-		);
-		expect(exitCode).toBe(1);
-		expect(log).toContain("private-project");
-		const crash = batches.find((entry) => entry.event === "$exception");
-		expect(crash?.properties).toMatchObject({
-			source: "host_crash",
-			scope: "uncaughtException",
-			handled: false,
-			$exception_level: "fatal",
-		});
-		expect(JSON.stringify(crash)).not.toContain("private-project");
-	} finally {
-		collector.stop(true);
-	}
 });

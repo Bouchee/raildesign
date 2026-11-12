@@ -1,11 +1,17 @@
 import type { Workspace } from "@thinkrail/contracts";
 import { SESSION_TITLE_MAX_LENGTH } from "@thinkrail/contracts";
-import {
-	getSessionWorkspaceId,
-	renameSession,
-	type SetTitleParams,
-	type TitleToolHost,
-} from "../agent";
+import { getSessionWorkspaceId, renameSession } from "../agent";
+
+export interface SetTitleParams {
+	chat_title?: string;
+	workspace_name?: string;
+	branch?: string;
+}
+export interface TitleToolHost {
+	apply: (sessionId: string, params: SetTitleParams) => Promise<string>;
+	workspaceNeedsName: (sessionId: string) => boolean;
+}
+
 import { logger } from "../log";
 import { branchMoveOwed, getWorkspace, renameWorkspace } from "../workspaces";
 
@@ -23,7 +29,13 @@ const KEPT_BRANCH_REASON = {
 
 export interface AgentTitleDeps {
 	workspaceOf: (sessionId: string) => string | undefined;
-	writeChatTitle: typeof renameSession;
+	writeChatTitle: (
+		sessionId: string,
+		workspaceId: string,
+		cwd: string,
+		title: string,
+		options?: { onlyIfUnnamed?: boolean },
+	) => Promise<boolean>;
 }
 
 const liveDeps: AgentTitleDeps = {

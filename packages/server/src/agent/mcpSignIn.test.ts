@@ -1,356 +1,254 @@
-import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
-import { createFauxCore } from "@earendil-works/pi-ai/providers/faux";
-import { ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
-import type { ExtUiRequest, LoginFrame, LoginPush, McpStatusSnapshot } from "@thinkrail/contracts";
+import type { LoginPush } from "@thinkrail/contracts";
 import {
-	createSession,
-	dispatchSessionMcpCommand,
-	disposeAllSessions,
-	removeSession,
-	setSessionManagerFactory,
-	settleSessionsForShutdown,
-} from "./agentSessionManager";
+	createMcpConnection,
+	isAllowedMcpSignInUrl,
+	mcpPolicyOf,
+	OwnedMcpOAuthProvider,
+} from "./mcp";
 import { startOAuthMcpFixture } from "./mcp/fixtures/oauthServer";
-import { refreshMcpStatus, setMcpStatusPublisher } from "./mcpSessions";
 import {
+	cancelAllMcpProbes,
 	cancelMcpProbe,
-	cancelMcpProbesOwnedBy,
+	cancelMcpProbesForWorkspace,
 	replyMcpProbe,
 	setMcpLoginPublisher,
 	startMcpProbe,
 } from "./mcpSignIn";
-import { configurePiRuntime } from "./piRuntime";
-import { resolveExtUi, setExtUiPublisher } from "./webUiContext";
 
-const faux = createFauxCore({
-	provider: "signin",
-	api: "signin",
-	models: [
-		{
-			id: "signin",
-			name: "signin",
-			reasoning: false,
-			input: ["text"],
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-			contextWindow: 100_000,
-			maxTokens: 4096,
-		},
-	],
-});
-const saved = {
-	agent: process.env.PI_CODING_AGENT_DIR,
-	data: process.env.THINKRAIL_DATA_DIR,
-	offline: process.env.PI_OFFLINE,
-};
-const root = mkdtempSync(join(tmpdir(), "mcp-signin-"));
-const agentDir = join(root, "agent");
-const cwd = join(root, "project");
-const fixture = startOAuthMcpFixture();
-let pushes: { push: LoginPush; owner: string }[] = [];
-let requests: ExtUiRequest[] = [];
-let statuses: McpStatusSnapshot[] = [];
-
-beforeAll(async () => {
-	process.env.PI_CODING_AGENT_DIR = agentDir;
-	process.env.THINKRAIL_DATA_DIR = join(root, "data");
-	process.env.PI_OFFLINE = "1";
-	mkdirSync(agentDir, { recursive: true });
-	mkdirSync(cwd, { recursive: true });
-	writeFileSync(
-		join(agentDir, "mcp.json"),
-		JSON.stringify({ mcpServers: { oauthy: { url: fixture.url, exposure: "direct" } } }),
-	);
-	const runtime = await ModelRuntime.create({
-		credentials: new InMemoryCredentialStore(),
-		modelsPath: null,
-		allowModelNetwork: false,
-	});
-	runtime.registerProvider("signin", {
-		api: faux.api,
-		apiKey: "test",
-		baseUrl: "http://faux.local",
-		streamSimple: faux.streamSimple,
-		models: [{ ...faux.getModel(), api: faux.api }],
-	});
-	configurePiRuntime(runtime);
-	setSessionManagerFactory((dir) => SessionManager.inMemory(dir));
-	setMcpLoginPublisher((push, owner) => pushes.push({ push, owner }));
-	setMcpStatusPublisher((snapshot) => statuses.push(snapshot));
-	setExtUiPublisher((request, audience) => {
-		if (!audience) requests.push(request);
-	});
-});
-
+let root: string;
+let savedData: string | undefined;
+let fixture: ReturnType<typeof startOAuthMcpFixture>;
+const pushes: { push: LoginPush; owner: string }[] = [];
+const pending: Promise<unknown>[] = [];
 beforeEach(() => {
-	pushes = [];
-	requests = [];
-	statuses = [];
+	root = mkdtempSync(join(tmpdir(), "sdk-mcp-oauth-"));
+	savedData = process.env.THINKRAIL_DATA_DIR;
+	process.env.THINKRAIL_DATA_DIR = root;
+	fixture = startOAuthMcpFixture();
+	writeFileSync(
+		join(root, "mcp.json"),
+		JSON.stringify({ mcpServers: { docs: { url: fixture.url } } }),
+	);
+	pushes.length = 0;
+	setMcpLoginPublisher((push, owner) => pushes.push({ push, owner }));
 });
-
-afterAll(async () => {
-	await settleSessionsForShutdown();
-	disposeAllSessions();
-	fixture.stop();
+afterEach(async () => {
+	await cancelAllMcpProbes();
+	await Promise.allSettled(pending.splice(0));
 	setMcpLoginPublisher(() => {});
-	setMcpStatusPublisher(() => {});
-	setExtUiPublisher(() => {});
-	configurePiRuntime(null);
-	setSessionManagerFactory((dir) => SessionManager.create(dir));
-	if (saved.agent === undefined) delete process.env.PI_CODING_AGENT_DIR;
-	else process.env.PI_CODING_AGENT_DIR = saved.agent;
-	if (saved.data === undefined) delete process.env.THINKRAIL_DATA_DIR;
-	else process.env.THINKRAIL_DATA_DIR = saved.data;
-	if (saved.offline === undefined) delete process.env.PI_OFFLINE;
-	else process.env.PI_OFFLINE = saved.offline;
+	fixture.stop();
+	if (savedData === undefined) delete process.env.THINKRAIL_DATA_DIR;
+	else process.env.THINKRAIL_DATA_DIR = savedData;
 	rmSync(root, { recursive: true, force: true });
 });
-
-async function frameOf(loginId: string, kind: LoginFrame["kind"]): Promise<LoginFrame> {
-	const until = Date.now() + 15_000;
-	for (;;) {
-		const found = pushes.find(
-			(entry) => entry.push.loginId === loginId && entry.push.frame.kind === kind,
-		);
-		if (found) return found.push.frame;
-		if (Date.now() > until) throw new Error(`no ${kind} frame`);
-		await Bun.sleep(20);
-	}
-}
-
-async function waitFor<T>(read: () => T | undefined): Promise<T> {
-	const until = Date.now() + 15_000;
-	for (;;) {
-		const value = read();
-		if (value !== undefined) return value;
-		if (Date.now() > until) throw new Error("condition timed out");
-		await Bun.sleep(20);
-	}
-}
-
-const start = (action: "login" | "test" | "logout", deadlineMs?: number) =>
-	startMcpProbe({
+function probe(action: "login" | "test" | "logout" = "login", deadlineMs = 3000) {
+	const result = startMcpProbe({
 		action,
-		workspaceId: "ws-signin",
-		cwd,
+		workspaceId: "workspace",
+		cwd: root,
 		projectTrusted: false,
-		policy: { approvals: {}, overrides: {}, toolGrants: {} },
-		serverName: "oauthy",
+		policy: mcpPolicyOf(undefined),
+		serverName: "docs",
 		ownerClientKey: "owner",
-		...(deadlineMs !== undefined ? { deadlineMs } : {}),
+		deadlineMs,
 	});
-
-test("Test connection reports a reachable server that still needs sign-in", async () => {
-	const { done } = start("test");
-	expect(await done).toEqual({ kind: "error", message: "Reachable — needs sign-in." });
-	expect(pushes.every((entry) => entry.owner === "owner")).toBe(true);
+	pending.push(result.done);
+	return result;
+}
+async function authorizationUrl() {
+	for (
+		let attempt = 0;
+		attempt < 150 && !pushes.some(({ push }) => push.frame.kind === "authUrl");
+		attempt++
+	)
+		await Bun.sleep(10);
+	expect(pushes.find(({ push }) => push.frame.kind === "authUrl")).toBeDefined();
+	const frame = pushes.find(({ push }) => push.frame.kind === "authUrl")?.push.frame;
+	if (frame?.kind !== "authUrl") throw new Error("No authorization frame.");
+	return new URL(frame.url);
+}
+function callbackUrl(auth: URL, state = auth.searchParams.get("state") ?? "") {
+	const callback = new URL(auth.searchParams.get("redirect_uri") ?? "");
+	callback.searchParams.set("code", "fixture-code");
+	callback.searchParams.set("state", state);
+	return callback;
+}
+test("official OAuth discovery, DCR and PKCE finish through the owned loopback callback; saved credentials reconnect and logout", async () => {
+	const login = probe();
+	const auth = await authorizationUrl();
+	expect(auth.searchParams.get("code_challenge_method")).toBe("S256");
+	expect(auth.searchParams.get("code_challenge")).toBeTruthy();
+	const callback = callbackUrl(auth);
+	expect((await fetch(callback)).status).toBe(200);
+	expect(await login.done).toEqual({ kind: "success" });
+	expect(fixture.tokenRequests()).toBe(1);
+	expect(pushes.every(({ owner, push }) => owner === "owner" && push.target?.kind === "mcp")).toBe(
+		true,
+	);
+	const credentials = readdirSync(join(root, "mcp-auth"));
+	expect(credentials).toHaveLength(1);
+	const path = join(root, "mcp-auth", credentials[0] ?? "");
+	expect(statSync(path).mode & 0o777).toBe(0o600);
+	expect(statSync(join(root, "mcp-auth")).mode & 0o777).toBe(0o700);
+	expect(readFileSync(path, "utf8")).toContain("fixture-access-token");
+	expect(JSON.stringify(pushes)).not.toContain("fixture-access-token");
+	expect(await probe("test").done).toEqual({ kind: "success" });
+	expect(await probe("logout").done).toEqual({ kind: "success" });
+	expect(readdirSync(join(root, "mcp-auth"))).toEqual([]);
+	expect((await probe("test").done).kind).toBe("error");
 });
-
-test("a failed Test connection reports pi's reason with credentials masked", async () => {
-	const leaky = Bun.serve({
-		hostname: "127.0.0.1",
-		port: 0,
-		fetch: () =>
-			new Response('{"error":"rejected","api_key":"sk-live-abcdefgh12345678"}', { status: 400 }),
-	});
-	const config = join(agentDir, "mcp.json");
-	const before = readFileSync(config, "utf8");
+test("only the initiating client may reply/cancel, and a pasted callback must carry this flow's state", async () => {
+	const login = probe();
+	const auth = await authorizationUrl();
+	expect(() => replyMcpProbe(login.loginId, "other", callbackUrl(auth).href)).toThrow(
+		"another device",
+	);
+	expect(() => cancelMcpProbe(login.loginId, "other")).toThrow("another device");
+	expect((await fetch(callbackUrl(auth, "wrong"))).status).toBe(400);
+	expect(fixture.tokenRequests()).toBe(0);
+	replyMcpProbe(login.loginId, "owner", callbackUrl(auth).href);
+	expect(await login.done).toEqual({ kind: "success" });
+});
+test("workspace revocation cancels callback/listener, releases the namespace lock and cannot exchange a late authorization", async () => {
+	const login = probe();
+	const auth = await authorizationUrl();
+	expect(() => probe()).toThrow("already running");
+	await cancelMcpProbesForWorkspace("other-workspace");
+	expect(pushes.at(-1)?.push.frame.kind).toBe("prompt");
+	await cancelMcpProbesForWorkspace("workspace");
+	expect(await login.done).toMatchObject({ kind: "error" });
+	replyMcpProbe(login.loginId, "owner", callbackUrl(auth).href);
+	expect(fixture.tokenRequests()).toBe(0);
+	await expect(fetch(callbackUrl(auth))).rejects.toBeDefined();
+	const next = probe();
+	cancelMcpProbe(next.loginId, "owner");
+	expect(await next.done).toEqual({ kind: "error", message: "Sign-in cancelled." });
+});
+test("deadline cancels a waiting sign-in and releases its lock after cleanup", async () => {
+	const login = probe("login", 80);
+	expect(await login.done).toEqual({ kind: "error", message: "Sign-in timed out." });
+	const next = probe();
+	cancelMcpProbe(next.loginId, "owner");
+	await next.done;
+	expect(fixture.tokenRequests()).toBe(0);
+});
+test("revoking trust while the token exchange is in flight prevents late credential persistence", async () => {
+	fixture.stop();
+	fixture = startOAuthMcpFixture({ tokenDelayMs: 120 });
 	writeFileSync(
-		config,
-		JSON.stringify({ mcpServers: { leaky: { url: `${leaky.url.origin}/mcp?token=abc` } } }),
+		join(root, "mcp.json"),
+		JSON.stringify({ mcpServers: { docs: { url: fixture.url } } }),
 	);
-	try {
-		const { done } = startMcpProbe({
-			action: "test",
-			workspaceId: "ws-signin",
-			cwd,
-			projectTrusted: false,
-			policy: { approvals: {}, overrides: {}, toolGrants: {} },
-			serverName: "leaky",
-			ownerClientKey: "owner",
+	const login = probe();
+	const auth = await authorizationUrl();
+	await fetch(callbackUrl(auth));
+	for (let attempt = 0; attempt < 100 && fixture.tokenRequests() === 0; attempt++)
+		await Bun.sleep(5);
+	expect(fixture.tokenRequests()).toBe(1);
+	await cancelMcpProbesForWorkspace("workspace");
+	expect((await login.done).kind).toBe("error");
+	await Bun.sleep(150);
+	for (const path of readdirSync(join(root, "mcp-auth")))
+		expect(readFileSync(join(root, "mcp-auth", path), "utf8")).not.toContain(
+			"fixture-access-token",
+		);
+});
+test("unsafe authorization endpoints never reach the browser and errors remain redacted", async () => {
+	fixture.stop();
+	fixture = startOAuthMcpFixture({
+		authorizationEndpoint: "http://remote.example/authorize?token=secret-value",
+	});
+	writeFileSync(
+		join(root, "mcp.json"),
+		JSON.stringify({ mcpServers: { docs: { url: fixture.url } } }),
+	);
+	const result = await probe().done;
+	expect(result.kind).toBe("error");
+	expect(pushes.some(({ push }) => push.frame.kind === "authUrl")).toBe(false);
+	expect(JSON.stringify(pushes)).not.toContain("secret-value");
+});
+test("authorization allowlist rejects remote HTTP, other schemes and embedded credentials", () => {
+	for (const url of [
+		"https://auth.example/login",
+		"http://127.0.0.1:9234/authorize",
+		"http://localhost/authorize",
+		"http://[::1]/authorize",
+	])
+		expect(isAllowedMcpSignInUrl(url)).toBe(true);
+	for (const url of [
+		"http://auth.example/login",
+		"file:///tmp/token",
+		"javascript:alert(1)",
+		"https://user:pass@auth.example",
+		"not a url",
+	])
+		expect(isAllowedMcpSignInUrl(url)).toBe(false);
+});
+test("an aborted OAuth provider cannot persist tokens or reuse another issuer's credentials", () => {
+	const controller = new AbortController();
+	const provider = new OwnedMcpOAuthProvider({
+		name: "direct",
+		config: { url: fixture.url },
+		redirectUrl: "http://127.0.0.1:9000/callback",
+		signal: controller.signal,
+	});
+	provider.saveTokens({
+		access_token: "local-token",
+		token_type: "Bearer",
+		issuer: "https://issuer.example",
+	});
+	expect(provider.tokens({ issuer: "https://other.example" })).toBeUndefined();
+	controller.abort();
+	expect(() => provider.saveTokens({ access_token: "late-token", token_type: "Bearer" })).toThrow();
+	expect(
+		readFileSync(join(root, "mcp-auth", readdirSync(join(root, "mcp-auth"))[0] ?? ""), "utf8"),
+	).not.toContain("late-token");
+});
+test("dynamic OAuth clients are registered again when a later flow uses a different loopback redirect", async () => {
+	fixture.stop();
+	fixture = startOAuthMcpFixture({ strictRedirects: true });
+	let authorize: string | undefined;
+	let firstClient: string | undefined;
+	for (const port of [8123, 8124]) {
+		const provider = new OwnedMcpOAuthProvider({
+			name: "redirect-test",
+			config: { url: fixture.url },
+			redirectUrl: `http://127.0.0.1:${port}/callback`,
+			signal: new AbortController().signal,
+			onAuthorization: (url) => {
+				authorize = url;
+			},
 		});
-		const last = await done;
-		expect(last.kind).toBe("error");
-		expect(last.kind === "error" ? last.message : "").toContain('"api_key":"***"');
-		expect(JSON.stringify(pushes)).not.toContain("sk-live");
-	} finally {
-		writeFileSync(config, before);
-		leaky.stop(true);
+		expect(await provider.authorize()).toBe("REDIRECT");
+		if (!authorize) throw new Error("Missing authorization URL.");
+		const url = new URL(authorize);
+		const client = url.searchParams.get("client_id");
+		if (firstClient === undefined) firstClient = client ?? "";
+		else expect(client).not.toBe(firstClient);
+		const response = await fetch(url, { redirect: "manual" });
+		expect(response.status).toBe(302);
+		const returned = response.headers.get("location");
+		if (!returned) throw new Error("Missing callback.");
+		expect(await provider.authorize(returned)).toBe("AUTHORIZED");
+		provider.invalidateCredentials("tokens");
 	}
+	expect(fixture.registrationRequests()).toBe(2);
+	expect(fixture.tokenRequests()).toBe(2);
 });
-
-const oauthyState = async (sessionId: string) =>
-	(await refreshMcpStatus(sessionId, 5000))?.servers.find((server) => server.name === "oauthy")
-		?.state;
-
-test("sign-in shows the https-or-loopback page, accepts only the owner's paste-back, and stores credentials", async () => {
-	const chat = await createSession({ workspaceId: "ws-signin", cwd });
-	expect(await oauthyState(chat.sessionId)).toBe("needs-sign-in");
-	const { loginId, done } = start("login");
-	const page = await frameOf(loginId, "authUrl");
-	if (page.kind !== "authUrl") throw new Error("unexpected frame");
-	const authorize = new URL(page.url);
-	expect(authorize.origin).toBe(new URL(fixture.url).origin);
-	expect(pushes.find((entry) => entry.push.loginId === loginId)?.push.target).toEqual({
-		kind: "mcp",
-		workspaceId: "ws-signin",
-		serverName: "oauthy",
+test("SDK HTTP reports sign-in required without performing a model call or leaking credentials", async () => {
+	const connection = await createMcpConnection({
+		entry: { name: "http", source: "test", config: { url: fixture.url } },
+		cwd: root,
 	});
-	await frameOf(loginId, "prompt");
-	expect(() => replyMcpProbe(loginId, "intruder", "http://127.0.0.1/evil")).toThrow(
-		"started on another device",
-	);
-	const redirect = new URL(authorize.searchParams.get("redirect_uri") ?? "");
-	redirect.searchParams.set("code", "fixture-code");
-	redirect.searchParams.set("state", authorize.searchParams.get("state") ?? "");
-	replyMcpProbe(loginId, "owner", redirect.href);
-	expect(await done).toEqual({ kind: "success" });
-	expect(fixture.tokenRequests()).toBeGreaterThan(0);
-	expect(existsSync(join(agentDir, "mcp-auth.json"))).toBe(true);
-	expect(await oauthyState(chat.sessionId)).toBe("connected");
-	await removeSession(chat.sessionId);
-
-	const tested = start("test");
-	expect(await tested.done).toEqual({ kind: "success" });
-	expect(
-		pushes.some(
-			(entry) =>
-				entry.push.loginId === tested.loginId &&
-				entry.push.frame.kind === "progress" &&
-				entry.push.frame.message === "Connected · 1 tools",
-		),
-	).toBe(true);
-
-	expect(await start("logout").done).toEqual({ kind: "success" });
-	expect(readFileSync(join(agentDir, "mcp-auth.json"), "utf8")).not.toContain(
-		"fixture-access-token",
-	);
-});
-
-test("cancelling at the paste-back step ends the sign-in and frees the server for another attempt", async () => {
-	const { loginId, done } = start("login");
-	await frameOf(loginId, "prompt");
-	expect(() => start("login")).toThrow("already running");
-	expect(() => cancelMcpProbe(loginId, "intruder")).toThrow("started on another device");
-	cancelMcpProbe(loginId, "owner");
-	expect(await done).toEqual({ kind: "error", message: "Sign-in cancelled." });
-	const retry = start("test");
-	expect((await retry.done).kind).toBe("error");
-});
-
-const callbackOf = (frame: LoginFrame): string => {
-	if (frame.kind !== "authUrl") throw new Error("unexpected frame");
-	return new URL(frame.url).searchParams.get("redirect_uri") ?? "";
-};
-
-test("a sign-in left waiting past its deadline times out, closes pi's loopback listener, and frees the server", async () => {
-	const { loginId, done } = start("login", 1_500);
-	const callback = callbackOf(await frameOf(loginId, "authUrl"));
-	await frameOf(loginId, "prompt");
-	expect(await done).toEqual({ kind: "error", message: "Sign-in timed out." });
-	expect(
-		pushes.filter((entry) => entry.push.loginId === loginId && entry.push.frame.kind === "error"),
-	).toHaveLength(1);
-	expect(
-		await fetch(callback).then(
-			() => "listening",
-			() => "closed",
-		),
-	).toBe("closed");
-	expect((await start("test").done).kind).toBe("error");
-});
-
-test("reaping the owning client cancels its sign-in and frees the server", async () => {
-	const { loginId, done } = start("login");
-	await frameOf(loginId, "prompt");
-	cancelMcpProbesOwnedBy("someone-else");
-	expect(() => start("login")).toThrow("already running");
-	cancelMcpProbesOwnedBy("owner");
-	expect(await done).toEqual({ kind: "error", message: "Sign-in cancelled." });
-	expect((await start("test").done).kind).toBe("error");
-});
-
-const chatRequests = (sessionId: string) =>
-	requests.filter((request) => request.sessionId === sessionId);
-
-test("chat login and logout publish their new status without another model turn or list read", async () => {
-	const chat = await createSession({
-		workspaceId: "ws-signin",
-		cwd,
-		model: { ...faux.getModel(), thinkingLevels: ["off"] },
-	});
-	await refreshMcpStatus(chat.sessionId, 5_000);
-	statuses = [];
-	const login = dispatchSessionMcpCommand(chat.sessionId, "login oauthy");
-	const asked = await waitFor(() =>
-		chatRequests(chat.sessionId).find((request) => request.kind === "input"),
-	);
-	const notification = chatRequests(chat.sessionId).find(
-		(request) => request.kind === "notify" && request.message.startsWith("Sign in to MCP server"),
-	);
-	if (notification?.kind !== "notify") throw new Error("missing pi authorization URL");
-	const authorization = new URL(notification.message.split("\n")[1] ?? "");
-	const redirect = new URL(authorization.searchParams.get("redirect_uri") ?? "");
-	redirect.searchParams.set("code", "fixture-code");
-	redirect.searchParams.set("state", authorization.searchParams.get("state") ?? "");
-	resolveExtUi({ id: asked.id, value: redirect.href });
-	await login;
-	await waitFor(() =>
-		statuses.find(
-			(snapshot) =>
-				snapshot.sessionId === chat.sessionId &&
-				snapshot.servers.some((server) => server.state === "connected"),
-		),
-	);
-	statuses = [];
-	await dispatchSessionMcpCommand(chat.sessionId, "logout oauthy");
-	await waitFor(() =>
-		statuses.find(
-			(snapshot) =>
-				snapshot.sessionId === chat.sessionId &&
-				snapshot.servers.some((server) => server.state === "needs-sign-in"),
-		),
-	);
-	const count = statuses.length;
-	await Bun.sleep(30);
-	expect(statuses).toHaveLength(count);
-	await removeSession(chat.sessionId);
-});
-
-test("a chat's own /mcp login holds the server's sign-in lock until it ends", async () => {
-	const chat = await createSession({ workspaceId: "ws-signin", cwd });
-	const login = dispatchSessionMcpCommand(chat.sessionId, "login oauthy");
-	const asked = await waitFor(() =>
-		chatRequests(chat.sessionId).find((request) => request.kind === "input"),
-	);
-	expect(() => start("login")).toThrow('A sign-in for "oauthy" is already running in a chat.');
-	expect(() => start("test")).toThrow("already running");
-	resolveExtUi({ id: asked.id, value: null });
-	await login;
-	expect((await start("test").done).kind).toBe("error");
-	await removeSession(chat.sessionId);
-});
-
-test("a chat's /mcp login for a server the host's sign-in probe holds says so instead of starting", async () => {
-	const chat = await createSession({ workspaceId: "ws-signin", cwd });
-	const { loginId, done } = start("login");
-	await frameOf(loginId, "prompt");
-	await dispatchSessionMcpCommand(chat.sessionId, "login oauthy");
-	await dispatchSessionMcpCommand(chat.sessionId, "logout oauthy");
-	const seen = chatRequests(chat.sessionId);
-	expect(
-		seen.flatMap((request) =>
-			request.kind === "notify" ? [[request.message, request.level]] : [],
-		),
-	).toEqual([
-		['A sign-in for "oauthy" is already running in Settings.', "warning"],
-		['A sign-in for "oauthy" is already running in Settings.', "warning"],
-	]);
-	expect(seen.some((request) => request.kind === "input")).toBe(false);
-	cancelMcpProbe(loginId, "owner");
-	expect(await done).toEqual({ kind: "error", message: "Sign-in cancelled." });
-	await removeSession(chat.sessionId);
+	try {
+		await expect(connection.connect()).rejects.toThrow();
+		expect(connection.status().state).toBe("needs-sign-in");
+		expect(fixture.tokenRequests()).toBe(0);
+	} finally {
+		await connection.close();
+	}
 });

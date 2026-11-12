@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FakeGhScenario } from "./fakeGh";
-import { gitAs } from "./git";
+import { gitAs, gitBare } from "./git";
 import { E2E_FAKE_BIN_DIR, E2E_GH_LOG, E2E_GH_SCENARIO } from "./paths";
 
 export type { FakeGhScenario, FakePr } from "./fakeGh";
@@ -16,7 +16,7 @@ export function githubOrigin(
 	repository = "acme/sample",
 ): { bare: string; dispose: () => void } {
 	const bare = mkdtempSync(join(tmpdir(), "thinkrail-gh-origin-"));
-	gitAs(bare, "init", "-q", "--bare");
+	gitBare(bare, "init", "-q", "--bare");
 	gitAs(worktree, "remote", "add", "origin", `git@github.com:${repository}.git`);
 	gitAs(
 		worktree,
@@ -51,5 +51,5 @@ export function ghMutations(): string[][] {
 }
 
 export function remoteHead(bare: string, branch: string): string {
-	return gitAs(bare, "for-each-ref", "--format=%(objectname)", `refs/heads/${branch}`);
+	return gitBare(bare, "for-each-ref", "--format=%(objectname)", `refs/heads/${branch}`);
 }

@@ -1,4 +1,4 @@
-export const WORKSPACE_INTERNAL_DIR = ".thinkrail";
+export const WORKSPACE_INTERNAL_DIR = ".raildesign";
 
 export const WORKSPACE_CONTEXT_DIR = `${WORKSPACE_INTERNAL_DIR}/context`;
 

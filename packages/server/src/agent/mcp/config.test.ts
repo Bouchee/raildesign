@@ -14,9 +14,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative } from "node:path";
-import { fileURLToPath } from "node:url";
-import type { LoadedMcpConfig } from "@earendil-works/pi-coding-agent";
+import { join, relative } from "node:path";
 import {
 	addMcpServerConfig,
 	assertProjectMcpConfigWritable,
@@ -30,15 +28,6 @@ import {
 	validateMcpServerConfig,
 } from "./index";
 
-const piDist = dirname(fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent")));
-const piConfig = (await import(join(piDist, "extensions", "mcp", "config.js"))) as {
-	loadMcpConfig: (options: {
-		agentDir: string;
-		cwd: string;
-		projectTrusted: boolean;
-	}) => LoadedMcpConfig;
-};
-
 const root = mkdtempSync(join(tmpdir(), "mcp-config-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
@@ -48,7 +37,7 @@ function fixture(globalConfig: unknown, projectConfig?: unknown) {
 	const agentDir = join(dir, "agent");
 	const cwd = join(dir, "project");
 	mkdirSync(agentDir, { recursive: true });
-	mkdirSync(join(cwd, ".pi"), { recursive: true });
+	mkdirSync(join(cwd, ".raildesign"), { recursive: true });
 	if (globalConfig !== undefined) {
 		writeFileSync(
 			join(agentDir, "mcp.json"),
@@ -57,7 +46,7 @@ function fixture(globalConfig: unknown, projectConfig?: unknown) {
 	}
 	if (projectConfig !== undefined) {
 		writeFileSync(
-			join(cwd, ".pi", "mcp.json"),
+			join(cwd, ".raildesign", "mcp.json"),
 			typeof projectConfig === "string" ? projectConfig : JSON.stringify(projectConfig, null, 2),
 		);
 	}
@@ -84,7 +73,7 @@ const PARITY_CASES: { name: string; global: unknown; project?: unknown }[] = [
 		},
 	},
 	{
-		name: "every validation error pi reports",
+		name: "invalid configuration fields",
 		global: {
 			mcpServers: {
 				"bad name": { command: "x" },
@@ -169,16 +158,71 @@ const PARITY_CASES: { name: string; global: unknown; project?: unknown }[] = [
 	{ name: "no files at all", global: undefined },
 ];
 
-for (const { name, global: globalConfig, project } of PARITY_CASES) {
-	test(`parity with pi's loader: ${name}`, () => {
+test("configuration cases retain diagnostics and never admit untrusted project entries", () => {
+	for (const { global: globalConfig, project } of PARITY_CASES) {
 		const { agentDir, cwd } = fixture(globalConfig, project);
-		for (const projectTrusted of [true, false]) {
-			const ours = loadMcpConfigFiles({ agentDir, cwd, projectTrusted });
-			const { entries: _entries, fileErrors: _fileErrors, ...comparable } = ours;
-			expect(comparable).toEqual(piConfig.loadMcpConfig({ agentDir, cwd, projectTrusted }));
-		}
+		const untrusted = loadMcpConfigFiles({ agentDir, cwd, projectTrusted: false });
+		expect(untrusted.entries.every((entry) => entry.scope === "global")).toBe(true);
+		expect(untrusted.projectConfig).toBeUndefined();
+	}
+});
+
+test("valid stdio, HTTP, header and OAuth fields survive configuration loading", () => {
+	const { agentDir, cwd } = fixture(PARITY_CASES[0]?.global);
+	const loaded = loadMcpConfigFiles({ agentDir, cwd, projectTrusted: false });
+	expect(loaded.errors).toEqual([]);
+	expect(loaded.servers.map((entry) => entry.name)).toEqual(["fs", "docs", "off"]);
+	expect(loaded.servers[1]?.config).toMatchObject({
+		url: "https://example.com/mcp",
+		headers: { Authorization: `Bearer \${DOCS}` },
+		oauth: { clientId: "abc", callbackPort: 8765, scope: "read" },
 	});
-}
+});
+
+test("CIMD has an application-owned HTTPS metadata identity instead of an implicit external client", () => {
+	expect(
+		validateMcpServerConfig("docs", {
+			url: "https://docs.example/mcp",
+			oauth: { clientRegistration: "cimd" },
+		}),
+	).toContain("clientMetadataUrl");
+	expect(
+		validateMcpServerConfig("docs", {
+			url: "https://docs.example/mcp",
+			oauth: {
+				clientRegistration: "cimd",
+				clientMetadataUrl: "https://client.example/metadata.json",
+			},
+		}),
+	).toMatchObject({ oauth: { clientMetadataUrl: "https://client.example/metadata.json" } });
+	expect(
+		validateMcpServerConfig("docs", {
+			url: "https://docs.example/mcp",
+			oauth: { clientMetadataUrl: "http://remote.example/client.json" },
+		}),
+	).toContain("https");
+});
+
+test("invalid names, transports, arguments, exposure and OAuth remain rejected", () => {
+	const { agentDir, cwd } = fixture(PARITY_CASES[1]?.global);
+	const loaded = loadMcpConfigFiles({ agentDir, cwd, projectTrusted: true });
+	expect(loaded.servers.map((entry) => entry.name)).toEqual(["auto"]);
+	expect(loaded.errors).toHaveLength(13);
+	for (const word of [
+		"bad name",
+		"legacy SSE",
+		"url",
+		"exposure",
+		"toolExposure",
+		"timeout",
+		"args",
+		"env",
+		"callbackUrl",
+		"clientRegistration",
+		"auth requires",
+	])
+		expect(loaded.errors.join("\n")).toContain(word);
+});
 
 test("entries keep every named entry as written, including override-only, invalid and non-object ones", () => {
 	const { agentDir, cwd } = fixture(
@@ -197,7 +241,7 @@ test("entries keep every named entry as written, including override-only, invali
 	expect(loaded.fileErrors).toEqual([]);
 	expect(loaded.servers.find((s) => s.name === "linear")).toMatchObject({
 		scope: "global",
-		override: join(cwd, ".pi", "mcp.json"),
+		override: join(cwd, ".raildesign", "mcp.json"),
 	});
 });
 
@@ -206,7 +250,7 @@ test("file-level problems are listed per file, apart from entry errors, and neve
 	const broken = loadMcpConfigFiles({ ...malformed, projectTrusted: true });
 	expect(broken.fileErrors.map((error) => error.path)).toEqual([
 		join(malformed.agentDir, "mcp.json"),
-		join(malformed.cwd, ".pi", "mcp.json"),
+		join(malformed.cwd, ".raildesign", "mcp.json"),
 	]);
 	expect(broken.fileErrors[1]?.message).toBe('expected an object with an "mcpServers" object');
 	expect(broken.errors).toEqual(
@@ -386,7 +430,7 @@ test("BOM-prefixed files load and edit without losing permissions, indentation o
 });
 
 test("an override entry keeps explicit values instead of dropping defaults", () => {
-	const path = join(root, "override", ".pi", "mcp.json");
+	const path = join(root, "override", ".raildesign", "mcp.json");
 	updateMcpServerConfig(
 		path,
 		"linear",
@@ -398,28 +442,28 @@ test("an override entry keeps explicit values instead of dropping defaults", () 
 	});
 });
 
-test("project config writes refuse symlinked .pi directories and files, and paths outside the worktree", () => {
+test("project config writes refuse symlinked .raildesign directories and files, and paths outside the worktree", () => {
 	const worktree = join(root, "containment", "wt");
 	const elsewhere = join(root, "containment", "elsewhere");
 	mkdirSync(join(elsewhere, "pi"), { recursive: true });
 	mkdirSync(worktree, { recursive: true });
-	symlinkSync(join(elsewhere, "pi"), join(worktree, ".pi"));
-	expect(() => assertProjectMcpConfigWritable(worktree, join(worktree, ".pi", "mcp.json"))).toThrow(
-		McpConfigPathUnsafeError,
-	);
-	rmSync(join(worktree, ".pi"));
-	mkdirSync(join(worktree, ".pi"));
+	symlinkSync(join(elsewhere, "pi"), join(worktree, ".raildesign"));
+	expect(() =>
+		assertProjectMcpConfigWritable(worktree, join(worktree, ".raildesign", "mcp.json")),
+	).toThrow(McpConfigPathUnsafeError);
+	rmSync(join(worktree, ".raildesign"));
+	mkdirSync(join(worktree, ".raildesign"));
 	writeFileSync(join(elsewhere, "secrets.json"), "{}");
-	symlinkSync(join(elsewhere, "secrets.json"), join(worktree, ".pi", "mcp.json"));
-	expect(() => assertProjectMcpConfigWritable(worktree, join(worktree, ".pi", "mcp.json"))).toThrow(
-		/non-regular/,
-	);
+	symlinkSync(join(elsewhere, "secrets.json"), join(worktree, ".raildesign", "mcp.json"));
+	expect(() =>
+		assertProjectMcpConfigWritable(worktree, join(worktree, ".raildesign", "mcp.json")),
+	).toThrow(/non-regular/);
 	expect(() => assertProjectMcpConfigWritable(worktree, join(elsewhere, "mcp.json"))).toThrow(
 		/outside the worktree/,
 	);
-	rmSync(join(worktree, ".pi", "mcp.json"));
+	rmSync(join(worktree, ".raildesign", "mcp.json"));
 	expect(() =>
-		assertProjectMcpConfigWritable(worktree, join(worktree, ".pi", "mcp.json")),
+		assertProjectMcpConfigWritable(worktree, join(worktree, ".raildesign", "mcp.json")),
 	).not.toThrow();
 });
 
@@ -518,6 +562,6 @@ test("an approved invalid project entry cannot replace the valid effective user 
 		},
 	]);
 	expect(loaded.errors).toEqual([
-		`${join(cwd, ".pi", "mcp.json")}: server "docs": enabled must be a boolean`,
+		`${join(cwd, ".raildesign", "mcp.json")}: server "docs": enabled must be a boolean`,
 	]);
 });

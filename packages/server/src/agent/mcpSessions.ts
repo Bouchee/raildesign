@@ -1,514 +1,426 @@
+import { createHash } from "node:crypto";
 import {
 	closeSync,
+	constants,
 	type FSWatcher,
 	fstatSync,
+	lstatSync,
 	mkdirSync,
 	openSync,
 	readSync,
+	realpathSync,
 	watch,
+	writeFileSync,
 } from "node:fs";
-import { basename, isAbsolute, join } from "node:path";
-import { getAgentDir, type McpServerConfig } from "@earendil-works/pi-coding-agent";
-import {
-	MCP_PROTOCOL_VERSION,
-	type McpListResult,
-	type McpReadOutputResult,
-	type McpServerResourceSummary,
-	type McpServerStatus,
-	type McpStatusSnapshot,
-	type McpTransportKind,
-	type Project,
+import { dirname, join, sep } from "node:path";
+import type {
+	McpListResult,
+	McpReadOutputResult,
+	McpServerResourceSummary,
+	McpServerStatus,
+	McpStatusSnapshot,
+	Project,
 } from "@thinkrail/contracts";
 import { CodedError } from "@thinkrail/shared/codedError";
-import { logger } from "../log";
+import { dataDir } from "../persistence";
 import {
-	dispatchSessionMcpCommand,
-	getSessionMessages,
-	liveSessionIdsOf,
-	type McpSessionView,
-	mcpSessionView,
-	requestSessionReload,
-	type SessionReloadDisposition,
-} from "./agentSessionManager";
-import { publishSessionResourcesChanged } from "./chatResources";
-import { isBuiltinExtensionEnabled } from "./extensions";
-import {
+	appendMcpLog,
+	createMcpConnection,
 	deriveMcpServerStatuses,
 	isMcpResultTool,
 	loadHostMcpConfig,
+	type McpConnection,
+	type McpServerConfig,
 	mcpPolicyOf,
-	type ParsedMcpStatus,
-	parseMcpAttentionNotice,
-	parseMcpStatusText,
 	redactMcpText,
 	summarizeMcpConfigErrors,
 	summarizeMcpServers,
 } from "./mcp";
-import { interceptExtUiNotify, notifyExtUi } from "./webUiContext";
+import { cancelAllMcpProbes } from "./mcpSignIn";
+import { getSessionMessages, getSessionWorkspaceId, liveSessionIdsOf } from "./sdkSessionManager";
+import { readSessionRecord } from "./sessionStore";
 
-const log = logger("mcp");
-const USER_CONFIG_DEBOUNCE_MS = 300;
-const READ_OUTPUT_MAX_BYTES = 1024 * 1024;
-
-const BUILTIN_MCP = "builtin:mcp";
-const DISABLED_IN_SETTINGS = "pi settings (-builtin:mcp)";
-
-interface Tracked {
-	generation: number;
-	load: number;
-	servers: McpServerStatus[];
-	transports: Map<string, McpTransportKind>;
-	registered: Set<string>;
-	resourcesKey: string;
-	inFlight: Promise<void> | null;
-	reloadFailed: boolean;
-	stopAttention: () => void;
+type ProjectPolicy = Pick<
+	Project,
+	"resourceTrust" | "mcpApprovals" | "mcpOverrides" | "mcpToolGrants"
+>;
+interface Context {
+	cwd: string;
+	project: ProjectPolicy | undefined;
 }
-
+interface Tracked {
+	workspaceId: string;
+	cwd: string;
+	generation: number;
+	connections: Map<string, McpConnection>;
+	failures: Map<string, McpServerStatus>;
+	controller: AbortController;
+	disabledInChat: Set<string>;
+	loaded: Map<string, McpServerConfig>;
+	snapshot: McpStatusSnapshot;
+	inFlight?: Promise<void>;
+}
+const contexts = new Map<string, Context>();
 const tracked = new Map<string, Tracked>();
-
+const closing = new Map<
+	string,
+	{ workspaceId: string; disabledInChat: Set<string>; done: Promise<void> }
+>();
+const generations = new Map<string, number>();
+const rememberedDisabled = new Map<string, Set<string>>();
+let projectOf: ((workspaceId: string) => ProjectPolicy | undefined) | undefined;
 let publish: (snapshot: McpStatusSnapshot) => void = () => {};
-export function setMcpStatusPublisher(fn: (snapshot: McpStatusSnapshot) => void): void {
+export function setMcpProjectResolver(fn: typeof projectOf): void {
+	projectOf = fn;
+}
+export function setMcpStatusPublisher(fn: typeof publish): void {
 	publish = fn;
 }
-
-function snapshotOf(sessionId: string): McpStatusSnapshot | null {
-	const view = mcpSessionView(sessionId);
-	const state = tracked.get(sessionId);
-	if (!view || !state || state.generation === 0) return null;
+function files(workspaceId: string, cwd: string, disabledInChat?: ReadonlySet<string>) {
+	const project = projectOf ? projectOf(workspaceId) : contexts.get(workspaceId)?.project;
 	return {
-		workspaceId: view.workspaceId,
+		agentDir: dataDir(),
+		cwd,
+		projectTrusted: project?.resourceTrust === "granted",
+		policy: mcpPolicyOf(project),
+		...(disabledInChat ? { disabledInChat } : {}),
+	};
+}
+function emit(sessionId: string, state: Tracked): void {
+	if (tracked.get(sessionId) !== state) return;
+	const options = files(state.workspaceId, state.cwd, state.disabledInChat);
+	const reported = {
+		servers: new Map(
+			[
+				...state.failures,
+				...[...state.connections].map(([name, connection]): [string, McpServerStatus] => [
+					name,
+					connection.status(),
+				]),
+			].map(([name, status]) => {
+				return [
+					name,
+					{
+						state: status.state,
+						...(status.toolCount !== undefined ? { toolCount: status.toolCount } : {}),
+						detail: status.detail ?? "",
+					},
+				];
+			}),
+		),
+		configErrors: [],
+	};
+	state.generation = (generations.get(sessionId) ?? 0) + 1;
+	generations.set(sessionId, state.generation);
+	state.snapshot = {
+		workspaceId: state.workspaceId,
 		sessionId,
 		generation: state.generation,
-		servers: state.servers,
-	};
-}
-
-function asParsed(servers: readonly McpServerStatus[]): ParsedMcpStatus["servers"] {
-	return new Map(
-		servers.map((status) => [
-			status.name,
-			{
-				state: status.state,
-				...(status.toolCount !== undefined ? { toolCount: status.toolCount } : {}),
-				detail: status.detail ?? "",
-			},
-		]),
-	);
-}
-
-const ownsMcp = (view: McpSessionView | undefined): view is McpSessionView =>
-	view?.commandOwner === BUILTIN_MCP;
-
-const configKey = (config: McpServerConfig | undefined): string | undefined =>
-	config === undefined ? undefined : JSON.stringify(config);
-
-function configuredServers(view: McpSessionView) {
-	return loadHostMcpConfig({
-		agentDir: getAgentDir(),
-		cwd: view.cwd,
-		projectTrusted: view.projectTrusted,
-		policy: view.policy,
-		disabledInChat: view.disabledInChat,
-	}).servers;
-}
-
-export function pendingMcpReload(sessionId: string): Set<string> {
-	const view = mcpSessionView(sessionId);
-	const failed = tracked.get(sessionId)?.reloadFailed === true;
-	if (!ownsMcp(view) || (!view.loaded && !failed)) return new Set();
-	const loaded = view.loaded ?? new Map<string, McpServerConfig>();
-	const current = new Map(configuredServers(view).map((server) => [server.name, server.config]));
-	const names = new Set([...current.keys(), ...loaded.keys()]);
-	return new Set(
-		[...names].filter(
-			(name) => failed || configKey(current.get(name)) !== configKey(loaded.get(name)),
+		servers: deriveMcpServerStatuses({
+			summaries: summarizeMcpServers(options),
+			reported,
+			disabledInChat: state.disabledInChat,
+			previous: state.snapshot.servers,
+			now: Date.now(),
+		}).map((status) =>
+			status.state === "unknown" ? { ...status, state: "disconnected" } : status,
 		),
-	);
+	};
+	publish(structuredClone(state.snapshot));
 }
-
-function registeredTransports(view: McpSessionView): Map<string, McpTransportKind> {
-	return new Map(
-		view.registered
-			.filter((server) => !view.loaded?.has(server.name))
-			.map((server) => [server.name, "url" in server.config ? "http" : "stdio"]),
-	);
-}
-
-function publishResources(sessionId: string, workspaceId: string, state: Tracked): void {
-	const resourcesKey = JSON.stringify(mcpResourceSummaries(sessionId));
-	if (resourcesKey === state.resourcesKey) return;
-	state.resourcesKey = resourcesKey;
-	publishSessionResourcesChanged(workspaceId, sessionId);
-}
-
-function apply(sessionId: string, reported: ParsedMcpStatus | null, partial: boolean): void {
-	const view = mcpSessionView(sessionId);
-	const state = tracked.get(sessionId);
-	if (!ownsMcp(view) || !state) return;
-	const merged: ParsedMcpStatus | null =
-		partial && reported
-			? {
-					servers: new Map([...asParsed(state.servers), ...reported.servers]),
-					configErrors: reported.configErrors,
-				}
-			: reported;
-	const summaries = summarizeMcpServers({
-		agentDir: getAgentDir(),
-		cwd: view.cwd,
-		projectTrusted: view.projectTrusted,
-		policy: view.policy,
-	});
-	const registered = registeredTransports(view);
-	state.transports = new Map([
-		...summaries.map((summary): [string, McpTransportKind] => [summary.name, summary.transport]),
-		...registered,
-	]);
-	state.registered = new Set(registered.keys());
-	state.servers = deriveMcpServerStatuses({
-		summaries,
-		reported: merged,
-		disabledInChat: view.disabledInChat,
-		pendingReload: pendingMcpReload(sessionId),
-		previous: state.servers,
-		now: Date.now(),
-	});
-	state.generation++;
-	const snapshot = snapshotOf(sessionId);
-	if (snapshot) publish(snapshot);
-	publishResources(sessionId, view.workspaceId, state);
-}
-
-function retire(sessionId: string, view: McpSessionView): void {
-	const state = tracked.get(sessionId);
-	if (!state || state.servers.length === 0) return;
-	state.servers = [];
-	state.generation++;
-	publish({ workspaceId: view.workspaceId, sessionId, generation: state.generation, servers: [] });
-	publishResources(sessionId, view.workspaceId, state);
-}
-
-export function showPendingMcpReload(sessionId: string): void {
-	apply(sessionId, null, true);
-}
-
-function startingReport(view: McpSessionView): ParsedMcpStatus {
-	const servers: ParsedMcpStatus["servers"] = new Map();
-	const given = [
-		...(view.loaded ?? []),
-		...view.registered.map((server): [string, McpServerConfig] => [server.name, server.config]),
-	];
-	for (const [name, config] of given) {
-		if (servers.has(name)) continue;
-		servers.set(name, { state: config.enabled === false ? "disabled" : "starting", detail: "" });
-	}
-	return { servers, configErrors: [] };
-}
-
-export function restartMcpStatus(sessionId: string): void {
-	const view = mcpSessionView(sessionId);
-	if (!view) return;
-	const state = trackedOf(sessionId);
-	state.load++;
-	state.inFlight = null;
-	state.reloadFailed = false;
-	if (ownsMcp(view)) apply(sessionId, startingReport(view), false);
-	scheduleMcpStatusRefresh(sessionId);
-}
-
-export function assertMcpServerDisablableInChat(sessionId: string, name: string): void {
-	const view = mcpSessionView(sessionId);
-	if (!ownsMcp(view)) {
-		throw new CodedError("MCP_HANDLED_ELSEWHERE", "MCP is not managed by ThinkRail here.");
-	}
-	if (view.loaded?.has(name)) return;
-	if (
-		view.loaded === null &&
-		hasFailedMcpReload(sessionId) &&
-		configuredServers(view).some((server) => server.name === name)
-	)
-		return;
-	throw new CodedError(
-		"MCP_CONFIG_INVALID",
-		view.registered.some((server) => server.name === name)
-			? `"${name}" is registered by an extension; it can't be disabled per chat.`
-			: `No MCP server named "${name}" is configured for this chat.`,
-	);
-}
-
-export function mcpResourceSummaries(sessionId: string): McpServerResourceSummary[] {
-	const state = tracked.get(sessionId);
-	if (!state) return [];
-	return state.servers.map((status) => ({
-		name: status.name,
-		state: status.state,
-		...(status.toolCount !== undefined ? { toolCount: status.toolCount } : {}),
-		transport: state.transports.get(status.name) ?? "stdio",
-		...(state.registered.has(status.name) ? { registered: true as const } : {}),
-	}));
-}
-
-export function hasFailedMcpReload(sessionId: string): boolean {
-	return tracked.get(sessionId)?.reloadFailed === true;
-}
-
-export function recordMcpReloadFailure(
+function begin(
 	sessionId: string,
-	error: unknown,
-	wasLoaded: boolean,
-): void {
-	const state = tracked.get(sessionId);
-	const view = mcpSessionView(sessionId);
-	if (!state || !view || (!wasLoaded && view.loaded === null && !state.reloadFailed)) return;
-	state.reloadFailed = true;
-	const detail = redactMcpText(error instanceof Error ? error.message : String(error));
-	log.warn(`MCP configuration reload failed for ${sessionId}: ${detail}`);
-	showPendingMcpReload(sessionId);
-	notifyExtUi(
-		sessionId,
-		`This chat could not apply its MCP configuration — reload it to retry. ${detail}`,
-		"error",
-	);
-}
-
-export async function reconcileMcpSessions(
-	sessionIds: readonly string[],
-): Promise<Record<string, SessionReloadDisposition>> {
-	const dispositions: Record<string, SessionReloadDisposition> = {};
-	for (const sessionId of sessionIds) {
-		if (!hasFailedMcpReload(sessionId) && pendingMcpReload(sessionId).size === 0) continue;
-		try {
-			const disposition = await requestSessionReload(sessionId);
-			dispositions[sessionId] = disposition;
-			if (disposition === "deferred") showPendingMcpReload(sessionId);
-		} catch {}
-	}
-	return dispositions;
-}
-
-export function watchUserMcpConfig(
-	options: { onSettingsChanged?: (path: string) => void } = {},
-): () => void {
-	const agentDir = getAgentDir();
-	const settingsPath = join(agentDir, "settings.json");
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	let settingsTimer: ReturnType<typeof setTimeout> | undefined;
-	let retry: ReturnType<typeof setTimeout> | undefined;
-	let watcher: FSWatcher | undefined;
-	let stopped = false;
-	let retryMs = USER_CONFIG_DEBOUNCE_MS;
-	const restart = () => {
-		watcher?.close();
-		watcher = undefined;
-		if (stopped || retry !== undefined) return;
-		retry = setTimeout(() => {
-			retry = undefined;
-			start();
-		}, retryMs);
-		retryMs = Math.min(retryMs * 2, 5_000);
-	};
-	const start = () => {
-		if (stopped) return;
-		try {
-			mkdirSync(agentDir, { recursive: true });
-			watcher = watch(agentDir, (event, filename) => {
-				const isDir = filename === null || filename === basename(agentDir);
-				const isSettings = filename === "settings.json";
-				if (!isDir && !isSettings && filename !== "mcp.json") return;
-				if (event === "rename") restart();
-				if (isSettings || isDir) {
-					clearTimeout(settingsTimer);
-					settingsTimer = setTimeout(
-						() => options.onSettingsChanged?.(settingsPath),
-						USER_CONFIG_DEBOUNCE_MS,
-					);
-				}
-				if (isSettings) return;
-				clearTimeout(timer);
-				timer = setTimeout(
-					() => void reconcileMcpSessions(liveSessionIdsOf()),
-					USER_CONFIG_DEBOUNCE_MS,
-				);
-			});
-			watcher.on("error", restart);
-			retryMs = USER_CONFIG_DEBOUNCE_MS;
-			void reconcileMcpSessions(liveSessionIdsOf());
-		} catch {
-			restart();
-		}
-	};
-	start();
-	return () => {
-		stopped = true;
-		clearTimeout(timer);
-		clearTimeout(settingsTimer);
-		clearTimeout(retry);
-		watcher?.close();
-	};
-}
-
-export function watchMcpStatus(sessionId: string): void {
-	trackedOf(sessionId);
-}
-
-function trackedOf(sessionId: string): Tracked {
+	disabledInChat: Set<string> = rememberedDisabled.get(sessionId) ?? new Set(),
+): Tracked | undefined {
 	const existing = tracked.get(sessionId);
 	if (existing) return existing;
+	if (closing.has(sessionId)) return undefined;
+	const workspaceId = getSessionWorkspaceId(sessionId);
+	const record = readSessionRecord(sessionId);
+	if (!workspaceId || !record || record.workspaceId !== workspaceId) return undefined;
+	rememberedDisabled.delete(sessionId);
 	const state: Tracked = {
+		workspaceId,
+		cwd: record.cwd,
 		generation: 0,
-		load: 0,
-		servers: [],
-		transports: new Map(),
-		registered: new Set(),
-		resourcesKey: "[]",
-		inFlight: null,
-		reloadFailed: false,
-		stopAttention: () => {},
+		connections: new Map(),
+		failures: new Map(),
+		controller: new AbortController(),
+		disabledInChat,
+		loaded: new Map(),
+		snapshot: { workspaceId, sessionId, generation: 0, servers: [] },
 	};
 	tracked.set(sessionId, state);
-	state.stopAttention = interceptExtUiNotify(sessionId, (message, level) => {
-		const parsed = parseMcpAttentionNotice(message);
-		if (!parsed) return false;
-		apply(sessionId, parsed, true);
-		queueMicrotask(() => scheduleMcpStatusRefresh(sessionId));
-		notifyExtUi(sessionId, redactMcpText(message), level, { belowProtocol: MCP_PROTOCOL_VERSION });
-		return true;
-	});
+	const loaded = loadHostMcpConfig(files(workspaceId, record.cwd, state.disabledInChat));
+	state.loaded = new Map(loaded.servers.map((entry) => [entry.name, entry.config]));
+	emit(sessionId, state);
+	state.inFlight = Promise.all(
+		loaded.servers.map(async (entry) => {
+			try {
+				const connection = await createMcpConnection({
+					entry,
+					cwd: state.cwd,
+					signal: state.controller.signal,
+					onStatus: () => emit(sessionId, state),
+				});
+				if (tracked.get(sessionId) !== state) {
+					await connection.close();
+					return;
+				}
+				state.connections.set(entry.name, connection);
+				emit(sessionId, state);
+				if (entry.config.enabled !== false) await connection.connect().catch(() => {});
+			} catch (error) {
+				state.failures.set(entry.name, {
+					name: entry.name,
+					state: "failed",
+					detail: redactMcpText(error instanceof Error ? error.message : String(error)),
+					updatedAt: Date.now(),
+				});
+			}
+		}),
+	)
+		.then(() => {
+			emit(sessionId, state);
+		})
+		.catch(() => {
+			emit(sessionId, state);
+		});
 	return state;
 }
-
-async function capture(sessionId: string, state: Tracked): Promise<void> {
-	const load = state.load;
-	const notices: string[] = [];
-	try {
-		await dispatchSessionMcpCommand(sessionId, "", (message) => notices.push(message));
-	} catch {}
-	if (tracked.get(sessionId) !== state || state.load !== load) return;
-	const parsed = notices.map(parseMcpStatusText).findLast((status) => status !== null);
-	if (parsed) apply(sessionId, parsed, false);
-}
-
 export async function refreshMcpStatus(
 	sessionId: string,
 	waitMs: number,
 ): Promise<McpStatusSnapshot | null> {
-	const view = mcpSessionView(sessionId);
-	if (!view) return null;
-	if (!ownsMcp(view)) {
-		retire(sessionId, view);
-		return null;
+	const state = begin(sessionId);
+	if (!state) return null;
+	if (waitMs > 0 && state.inFlight) {
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		await Promise.race([
+			state.inFlight,
+			new Promise<void>((done) => {
+				timer = setTimeout(done, waitMs);
+			}),
+		]);
+		clearTimeout(timer);
 	}
-	const state = trackedOf(sessionId);
-	if (!state.inFlight) {
-		const running: Promise<void> = capture(sessionId, state).finally(() => {
-			if (state.inFlight === running) state.inFlight = null;
-		});
-		state.inFlight = running;
-	}
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	await Promise.race([
-		state.inFlight,
-		new Promise<void>((resolve) => {
-			timer = setTimeout(resolve, waitMs);
-		}),
-	]);
-	clearTimeout(timer);
-	return snapshotOf(sessionId);
+	return tracked.get(sessionId) === state ? structuredClone(state.snapshot) : null;
 }
-
-export async function reconnectMcpServer(sessionId: string, name: string): Promise<void> {
-	const failures: string[] = [];
-	const reconnect = ownsMcp(mcpSessionView(sessionId))
-		? dispatchSessionMcpCommand(sessionId, `reconnect ${name}`, (message, level) => {
-				if (level === "error") failures.push(message);
-			})
-		: null;
-	if (!reconnect) {
-		throw new CodedError("MCP_HANDLED_ELSEWHERE", "MCP is not managed by ThinkRail here.");
-	}
-	await reconnect;
-	const failure = failures.at(-1);
-	if (failure !== undefined) throw new Error(redactMcpText(failure));
-}
-
-export function scheduleMcpStatusRefresh(sessionId: string): void {
-	void refreshMcpStatus(sessionId, 0);
-}
-
-export function forgetMcpStatus(sessionId: string): void {
-	tracked.get(sessionId)?.stopAttention();
-	tracked.delete(sessionId);
-}
-
-function mcpOwnerElsewhere(
-	owners: readonly (string | null)[],
-	enabledInSettings: boolean,
-): string | undefined {
-	const replacement = owners.find((owner) => owner !== null && owner !== BUILTIN_MCP);
-	if (replacement) return replacement;
-	if (!enabledInSettings) return DISABLED_IN_SETTINGS;
-	return owners.includes(null) ? "pi settings" : undefined;
-}
-
-/**
- * Resolves pi settings, then returns a synchronous answer to "who manages MCP for this workspace instead
- * of ThinkRail?" (`undefined` when ThinkRail does) that samples the live `/mcp` owners when called, so a
- * caller can check and mutate in one call stack.
- */
-export async function mcpOwnershipGuard(options: {
-	workspaceId: string;
-	cwd: string;
-	projectTrusted: boolean;
-}): Promise<() => string | undefined> {
-	const enabledInSettings = await isBuiltinExtensionEnabled(
-		options.cwd,
-		options.projectTrusted,
-		"mcp",
-	);
-	return () =>
-		mcpOwnerElsewhere(
-			liveSessionIdsOf(options.workspaceId).map(
-				(sessionId) => mcpSessionView(sessionId)?.commandOwner ?? null,
-			),
-			enabledInSettings,
-		);
-}
-
 export async function listMcpServers(options: {
 	workspaceId: string;
 	cwd: string;
-	project: Pick<Project, "piResourceTrust" | "mcpApprovals" | "mcpOverrides"> | undefined;
+	project: ProjectPolicy | undefined;
 	waitMs: number;
 }): Promise<McpListResult> {
-	const sessionIds = liveSessionIdsOf(options.workspaceId);
-	const projectTrusted = options.project?.piResourceTrust === "granted";
-	const [snapshots, ownership] = await Promise.all([
-		Promise.all(sessionIds.map((sessionId) => refreshMcpStatus(sessionId, options.waitMs))),
-		mcpOwnershipGuard({ workspaceId: options.workspaceId, cwd: options.cwd, projectTrusted }),
-	]);
-	const elsewhere = ownership();
-	const files = { agentDir: getAgentDir(), cwd: options.cwd, projectTrusted };
-	const configErrors = summarizeMcpConfigErrors(files);
+	contexts.set(options.workspaceId, { cwd: options.cwd, project: options.project });
+	const config = files(options.workspaceId, options.cwd);
+	const statuses = await Promise.all(
+		liveSessionIdsOf(options.workspaceId).map((sessionId) =>
+			refreshMcpStatus(sessionId, options.waitMs),
+		),
+	);
+	const configErrors = summarizeMcpConfigErrors(config);
 	return {
-		servers: summarizeMcpServers({ ...files, policy: mcpPolicyOf(options.project) }),
-		statuses: snapshots.filter((snapshot): snapshot is McpStatusSnapshot => snapshot !== null),
-		...(configErrors.length > 0 ? { configErrors } : {}),
-		...(elsewhere !== undefined ? { handledElsewhere: { by: elsewhere } } : {}),
+		servers: summarizeMcpServers(config),
+		statuses: statuses.filter((snapshot): snapshot is McpStatusSnapshot => snapshot !== null),
+		...(configErrors.length ? { configErrors } : {}),
+	};
+}
+export async function reconnectMcpServer(sessionId: string, name: string): Promise<void> {
+	const state = begin(sessionId);
+	if (!state) throw new CodedError("MCP_CONFIG_INVALID", "This chat is not attached.");
+	await state.inFlight;
+	await state.connections.get(name)?.close();
+	const entry = loadHostMcpConfig(
+		files(state.workspaceId, state.cwd, state.disabledInChat),
+	).servers.find((candidate) => candidate.name === name);
+	if (!entry)
+		throw new CodedError(
+			"MCP_CONFIG_INVALID",
+			`No trusted MCP server named "${name}" is configured for this chat.`,
+		);
+	const connection = await createMcpConnection({
+		entry,
+		cwd: state.cwd,
+		signal: state.controller.signal,
+		onStatus: () => emit(sessionId, state),
+	});
+	if (tracked.get(sessionId) !== state) {
+		await connection.close();
+		return;
+	}
+	state.connections.set(name, connection);
+	state.failures.delete(name);
+	state.loaded.set(name, entry.config);
+	if (entry.config.enabled !== false) await connection.connect();
+	emit(sessionId, state);
+}
+async function settleCleanups(tasks: readonly Promise<unknown>[]): Promise<void> {
+	const results = await Promise.allSettled(tasks);
+	const errors = results
+		.filter((result): result is PromiseRejectedResult => result.status === "rejected")
+		.map((result) => result.reason);
+	if (errors.length)
+		throw new AggregateError(errors, "MCP connections could not all close cleanly.");
+}
+export function closeSessionMcpConnections(sessionId: string): Promise<void> {
+	rememberedDisabled.delete(sessionId);
+	const current = closing.get(sessionId);
+	if (current) return current.done;
+	const state = tracked.get(sessionId);
+	if (!state) return Promise.resolve();
+	tracked.delete(sessionId);
+	state.controller.abort(new Error("MCP session closed."));
+	const done = settleCleanups([
+		...[...state.connections.values()].map((connection) => connection.close()),
+		...(state.inFlight ? [state.inFlight] : []),
+	]).finally(() => {
+		if (closing.get(sessionId)?.done === done) closing.delete(sessionId);
+	});
+	closing.set(sessionId, {
+		workspaceId: state.workspaceId,
+		disabledInChat: state.disabledInChat,
+		done,
+	});
+	return done;
+}
+export async function closeWorkspaceMcpConnections(workspaceId: string): Promise<void> {
+	const states = new Map<string, { workspaceId: string; disabledInChat: Set<string> }>([
+		...closing,
+		...tracked,
+	]);
+	for (const [sessionId, state] of states)
+		if (state.workspaceId !== workspaceId) states.delete(sessionId);
+	await settleCleanups([...states.keys()].map(closeSessionMcpConnections));
+	for (const [sessionId, state] of states) {
+		if (getSessionWorkspaceId(sessionId) === workspaceId)
+			rememberedDisabled.set(sessionId, state.disabledInChat);
+	}
+}
+export async function reconcileMcpSessions(
+	sessionIds: readonly string[],
+): Promise<Record<string, "reloaded">> {
+	const result: Record<string, "reloaded"> = {};
+	for (const sessionId of sessionIds) {
+		const disabled = tracked.get(sessionId)?.disabledInChat ?? rememberedDisabled.get(sessionId);
+		await closeSessionMcpConnections(sessionId);
+		const state = begin(sessionId, disabled);
+		if (state) {
+			result[sessionId] = "reloaded";
+		}
+	}
+	return result;
+}
+export async function setSessionMcpServerEnabled(
+	sessionId: string,
+	name: string,
+	enabled: boolean,
+): Promise<void> {
+	const state = begin(sessionId);
+	if (!state?.loaded.has(name))
+		throw new CodedError(
+			"MCP_CONFIG_INVALID",
+			`No MCP server named "${name}" is configured for this chat.`,
+		);
+	if (enabled) state.disabledInChat.delete(name);
+	else state.disabledInChat.add(name);
+	await reconnectMcpServer(sessionId, name);
+}
+export function mcpResourceSummaries(sessionId: string): McpServerResourceSummary[] {
+	const state = tracked.get(sessionId);
+	return (
+		state?.snapshot.servers.map((status) => ({
+			name: status.name,
+			state: status.state,
+			...(status.toolCount !== undefined ? { toolCount: status.toolCount } : {}),
+			transport: "url" in (state.loaded.get(status.name) ?? {}) ? "http" : "stdio",
+		})) ?? []
+	);
+}
+export function forgetMcpStatus(sessionId: string): void {
+	void closeSessionMcpConnections(sessionId).catch(() => {});
+}
+export async function closeAllMcpConnections(): Promise<void> {
+	try {
+		await settleCleanups(
+			[...new Set([...tracked.keys(), ...closing.keys()])].map(closeSessionMcpConnections),
+		);
+	} finally {
+		rememberedDisabled.clear();
+		contexts.clear();
+		generations.clear();
+	}
+}
+export function watchUserMcpConfig(
+	options: { onSettingsChanged?: (path: string) => void } = {},
+): () => Promise<void> {
+	const root = dataDir();
+	mkdirSync(root, { recursive: true });
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	let watcher: FSWatcher | undefined;
+	let stopped = false;
+	let active: Promise<void> | undefined;
+	watcher = watch(root, (_event, filename) => {
+		if (stopped) return;
+		if (filename !== null && filename !== "mcp.json") return;
+		clearTimeout(timer);
+		timer = setTimeout(() => {
+			const reload = async () => {
+				if (stopped) return;
+				options.onSettingsChanged?.(join(root, "mcp.json"));
+				await cancelAllMcpProbes();
+				if (stopped) return;
+				await reconcileMcpSessions(liveSessionIdsOf());
+			};
+			active = active ? active.then(reload, reload) : reload();
+			void active.catch((error: unknown) =>
+				appendMcpLog("host", error instanceof Error ? error.message : String(error)),
+			);
+		}, 300);
+	});
+	return () => {
+		stopped = true;
+		clearTimeout(timer);
+		watcher?.close();
+		return active ?? Promise.resolve();
 	};
 }
 
-function readBounded(path: string): { text: string; truncated: boolean } {
-	const fd = openSync(path, "r");
+const OUTPUT_LIMIT = 1024 * 1024;
+function outputPath(sessionId: string, toolCallId: string): string {
+	if (!/^[A-Za-z0-9_-]{1,200}$/.test(sessionId)) throw new Error("Invalid session identity.");
+	return join(
+		dataDir(),
+		"mcp-output",
+		sessionId,
+		`${createHash("sha256").update(toolCallId).digest("hex")}.txt`,
+	);
+}
+function assertOutputDirectories(sessionId: string, create: boolean): void {
+	const root = join(dataDir(), "mcp-output");
+	const directory = dirname(outputPath(sessionId, ""));
+	for (const path of [root, directory]) {
+		if (create) mkdirSync(path, { recursive: true, mode: 0o700 });
+		const stat = lstatSync(path);
+		if (!stat.isDirectory() || stat.isSymbolicLink())
+			throw new Error("MCP output must stay in its owned directory.");
+	}
+}
+export function storeMcpToolOutput(sessionId: string, toolCallId: string, text: string): string {
+	const path = outputPath(sessionId, toolCallId);
+	assertOutputDirectories(sessionId, true);
+	const fd = openSync(
+		path,
+		constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,
+		0o600,
+	);
 	try {
-		const size = fstatSync(fd).size;
-		const buffer = Buffer.alloc(Math.min(size, READ_OUTPUT_MAX_BYTES));
-		const read = readSync(fd, buffer, 0, buffer.length, 0);
-		return { text: buffer.subarray(0, read).toString("utf8"), truncated: size > read };
+		writeFileSync(fd, text);
 	} finally {
 		closeSync(fd);
 	}
+	return path;
 }
-
 export async function readMcpToolOutput(
 	workspaceId: string,
 	sessionId: string,
@@ -516,18 +428,31 @@ export async function readMcpToolOutput(
 	cwd: string,
 ): Promise<McpReadOutputResult> {
 	const { messages } = await getSessionMessages(sessionId, workspaceId, cwd);
-	const result = messages.find(
-		(message) => message.role === "toolResult" && message.toolCallId === toolCallId,
+	const message = messages.find(
+		(candidate) => candidate.role === "toolResult" && candidate.toolCallId === toolCallId,
 	);
-	if (result?.role !== "toolResult" || !isMcpResultTool(result.toolName)) {
+	if (message?.role !== "toolResult" || !isMcpResultTool(message.toolName))
 		return { available: false, reason: "unavailable" };
-	}
-	const details = result.details as { fullOutputPath?: unknown } | undefined;
-	const path = details?.fullOutputPath;
-	if (typeof path !== "string" || !isAbsolute(path))
-		return { available: false, reason: "unavailable" };
+	const path = outputPath(sessionId, toolCallId);
 	try {
-		return { available: true, ...readBounded(path) };
+		assertOutputDirectories(sessionId, false);
+		const root = realpathSync(join(dataDir(), "mcp-output"));
+		if (!realpathSync(path).startsWith(`${root}${sep}`))
+			return { available: false, reason: "unavailable" };
+		const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+		try {
+			const stat = fstatSync(fd);
+			if (!stat.isFile()) return { available: false, reason: "unavailable" };
+			const buffer = Buffer.alloc(Math.min(stat.size, OUTPUT_LIMIT));
+			const read = readSync(fd, buffer, 0, buffer.length, 0);
+			return {
+				available: true,
+				text: buffer.subarray(0, read).toString("utf8"),
+				truncated: stat.size > read,
+			};
+		} finally {
+			closeSync(fd);
+		}
 	} catch {
 		return { available: false, reason: "expired" };
 	}

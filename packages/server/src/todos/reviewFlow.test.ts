@@ -127,7 +127,7 @@ test("review sidecar: put/read round-trip, rollback restore, corrupt file reads 
 	// Plain drop removes; a corrupt file reads as none.
 	dropReviewRecord(repo, SESSION, "t_1");
 	expect(readReviewRecords(repo, SESSION)).toEqual({});
-	writeFileSync(join(repo, ".thinkrail/context/todos", `${SESSION}.reviews.json`), "{nope");
+	writeFileSync(join(repo, ".raildesign/context/todos", `${SESSION}.reviews.json`), "{nope");
 	expect(readReviewRecords(repo, SESSION)).toEqual({});
 });
 

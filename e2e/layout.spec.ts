@@ -732,6 +732,7 @@ test("keyboard and menu commands reorder, search, recursively split, and explici
 	await page.getByTestId("tab-review").click({ button: "right" });
 	await page.getByRole("menuitem", { name: "Show Files" }).click();
 	await expect(page.getByTestId("tab-files")).toBeVisible();
+	await expect(page.getByTestId("tool-rail-review")).toBeFocused();
 	await page.getByTestId("tool-rail-specs").focus();
 	await page.keyboard.press("Delete");
 	await expect(page.getByTestId("tab-specs")).toHaveCount(0);

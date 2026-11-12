@@ -11,7 +11,7 @@ import {
 	windowsManualUpdateMessage,
 } from "./update";
 
-const RELEASE_ERROR_RE = /^Unable to check for ThinkRail updates\.$/;
+const RELEASE_ERROR_RE = /^Unable to check for RailDesign updates\.$/;
 
 function githubJson(body: unknown): Response {
 	return new Response(JSON.stringify(body), {
@@ -31,7 +31,7 @@ function createCliHostUpdate(
 		build,
 		baked,
 		installedVersion,
-		{ platform: "linux", execPath: "/opt/thinkrail/bin/thinkrail" },
+		{ platform: "linux", execPath: "/opt/raildesign/bin/raildesign" },
 		fetchImpl,
 		childRunner,
 	);
@@ -47,7 +47,7 @@ describe("discoverReleaseVersion", () => {
 			return githubJson({ tag_name: "v1.2.3" });
 		});
 
-		expect(requestedUrl).toBe("https://api.github.com/repos/JetBrains/thinkrail/releases/latest");
+		expect(requestedUrl).toBe("https://api.github.com/repos/Bouchee/thinkrail/releases/latest");
 		expect(requestSignal).toBeInstanceOf(AbortSignal);
 		expect(candidate).toBe("1.2.3");
 	});
@@ -65,7 +65,7 @@ describe("discoverReleaseVersion", () => {
 		});
 
 		expect(requestedUrl).toBe(
-			"https://api.github.com/repos/JetBrains/thinkrail/releases?per_page=20",
+			"https://api.github.com/repos/Bouchee/thinkrail/releases?per_page=20",
 		);
 		expect(candidate).toBe("1.4.0-nightly.17");
 	});
@@ -165,7 +165,7 @@ describe("createCliHostUpdate", () => {
 			settled = true;
 		});
 		await Promise.resolve();
-		expect(command).toEqual(["/opt/thinkrail/bin/thinkrail", "update"]);
+		expect(command).toEqual(["/opt/raildesign/bin/raildesign", "update"]);
 		expect(settled).toBe(false);
 
 		finish(0);
@@ -188,8 +188,8 @@ describe("createCliHostUpdate", () => {
 		});
 		if (!nonzero || !launchFailure) throw new Error("expected host updates");
 
-		await expect(nonzero.run()).rejects.toThrow(/^Unable to update ThinkRail\.$/);
-		await expect(launchFailure.run()).rejects.toThrow(/^Unable to update ThinkRail\.$/);
+		await expect(nonzero.run()).rejects.toThrow(/^Unable to update RailDesign\.$/);
+		await expect(launchFailure.run()).rejects.toThrow(/^Unable to update RailDesign\.$/);
 	});
 
 	test("returns a notice only for a strictly newer same-channel version", async () => {
@@ -227,7 +227,7 @@ describe("createCliHostUpdate", () => {
 		expect(
 			createCliHostUpdateImpl("binary", "stable", "1.2.3", {
 				platform: "linux",
-				execPath: "/home/José+dev@example/bin/thinkrail",
+				execPath: "/home/José+dev@example/bin/raildesign",
 			}),
 		).toBeDefined();
 	});
@@ -239,14 +239,14 @@ describe("createCliHostUpdate", () => {
 		expect(createCliHostUpdate("binary", "beta", "1.2.3-beta.1")).toBeUndefined();
 		expect(createCliHostUpdate("binary", "nightly", "1.2.3-nightly.1")).toBeDefined();
 		for (const runtime of [
-			{ platform: "linux", execPath: "/downloads/thinkrail-linux-x64" },
-			{ platform: "linux", execPath: "/opt/unsafe;prefix/bin/thinkrail" },
+			{ platform: "linux", execPath: "/downloads/raildesign-linux-x64" },
+			{ platform: "linux", execPath: "/opt/unsafe;prefix/bin/raildesign" },
 			{
 				platform: "win32",
-				execPath: "C:\\Downloads\\thinkrail-windows-x64.exe",
+				execPath: "C:\\Downloads\\raildesign-windows-x64.exe",
 			},
-			{ platform: "win32", execPath: "C:\\unsafe%prefix\\bin\\thinkrail.exe" },
-			{ platform: "win32", execPath: "C:\\unsafe!prefix\\bin\\thinkrail.exe" },
+			{ platform: "win32", execPath: "C:\\unsafe%prefix\\bin\\raildesign.exe" },
+			{ platform: "win32", execPath: "C:\\unsafe!prefix\\bin\\raildesign.exe" },
 		]) {
 			expect(createCliHostUpdateImpl("binary", "stable", "1.2.3", runtime)).toBeUndefined();
 		}
@@ -375,7 +375,7 @@ describe("resolveUpdatePlan", () => {
 		const runtime = {
 			build: "binary",
 			platform: "linux",
-			execPath: "/opt/current/bin/thinkrail",
+			execPath: "/opt/current/bin/raildesign",
 		};
 		const stale = resolveUpdatePlan({
 			...runtime,
@@ -399,11 +399,11 @@ describe("resolveUpdatePlan", () => {
 	});
 
 	test("targets an installed prefix containing Unicode and safe punctuation", () => {
-		const prefix = "/home/José+dev@example/thinkrail";
+		const prefix = "/home/José+dev@example/raildesign";
 		const plan = resolveUpdatePlan({
 			build: "binary",
 			platform: "linux",
-			execPath: `${prefix}/bin/thinkrail`,
+			execPath: `${prefix}/bin/raildesign`,
 			args: { version: "latest" },
 			installMeta: { prefix, channel: "stable" },
 			baked: "stable",
@@ -417,7 +417,7 @@ describe("resolveUpdatePlan", () => {
 		const runtime = {
 			build: "binary",
 			platform: "darwin",
-			execPath: "/opt/current/bin/thinkrail",
+			execPath: "/opt/current/bin/raildesign",
 		};
 		expect(
 			resolveUpdatePlan({
@@ -440,9 +440,9 @@ describe("resolveUpdatePlan", () => {
 	});
 
 	test.each([
-		["/opt/manual/thinkrail", { prefix: "/home/u/.local", channel: "nightly" }],
-		["/downloads/thinkrail-linux-x64", {}],
-		["/opt/unsafe;prefix/bin/thinkrail", {}],
+		["/opt/manual/raildesign", { prefix: "/home/u/.local", channel: "nightly" }],
+		["/downloads/raildesign-linux-x64", {}],
+		["/opt/unsafe;prefix/bin/raildesign", {}],
 	])("fails closed for the manual binary %s", (execPath, installMeta) => {
 		expect(() =>
 			resolveUpdatePlan({
@@ -544,7 +544,7 @@ describe("resolveWindowsUpdatePlan", () => {
 		const plan = resolveWindowsUpdatePlan({
 			build: "binary",
 			platform: "win32",
-			execPath: "D:\\current\\bin\\ThinkRail.exe",
+			execPath: "D:\\current\\bin\\RailDesign.exe",
 			args: { version: "latest" },
 			installMeta: { prefix: "C:\\other", channel: "nightly" },
 			baked: "stable",
@@ -556,7 +556,7 @@ describe("resolveWindowsUpdatePlan", () => {
 		const missing = resolveWindowsUpdatePlan({
 			build: "binary",
 			platform: "win32",
-			execPath: "D:\\current\\bin\\thinkrail.exe",
+			execPath: "D:\\current\\bin\\raildesign.exe",
 			args: { version: "latest" },
 			installMeta: {},
 			baked: "nightly",
@@ -572,7 +572,7 @@ describe("resolveWindowsUpdatePlan", () => {
 			const plan = resolveWindowsUpdatePlan({
 				build: "binary",
 				platform: "win32",
-				execPath: "D:\\current\\bin\\thinkrail.exe",
+				execPath: "D:\\current\\bin\\raildesign.exe",
 				args: { version: "latest" },
 				installMeta: { prefix, channel: "nightly" },
 				baked: "stable",
@@ -587,24 +587,24 @@ describe("resolveWindowsUpdatePlan", () => {
 		const plan = resolveWindowsUpdatePlan({
 			build: "binary",
 			platform: "win32",
-			execPath: "\\\\nas\\share\\thinkrail\\bin\\thinkrail.exe",
+			execPath: "\\\\nas\\share\\raildesign\\bin\\raildesign.exe",
 			args: { version: "latest" },
-			installMeta: { prefix: "//nas/share/thinkrail", channel: "nightly" },
+			installMeta: { prefix: "//nas/share/raildesign", channel: "nightly" },
 			baked: "stable",
 			home,
 		});
-		expect(plan.prefix).toBe("//nas/share/thinkrail");
+		expect(plan.prefix).toBe("//nas/share/raildesign");
 		expect(plan.channel).toBe("nightly");
 	});
 
 	test.each([
-		["D:\\manual\\ThinkRail.exe", {}],
+		["D:\\manual\\RailDesign.exe", {}],
 		[
-			"D:\\Downloads\\thinkrail-windows-x64.exe",
+			"D:\\Downloads\\raildesign-windows-x64.exe",
 			{ prefix: "C:\\Users\\u\\.local", channel: "nightly" },
 		],
-		["D:\\unsafe%prefix\\bin\\thinkrail.exe", {}],
-		["D:\\unsafe!prefix\\bin\\thinkrail.exe", {}],
+		["D:\\unsafe%prefix\\bin\\raildesign.exe", {}],
+		["D:\\unsafe!prefix\\bin\\raildesign.exe", {}],
 	])("fails closed for the manual Windows binary %s", (execPath, installMeta) => {
 		expect(() =>
 			resolveWindowsUpdatePlan({
@@ -644,7 +644,7 @@ describe("windowsManualUpdateMessage", () => {
 	test("stable/latest is one bare command per shell", () => {
 		const msg = windowsManualUpdateMessage("stable", "latest");
 		expect(psLine(msg)).toContain(
-			"irm https://raw.githubusercontent.com/JetBrains/thinkrail/main/install.ps1 | iex",
+			"irm https://raw.githubusercontent.com/Bouchee/thinkrail/main/install.ps1 | iex",
 		);
 		expect(cmdLine(msg)).toContain('powershell -c "irm ');
 		expect(msg).not.toContain("THINKRAIL_CHANNEL");
@@ -702,13 +702,13 @@ describe("resolveWindowsPrefix", () => {
 
 	test("keeps a custom prefix, including a UNC path", () => {
 		expect(resolveWindowsPrefix("D:\\tools", home)).toBe("D:/tools");
-		expect(resolveWindowsPrefix("\\\\nas\\share\\thinkrail", home)).toBe("//nas/share/thinkrail");
+		expect(resolveWindowsPrefix("\\\\nas\\share\\raildesign", home)).toBe("//nas/share/raildesign");
 		expect(resolveWindowsPrefix("C:\\R&D\\tools", home)).toBe("C:/R&D/tools");
 	});
 
 	test("refuses a prefix that isn't rooted or can't be safely quoted", () => {
 		for (const bad of [
-			"tools\\thinkrail",
+			"tools\\raildesign",
 			"/home/u/.local",
 			'D:\\a" && del /f /q C:\\Windows\\System32 && set "X=',
 			"D:\\%APPDATA%\\x",

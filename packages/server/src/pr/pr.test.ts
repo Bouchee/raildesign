@@ -57,7 +57,7 @@ describe("renderPrBody", () => {
 		expect(body).toContain("### Ship FloodWait handling");
 		expect(body).toContain("- [x] **Implement FloodWait handling** (`abc1234`)");
 		expect(body).toContain("Verified: bun test — 12 pass");
-		expect(body).toContain("Review: 1/2 steps reviewed in ThinkRail.");
+		expect(body).toContain("Review: 1/2 steps reviewed in RailDesign.");
 	});
 
 	test("an empty plan renders empty", () => {
@@ -82,7 +82,7 @@ describe("renderPrBody", () => {
 		});
 		expect(body).toContain("## Committed outside the plan");
 		expect(body).toContain("- [x] **chore: unplanned commit** (`beef123`)");
-		expect(body).toContain("Review: 1/3 steps reviewed in ThinkRail.");
+		expect(body).toContain("Review: 1/3 steps reviewed in RailDesign.");
 	});
 
 	test("a branch with only adopted commits still gets a non-empty body", () => {

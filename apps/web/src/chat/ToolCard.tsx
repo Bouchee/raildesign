@@ -1,6 +1,7 @@
 import {
 	RiCheckLine as Check,
 	RiArrowRightSLine as ChevronRight,
+	RiTimeLine as Clock,
 	RiLoader4Line as Loader2,
 	RiCloseLine as X,
 } from "@remixicon/react";
@@ -32,6 +33,7 @@ export function ToolCard({
 	onOpenFile?: ((path: string) => void) | undefined;
 }) {
 	const t = useT();
+	const pending = !tool && !dead;
 	const status = tool?.status ?? (dead ? "error" : "running");
 	const isError = status === "error";
 	const renderProps = {
@@ -44,7 +46,7 @@ export function ToolCard({
 		onOpenFile,
 		streaming,
 	};
-	const summary = getToolSummary(t, toolName, renderProps);
+	const summary = pending ? "" : getToolSummary(t, toolName, renderProps);
 
 	const autoExpand = isError || (resolveProminence(toolName).defaultExpanded && status === "done");
 	const [expanded, toggle, toggleRef] = useFold(toolCallId, autoExpand);
@@ -54,7 +56,7 @@ export function ToolCard({
 			data-testid="tool-card"
 			data-chat-fold-root
 			data-tool={toolName}
-			data-status={status}
+			data-status={pending ? "pending" : status}
 			data-expanded={expanded}
 			className="rounded-sm border border-border-default bg-container-elevated-bg"
 		>
@@ -66,7 +68,9 @@ export function ToolCard({
 				onClick={toggle}
 				className="flex w-full cursor-pointer select-none items-center gap-4 px-8 py-4 text-left tr-text-metadata outline-none focus-visible:ring-2 focus-visible:ring-primary"
 			>
-				{status === "running" ? (
+				{pending ? (
+					<Clock className="size-12 shrink-0 text-text-muted" />
+				) : status === "running" ? (
 					<Loader2 className="size-12 shrink-0 animate-spin text-text-muted motion-reduce:animate-none" />
 				) : isError ? (
 					<X className="size-12 shrink-0 text-feedback-error" />
@@ -85,7 +89,7 @@ export function ToolCard({
 					className={`size-16 shrink-0 text-text-muted transition-transform ${expanded ? "rotate-90" : ""}`}
 				/>
 			</button>
-			{expanded ? (
+			{expanded && !pending ? (
 				<div className={cn("px-8 pb-4", isError && "text-feedback-error")}>
 					<ToolRendererBody {...renderProps} imageLabel={summary} />
 				</div>

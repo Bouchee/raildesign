@@ -9,20 +9,17 @@ import {
 	DialogTitle,
 } from "@thinkrail/ui/dialog";
 import { cn } from "@thinkrail/ui/utils";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useState } from "react";
 import { SettingsSection, useAppStore } from "@/store";
-import { loadInAppSurvey } from "@/transport";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { ChatSettings } from "./ChatSettings";
 import { EnvironmentSettings } from "./EnvironmentSettings";
 import { ExtensionsSettings } from "./ExtensionsSettings";
-import { FeedbackSettings } from "./FeedbackSettings";
 import { GithubSettings } from "./GithubSettings";
 import { LanguageSettings } from "./LanguageSettings";
 import { McpSettings } from "./McpSettings";
 import { ModelsSettings } from "./ModelsSettings";
 import { NotificationsSettings } from "./NotificationsSettings";
-import { PrivacySettings } from "./PrivacySettings";
 import { ProvidersSettings } from "./ProvidersSettings";
 import { SettingsDialogContainer } from "./settingsDialogContainer";
 import { resolveSettingsSection, settingsNavGroups } from "./settingsNav";
@@ -46,12 +43,7 @@ export function SettingsDialog({
 	const protocolVersion = useAppStore((s) => s.protocolVersion);
 	const filteredGroups = settingsNavGroups(protocolVersion, updateSettings !== undefined);
 	const selectedSection = resolveSettingsSection(section, filteredGroups);
-	const feedbackActive = selectedSection === SettingsSection.Feedback;
 	const [contentEl, setContentEl] = useState<HTMLElement | null>(null);
-
-	useEffect(() => {
-		if (open) void loadInAppSurvey();
-	}, [open]);
 
 	return (
 		<Dialog
@@ -116,19 +108,6 @@ export function SettingsDialog({
 								</div>
 							</div>
 						))}
-
-						<button
-							type="button"
-							data-testid="settings-nav-feedback"
-							data-active={feedbackActive}
-							onClick={() => useAppStore.getState().setSettingsSection(SettingsSection.Feedback)}
-							className={cn(
-								"shrink-0 rounded-sm border border-primary-soft px-8 py-4 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary md:mt-auto md:px-12 md:py-8",
-								feedbackActive ? "bg-primary-subtle" : "bg-control-bg hover:bg-control-bg-hovered",
-							)}
-						>
-							<span className="tr-text-ui text-primary">{t("settings.dialog.feedbackCta")}</span>
-						</button>
 					</nav>
 
 					<div className="min-h-0 flex-1 overflow-y-auto p-16">
@@ -165,12 +144,8 @@ export function SettingsDialog({
 								<GithubSettings />
 							) : selectedSection === SettingsSection.Notifications ? (
 								<NotificationsSettings />
-							) : selectedSection === SettingsSection.Privacy ? (
-								<PrivacySettings />
 							) : selectedSection === SettingsSection.Updates && updateSettings !== undefined ? (
 								updateSettings
-							) : selectedSection === SettingsSection.Feedback ? (
-								<FeedbackSettings />
 							) : (
 								<AppearanceSettings />
 							)}

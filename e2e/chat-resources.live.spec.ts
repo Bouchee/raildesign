@@ -14,7 +14,7 @@ function observeParentStarts(page: Page) {
 				data?: { sessionId?: string; event?: { type?: string } };
 			};
 			const id = frame.data?.sessionId;
-			if (frame.channel === "pi.event" && id && frame.data?.event?.type === "agent_start") {
+			if (frame.channel === "session.event" && id && frame.data?.event?.type === "agent_start") {
 				starts.set(id, (starts.get(id) ?? 0) + 1);
 			}
 		});

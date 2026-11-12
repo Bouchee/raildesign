@@ -1,5 +1,4 @@
 import {
-	type BackgroundCommandOutputResult,
 	type BackgroundCommandStatus,
 	type BackgroundCommandSummary,
 	compareResourceHistory,
@@ -20,44 +19,32 @@ import { CodedError } from "@thinkrail/shared/codedError";
 import type { BackgroundCommands } from "pi-background-commands";
 import type { ChildHandle, DelegationService, LifecycleEvent } from "pi-delegation";
 import {
-	archivedCommandOutput,
 	finishedResources,
 	pageResources,
+	type ResourceHistoryScope,
 	recordResource,
 } from "../resourceHistory";
-import { withSessionResources } from "./agentSessionManager";
-import { delegationServiceFor, INTERRUPTED_ABORT_REASON, stopSessionChildren } from "./delegation";
-import { mcpResourceSummaries } from "./mcpSessions";
-
-let publish: (payload: { workspaceId: string; sessionId: string }) => void = () => {};
-export function setSessionResourcesPublisher(fn: typeof publish): void {
-	publish = fn;
-}
-export function publishSessionResourcesChanged(workspaceId: string, sessionId: string): void {
-	publish({ workspaceId, sessionId });
-}
+import { INTERRUPTED_ABORT_REASON } from "./delegation";
+import { isHostResourceId } from "./resourceIdentity";
 
 function unavailable(): CodedError {
 	return new CodedError("RESOURCE_UNAVAILABLE", "Resource unavailable");
 }
-
-function childFor(
-	workspaceId: string,
-	parentSessionId: string,
-	childSessionId: string,
-): ChildHandle {
-	const child = delegationServiceFor(workspaceId).findChild(childSessionId);
-	if (
-		!child ||
-		child.record.scope !== workspaceId ||
-		child.record.parentSessionId !== parentSessionId
-	)
+function assertScope(scope: ResourceHistoryScope): void {
+	if (!isHostResourceId(scope.workspaceId) || !isHostResourceId(scope.sessionId))
 		throw unavailable();
-	return child;
+}
+function inScope(record: ResourceRecord, scope: ResourceHistoryScope): boolean {
+	return (
+		isHostResourceId(resourceRecordId(record)) &&
+		(record.kind === "command"
+			? record.summary.sessionId === scope.sessionId
+			: record.summary.parentSessionId === scope.sessionId)
+	);
 }
 
-function subagentSummary(
-	{ record, snapshot }: ChildHandle,
+export function subagentSummary(
+	{ record, snapshot }: Pick<ChildHandle, "record" | "snapshot">,
 	parentSessionId: string,
 ): SubagentResourceSummary | undefined {
 	if (!snapshot) return undefined;
@@ -81,35 +68,42 @@ function subagentSummary(
 	};
 }
 
-function ownedChildren(workspaceId: string, parentSessionId: string): ResourceRecord[] {
-	return delegationServiceFor(workspaceId)
-		.childrenOf(parentSessionId)
-		.flatMap((child): ResourceRecord[] => {
-			if (child.record.scope !== workspaceId || child.record.parentSessionId !== parentSessionId)
-				return [];
-			const summary = subagentSummary(child, parentSessionId);
-			return summary ? [{ kind: "subagent", summary }] : [];
-		});
+export function ownedChildResources(
+	service: Pick<DelegationService, "childrenOf">,
+	scope: ResourceHistoryScope,
+): ResourceRecord[] {
+	assertScope(scope);
+	return service.childrenOf(scope.sessionId).flatMap((child): ResourceRecord[] => {
+		if (
+			child.record.scope !== scope.workspaceId ||
+			child.record.parentSessionId !== scope.sessionId ||
+			!isHostResourceId(child.sessionId)
+		)
+			return [];
+		const summary = subagentSummary(child, scope.sessionId);
+		return summary ? [{ kind: "subagent", summary }] : [];
+	});
 }
 
-function commandRecords(commands: BackgroundCommands): ResourceRecord[] {
-	return commands.list().map((summary): ResourceRecord => ({ kind: "command", summary }));
-}
-
-function historyOf(
-	scope: { workspaceId: string; sessionId: string },
+/** Caller must first authorize the scope. Merge supplied owner snapshots with the application archive. */
+export function resourceHistoryOf(
+	scope: ResourceHistoryScope,
 	kind: ResourceKind,
 	current: readonly ResourceRecord[],
 ) {
-	const live = current.filter(isLiveResource);
+	assertScope(scope);
+	const owned = current.filter((record) => record.kind === kind && inScope(record, scope));
+	const live = owned.filter(isLiveResource);
 	const settled = new Map(
-		current
+		owned
 			.filter((record) => !isLiveResource(record))
 			.map((record) => [resourceRecordId(record), record]),
 	);
-	const finished = finishedResources(scope, kind, new Set(live.map(resourceRecordId))).map(
-		(record) => (record.summary.interrupted && settled.get(resourceRecordId(record))) || record,
-	);
+	const finished = finishedResources(scope, kind, new Set(live.map(resourceRecordId)))
+		.filter((record) => inScope(record, scope))
+		.map(
+			(record) => (record.summary.interrupted && settled.get(resourceRecordId(record))) || record,
+		);
 	const archived = new Set(finished.map(resourceRecordId));
 	for (const [id, record] of settled) if (!archived.has(id)) finished.push(record);
 	finished.sort((a, b) =>
@@ -117,108 +111,63 @@ function historyOf(
 	);
 	return { live, finished };
 }
-
-function commandHistory(
-	workspaceId: string,
-	sessionId: string,
-	commands: BackgroundCommands,
-): ReturnType<typeof historyOf> {
-	return historyOf({ workspaceId, sessionId }, "command", commandRecords(commands));
-}
-
-function subagentHistory(workspaceId: string, sessionId: string): ReturnType<typeof historyOf> {
-	return historyOf({ workspaceId, sessionId }, "subagent", ownedChildren(workspaceId, sessionId));
-}
-
 function commandSummaries(records: readonly ResourceRecord[]): BackgroundCommandSummary[] {
 	return records.flatMap((record) => (record.kind === "command" ? [record.summary] : []));
 }
-
 function subagentSummaries(records: readonly ResourceRecord[]): SubagentResourceSummary[] {
 	return records.flatMap((record) => (record.kind === "subagent" ? [record.summary] : []));
 }
 
 export function getSessionResources(
-	workspaceId: string,
-	sessionId: string,
-	cwd: string,
-): Promise<SessionResources> {
-	return withSessionResources(workspaceId, sessionId, cwd, (commands) => {
-		const command = commandHistory(workspaceId, sessionId, commands);
-		const subagent = subagentHistory(workspaceId, sessionId);
-		const window = (history: ReturnType<typeof historyOf>) => [
-			...history.live,
-			...history.finished.slice(0, RESOURCE_HISTORY_PAGE_LIMIT),
-		];
-		return {
-			workspaceId,
-			sessionId,
-			commands: commandSummaries(window(command)),
-			subagents: subagentSummaries(window(subagent)),
-			mcpServers: mcpResourceSummaries(sessionId),
-			history: {
-				commands: tallyResources(command.finished),
-				subagents: tallyResources(subagent.finished),
-			},
-		};
-	});
+	scope: ResourceHistoryScope,
+	current: readonly ResourceRecord[],
+): SessionResources {
+	const command = resourceHistoryOf(scope, "command", current);
+	const subagent = resourceHistoryOf(scope, "subagent", current);
+	const window = (history: ReturnType<typeof resourceHistoryOf>) => [
+		...history.live,
+		...history.finished.slice(0, RESOURCE_HISTORY_PAGE_LIMIT),
+	];
+	return {
+		workspaceId: scope.workspaceId,
+		sessionId: scope.sessionId,
+		commands: commandSummaries(window(command)),
+		subagents: subagentSummaries(window(subagent)),
+		history: {
+			commands: tallyResources(command.finished),
+			subagents: tallyResources(subagent.finished),
+		},
+	};
 }
 
 export function getResourceHistoryPage(
-	workspaceId: string,
-	sessionId: string,
-	cwd: string,
+	scope: ResourceHistoryScope,
+	current: readonly ResourceRecord[],
 	request: { kind: ResourceKind; before?: ResourceHistoryCursor; limit?: number },
-): Promise<ResourceHistoryPage> {
-	const limit = Math.min(
-		Math.max(Math.trunc(request.limit ?? RESOURCE_HISTORY_PAGE_LIMIT), 1),
-		RESOURCE_HISTORY_MAX_PAGE_LIMIT,
+): ResourceHistoryPage {
+	const requested = request.limit ?? RESOURCE_HISTORY_PAGE_LIMIT;
+	const limit = Number.isFinite(requested)
+		? Math.min(Math.max(Math.trunc(requested), 1), RESOURCE_HISTORY_MAX_PAGE_LIMIT)
+		: RESOURCE_HISTORY_PAGE_LIMIT;
+	const page = pageResources(
+		resourceHistoryOf(scope, request.kind, current).finished,
+		request.before,
+		limit,
 	);
-	return withSessionResources(workspaceId, sessionId, cwd, (commands): ResourceHistoryPage => {
-		if (request.kind === "command") {
-			const page = pageResources(
-				commandHistory(workspaceId, sessionId, commands).finished,
-				request.before,
-				limit,
-			);
-			return { kind: "command", items: commandSummaries(page.items), hasMore: page.hasMore };
-		}
-		const page = pageResources(
-			subagentHistory(workspaceId, sessionId).finished,
-			request.before,
-			limit,
-		);
-		return { kind: "subagent", items: subagentSummaries(page.items), hasMore: page.hasMore };
-	});
-}
-
-export function readBackgroundCommandOutput(
-	workspaceId: string,
-	sessionId: string,
-	commandId: string,
-	cwd: string,
-): Promise<BackgroundCommandOutputResult> {
-	return withSessionResources(workspaceId, sessionId, cwd, (commands) => {
-		const handle = commands.find(commandId);
-		const output = handle?.output;
-		if (handle && output) return { available: true, command: handle.snapshot, output };
-		const archived = commandHistory(workspaceId, sessionId, commands).finished.find(
-			(record) => resourceRecordId(record) === commandId,
-		);
-		const log = archived && archivedCommandOutput({ workspaceId, sessionId }, commandId);
-		return archived?.kind === "command" && log
-			? { available: true, command: archived.summary, output: log }
-			: { available: false };
-	});
+	return request.kind === "command"
+		? { kind: "command", items: commandSummaries(page.items), hasMore: page.hasMore }
+		: { kind: "subagent", items: subagentSummaries(page.items), hasMore: page.hasMore };
 }
 
 export function archiveCommandHistory(
 	workspaceId: string,
 	sessionId: string,
-	commands: BackgroundCommands,
+	commands: Pick<BackgroundCommands, "sessionId" | "list" | "find" | "onChange">,
 	closing: () => boolean,
 ): { finish: () => void } {
 	const scope = { workspaceId, sessionId };
+	assertScope(scope);
+	if (commands.sessionId !== sessionId) throw unavailable();
 	const recorded = new Map<string, BackgroundCommandStatus>();
 	const requestedStops = new Set<string>();
 	let finished = false;
@@ -226,6 +175,7 @@ export function archiveCommandHistory(
 		if (finished) return;
 		const listed = new Set<string>();
 		for (const snapshot of commands.list()) {
+			if (snapshot.sessionId !== sessionId || !isHostResourceId(snapshot.id)) continue;
 			listed.add(snapshot.id);
 			if (recorded.get(snapshot.id) === snapshot.status) continue;
 			recorded.set(snapshot.id, snapshot.status);
@@ -255,6 +205,7 @@ export function archiveCommandHistory(
 			finished = true;
 			unsubscribe();
 			for (const snapshot of commands.list()) {
+				if (snapshot.sessionId !== sessionId || !isHostResourceId(snapshot.id)) continue;
 				if (!isLiveResource({ kind: "command", summary: snapshot })) continue;
 				recordResource(
 					scope,
@@ -268,13 +219,21 @@ export function archiveCommandHistory(
 
 export function archiveSubagentRun(
 	workspaceId: string,
-	service: DelegationService,
+	service: Pick<DelegationService, "findChild">,
 	event: LifecycleEvent,
 ): void {
 	if (event.type !== "run-queued" && event.type !== "run-started" && event.type !== "run-terminal")
 		return;
 	const child = service.findChild(event.sessionId);
-	if (!child || child.record.scope !== workspaceId) return;
+	if (
+		!child ||
+		child.record.scope !== workspaceId ||
+		child.record.parentSessionId !== event.parentSessionId
+	)
+		return;
+	const scope = { workspaceId, sessionId: event.parentSessionId };
+	assertScope(scope);
+	if (!isHostResourceId(child.sessionId)) return;
 	const summary = subagentSummary(child, event.parentSessionId);
 	if (!summary) return;
 	const terminal = event.type === "run-terminal";
@@ -290,44 +249,5 @@ export function archiveSubagentRun(
 				...(cutOff ? { interrupted: true } : {}),
 			},
 		},
-	);
-}
-
-export function stopBackgroundCommand(
-	workspaceId: string,
-	sessionId: string,
-	commandId: string,
-	cwd: string,
-): Promise<void> {
-	return withSessionResources(workspaceId, sessionId, cwd, (commands) => {
-		const handle = commands.find(commandId);
-		if (!handle) throw unavailable();
-		handle.stop();
-	});
-}
-
-export function stopSubagent(
-	workspaceId: string,
-	parentSessionId: string,
-	childSessionId: string,
-	cwd: string,
-): Promise<void> {
-	return withSessionResources(workspaceId, parentSessionId, cwd, () => {
-		void childFor(workspaceId, parentSessionId, childSessionId)
-			.abort("user")
-			.catch(() => {});
-	});
-}
-
-export function stopAllSubagents(
-	workspaceId: string,
-	parentSessionId: string,
-	cwd: string,
-): Promise<number> {
-	return withSessionResources(
-		workspaceId,
-		parentSessionId,
-		cwd,
-		() => stopSessionChildren(workspaceId, parentSessionId, "user").stopped,
 	);
 }

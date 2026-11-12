@@ -82,6 +82,11 @@ test("advertises the client protocol version in the WebSocket handshake", () => 
 describe("WsTransport channel replay", () => {
 	test.each([
 		[
+			"append-only session events are not replayed to late subscribers",
+			WS_CHANNELS.sessionEvent,
+			{ sessionId: "s", runId: "r", seq: 1, event: { type: "agent_start" } },
+		],
+		[
 			"resource invalidations deliver live but are not replayed on remount",
 			WS_CHANNELS.sessionResourcesChanged,
 			{ workspaceId: "workspace", sessionId: "session" },
@@ -94,16 +99,6 @@ describe("WsTransport channel replay", () => {
 		[
 			"does not replay a provider invalidation to a late settings pane",
 			WS_CHANNELS.providerChanged,
-			{},
-		],
-		[
-			"does not replay an addressed survey invitation to a late subscriber",
-			WS_CHANNELS.feedbackInterview,
-			{},
-		],
-		[
-			"does not replay the addressed GitHub star ask to a late subscriber",
-			WS_CHANNELS.feedbackGithubStar,
 			{},
 		],
 		[

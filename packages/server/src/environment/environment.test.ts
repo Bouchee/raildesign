@@ -1,37 +1,35 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyHostEnvironment, hostEnvironmentStatus, updateHostEnvironment } from "./index";
 
 const originalDataDir = process.env.THINKRAIL_DATA_DIR;
-const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
 const TEST_VARS = ["TR_ENV_A", "TR_ENV_B", "tr_env_b"];
+const LAUNCH_KEYS = Symbol.for("raildesign.shellEnv.launchKeys");
+const processState = globalThis as Record<symbol, unknown>;
+let originalLaunchKeys: unknown;
 let dataDir: string;
-let agentDir: string;
 
 beforeEach(() => {
-	delete (globalThis as Record<symbol, unknown>)[Symbol.for("thinkrail.shellEnv.launchKeys")];
+	originalLaunchKeys = processState[LAUNCH_KEYS];
+	delete processState[LAUNCH_KEYS];
 	dataDir = mkdtempSync(join(tmpdir(), "thinkrail-env-data-"));
-	agentDir = mkdtempSync(join(tmpdir(), "thinkrail-env-agent-"));
 	process.env.THINKRAIL_DATA_DIR = dataDir;
-	delete process.env.PI_CODING_AGENT_DIR;
 	applyHostEnvironment();
 });
 
 afterEach(() => {
+	if (originalLaunchKeys === undefined) delete processState[LAUNCH_KEYS];
+	else processState[LAUNCH_KEYS] = originalLaunchKeys;
 	rmSync(dataDir, { recursive: true, force: true });
-	rmSync(agentDir, { recursive: true, force: true });
 	for (const name of TEST_VARS) delete process.env[name];
 	if (originalDataDir === undefined) delete process.env.THINKRAIL_DATA_DIR;
 	else process.env.THINKRAIL_DATA_DIR = originalDataDir;
-	if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-	else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
 });
 
 test("an update with invalid entries is rejected whole and nothing is saved", () => {
 	const result = updateHostEnvironment({
-		agentDir: "relative/dir",
 		vars: [
 			{ name: "1BAD", value: "x" },
 			{ name: "PATH", value: "x" },
@@ -43,7 +41,6 @@ test("an update with invalid entries is rejected whole and nothing is saved", ()
 	expect(result).toEqual({
 		ok: false,
 		issues: [
-			{ field: "agentDir", code: "notAbsolute" },
 			{ field: "var", index: 0, code: "invalidName" },
 			{ field: "var", index: 1, code: "reserved" },
 			{ field: "var", index: 2, code: "reserved" },
@@ -53,19 +50,6 @@ test("an update with invalid entries is rejected whole and nothing is saved", ()
 	expect(hostEnvironmentStatus().stored).toEqual({ vars: [] });
 });
 
-test("a missing or non-directory agent dir is named", () => {
-	const file = join(agentDir, "file");
-	writeFileSync(file, "");
-	expect(updateHostEnvironment({ agentDir: join(agentDir, "gone"), vars: [] })).toEqual({
-		ok: false,
-		issues: [{ field: "agentDir", code: "notFound" }],
-	});
-	expect(updateHostEnvironment({ agentDir: file, vars: [] })).toEqual({
-		ok: false,
-		issues: [{ field: "agentDir", code: "notDirectory" }],
-	});
-});
-
 test("a malformed record is a thrown request error, not a validation result", () => {
 	expect(() => updateHostEnvironment({ vars: [{ name: 1, value: "x" }] })).toThrow();
 	expect(() => updateHostEnvironment(null)).toThrow();
@@ -73,7 +57,6 @@ test("a malformed record is a thrown request error, not a validation result", ()
 
 test("a saved update is private on disk, drops blank rows and requires a restart", () => {
 	const result = updateHostEnvironment({
-		agentDir: ` ${agentDir} `,
 		vars: [
 			{ name: " TR_ENV_A ", value: "a" },
 			{ name: "", value: "" },
@@ -82,7 +65,7 @@ test("a saved update is private on disk, drops blank rows and requires a restart
 	expect(result).toMatchObject({
 		ok: true,
 		status: {
-			stored: { agentDir, vars: [{ name: "TR_ENV_A", value: "a" }] },
+			stored: { vars: [{ name: "TR_ENV_A", value: "a" }] },
 			restartRequired: true,
 		},
 	});
@@ -93,34 +76,23 @@ test("a saved update is private on disk, drops blank rows and requires a restart
 
 	applyHostEnvironment();
 	expect(process.env.TR_ENV_A).toBe("a");
-	expect(process.env.PI_CODING_AGENT_DIR).toBe(agentDir);
 	expect(hostEnvironmentStatus()).toMatchObject({
 		restartRequired: false,
-		effectiveAgentDir: agentDir,
 	});
 });
 
 test("a launch variable wins and is reported as overridden", () => {
 	process.env.TR_ENV_B = "launch";
-	process.env.PI_CODING_AGENT_DIR = "/launch/agent";
-	updateHostEnvironment({ agentDir, vars: [{ name: "TR_ENV_B", value: "stored" }] });
+	updateHostEnvironment({ vars: [{ name: "TR_ENV_B", value: "stored" }] });
 	applyHostEnvironment();
 	expect(process.env.TR_ENV_B).toBe("launch");
-	expect(process.env.PI_CODING_AGENT_DIR).toBe("/launch/agent");
-	expect(hostEnvironmentStatus().launchOverridden).toEqual(["PI_CODING_AGENT_DIR", "TR_ENV_B"]);
-});
-
-test("a tilde agent dir is expanded against the home directory", () => {
-	updateHostEnvironment({ agentDir: "~", vars: [] });
-	applyHostEnvironment();
-	expect(process.env.PI_CODING_AGENT_DIR).toBe(homedir());
+	expect(hostEnvironmentStatus().launchOverridden).toEqual(["TR_ENV_B"]);
 });
 
 test("an entry that turned invalid on disk is skipped at boot, the rest applies", () => {
 	writeFileSync(
 		join(dataDir, "environment.json"),
 		JSON.stringify({
-			agentDir: join(agentDir, "deleted"),
 			vars: [
 				{ name: "HOME", value: "/elsewhere" },
 				{ name: "TR_ENV_A", value: "kept" },
@@ -131,7 +103,6 @@ test("an entry that turned invalid on disk is skipped at boot, the rest applies"
 	applyHostEnvironment();
 	expect(process.env.HOME).toBe(home);
 	expect(process.env.TR_ENV_A).toBe("kept");
-	expect(process.env.PI_CODING_AGENT_DIR).toBeUndefined();
 	expect(hostEnvironmentStatus().launchOverridden).toEqual([]);
 });
 

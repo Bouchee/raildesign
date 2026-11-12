@@ -330,7 +330,7 @@ test("openExistingWorktree adopts idempotently and removal never reclaims the ch
 	expect((await openExistingWorktree("p1", external)).id).toBe(workspace.id);
 	expect(events).toHaveLength(1);
 	expect(() => renameWorkspace(workspace.id, "hands off")).toThrow(
-		"An existing worktree cannot be renamed by ThinkRail",
+		"An existing worktree cannot be renamed by RailDesign",
 	);
 
 	await removeWorkspace(workspace.id);
@@ -369,7 +369,7 @@ test("existing worktrees represented by another project are rejected before its 
 		false,
 	);
 	await expect(openExistingWorktree("p1", external)).rejects.toThrow(
-		"This worktree is already open under another ThinkRail project",
+		"This worktree is already open under another RailDesign project",
 	);
 });
 
@@ -446,21 +446,21 @@ posix(
 	},
 );
 
-test("createWorkspace seeds a self-ignoring .thinkrail/context scratch dir kept out of git", async () => {
+test("createWorkspace seeds a self-ignoring .raildesign/context scratch dir kept out of git", async () => {
 	const ws = await createWorkspace("p1");
-	const gitignore = join(ws.worktreePath, ".thinkrail", "context", ".gitignore");
+	const gitignore = join(ws.worktreePath, ".raildesign", "context", ".gitignore");
 	expect(existsSync(gitignore)).toBe(true);
 	expect(readFileSync(gitignore, "utf8")).toBe("*\n");
 
-	writeFileSync(join(ws.worktreePath, ".thinkrail", "context", "TASK-x.md"), "scratch\n");
-	expect(gitOut(ws.worktreePath, "check-ignore", ".thinkrail/context/TASK-x.md")).toBe(
-		".thinkrail/context/TASK-x.md",
+	writeFileSync(join(ws.worktreePath, ".raildesign", "context", "TASK-x.md"), "scratch\n");
+	expect(gitOut(ws.worktreePath, "check-ignore", ".raildesign/context/TASK-x.md")).toBe(
+		".raildesign/context/TASK-x.md",
 	);
-	expect(gitOut(ws.worktreePath, "status", "--porcelain")).not.toContain(".thinkrail");
+	expect(gitOut(ws.worktreePath, "status", "--porcelain")).not.toContain(".raildesign");
 });
 
 test("ensureWorkspaceScratchDir never clobbers an existing .gitignore (the Default workspace is the user's repo)", async () => {
-	const contextDir = join(repo, ".thinkrail", "context");
+	const contextDir = join(repo, ".raildesign", "context");
 	mkdirSync(contextDir, { recursive: true });
 	const gitignore = join(contextDir, ".gitignore");
 	writeFileSync(gitignore, "# mine\n!keep.md\n");
@@ -1165,14 +1165,14 @@ test.skipIf(!canSymlink)(
 		const outside = join(dataDir, "outside");
 		mkdirSync(outside);
 
-		symlinkSync(outside, join(repo, ".thinkrail"));
+		symlinkSync(outside, join(repo, ".raildesign"));
 		expect(() => ensureWorkspaceScratchDir(def)).toThrow("not a real directory");
 		expect(existsSync(join(outside, "context"))).toBe(false);
-		rmSync(join(repo, ".thinkrail"));
+		rmSync(join(repo, ".raildesign"));
 
-		mkdirSync(join(repo, ".thinkrail", "context"), { recursive: true });
+		mkdirSync(join(repo, ".raildesign", "context"), { recursive: true });
 		const planted = join(outside, "planted");
-		symlinkSync(planted, join(repo, ".thinkrail", "context", ".gitignore"));
+		symlinkSync(planted, join(repo, ".raildesign", "context", ".gitignore"));
 		expect(() => ensureWorkspaceScratchDir(def)).not.toThrow();
 		expect(existsSync(planted)).toBe(false);
 	},
@@ -1207,12 +1207,12 @@ test("ensuring the Default emits created once; listing never writes into the pro
 	await listWorkspaces("p1");
 	expect(events.map((e) => e.kind)).toEqual(["created"]);
 
-	expect(existsSync(join(repo, ".thinkrail"))).toBe(false);
+	expect(existsSync(join(repo, ".raildesign"))).toBe(false);
 	const def = (await listWorkspaces("p1"))[0];
 	if (!def) throw new Error("expected the ensured Default workspace");
 	ensureWorkspaceScratchDir(def);
-	expect(readFileSync(join(repo, ".thinkrail", "context", ".gitignore"), "utf8")).toBe("*\n");
-	expect(gitOut(repo, "status", "--porcelain")).not.toContain(".thinkrail");
+	expect(readFileSync(join(repo, ".raildesign", "context", ".gitignore"), "utf8")).toBe("*\n");
+	expect(gitOut(repo, "status", "--porcelain")).not.toContain(".raildesign");
 });
 
 test("a diff-range execution failure omits only that workspace's badge", async () => {

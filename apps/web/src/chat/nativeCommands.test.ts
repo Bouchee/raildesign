@@ -2,7 +2,6 @@ import { describe, expect, it } from "bun:test";
 import type { SlashCommandInfo } from "@thinkrail/contracts";
 import { currentTranslator } from "@thinkrail/locales/react";
 import {
-	compactSubmissionError,
 	isModelCommand,
 	mergeNativeChatCommands,
 	nativeChatCommands,
@@ -26,17 +25,14 @@ function command(name: string, source: SlashCommandInfo["source"] = "extension")
 }
 
 describe("native chat command parsing", () => {
-	it("matches Pi's exact compact syntax and trims optional instructions", () => {
-		expect(parseNativeChatCommand("/compact")).toEqual({ kind: "compact" });
-		expect(parseNativeChatCommand("/compact keep exact filenames ")).toEqual({
-			kind: "compact",
-			instructions: "keep exact filenames",
-		});
-		expect(parseNativeChatCommand("/compact  \n preserve decisions \n")).toEqual({
-			kind: "compact",
-			instructions: "preserve decisions",
-		});
-		expect(parseNativeChatCommand("/compact ")).toEqual({ kind: "compact" });
+	it("does not intercept unsupported compaction as a host operation", () => {
+		for (const text of ["/compact", "/compact keep exact filenames", "/compact "]) {
+			expect(parseNativeChatCommand(text, true)).toBeNull();
+		}
+		expect(nativeChatCommands(currentTranslator()).map(({ name }) => name)).toEqual([
+			"name",
+			"model",
+		]);
 	});
 
 	it("parses name only when the connected host supports its mutation", () => {
@@ -73,38 +69,20 @@ describe("native chat command parsing", () => {
 			expect(parseNativeChatCommand(text)).toBeNull();
 		}
 	});
-
-	it("rejects compaction before a text-only clear could discard draft or queued images", () => {
-		expect(compactSubmissionError(false, false)).toBeNull();
-		expect(compactSubmissionError(true, false)).toBe("Remove images to use /compact");
-		expect(compactSubmissionError(false, true)).toBe(
-			"Wait for queued image messages to send before using /compact",
-		);
-	});
 });
 
 describe("native chat command catalog", () => {
 	it("orders supported built-ins first and reserves only their exact names", () => {
 		const merged = mergeNativeChatCommands(
 			currentTranslator(),
-			[
-				command("review"),
-				command("compact"),
-				command("compact", "prompt"),
-				command("skill:compact", "skill"),
-				command("name"),
-				command("skill:name", "skill"),
-				command("Compact"),
-			],
+			[command("review"), command("name"), command("skill:name", "skill"), command("Compact")],
 			true,
 		);
 
 		expect(merged.map(({ name }) => name)).toEqual([
-			"compact",
 			"name",
 			"model",
 			"review",
-			"skill:compact",
 			"skill:name",
 			"Compact",
 		]);
@@ -115,7 +93,7 @@ describe("native chat command catalog", () => {
 			mergeNativeChatCommands(currentTranslator(), [command("name")], false).map(
 				({ name }) => name,
 			),
-		).toEqual(["compact", "model", "name"]);
+		).toEqual(["model", "name"]);
 	});
 
 	it("recognizes only the built-in /model and hands its search text to the picker", () => {

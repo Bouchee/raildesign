@@ -1,8 +1,9 @@
 import { realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { WorkspaceFiles } from "@thinkrail/extension-api/server";
+import { WORKSPACE_CONTEXT_DIR } from "@thinkrail/shared/paths";
 
-export const MOCKUP_DIR = ".thinkrail/context/mockups/";
+export const MOCKUP_DIR = `${WORKSPACE_CONTEXT_DIR}/mockups/`;
 
 function inside(root: string, candidate: string): string | null {
 	const rel = relative(root, candidate);

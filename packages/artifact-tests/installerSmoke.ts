@@ -26,7 +26,7 @@ function resolveArtifact(value: string | undefined): string {
 }
 
 const artifact = resolveArtifact(process.argv[2]);
-const root = mkdtempSync(join(tmpdir(), "thinkrail-desktop-installer-smoke-"));
+const root = mkdtempSync(join(tmpdir(), "raildesign-desktop-installer-smoke-"));
 const readyPath = join(root, "desktop.ready.json");
 const controlPath = join(root, "desktop.control");
 const channel = process.argv[3] ?? "stable";
@@ -71,10 +71,10 @@ function installerExecutable(): string {
 		mkdirSync(mount, { recursive: true });
 		run(["hdiutil", "attach", artifact, "-nobrowse", "-readonly", "-mountpoint", mount]);
 		try {
-			const appName = channel === "stable" ? "ThinkRail.app" : `ThinkRail-${channel}.app`;
+			const appName = channel === "stable" ? "RailDesign.app" : `RailDesign-${channel}.app`;
 			const app = join(mount, appName);
 			if (!existsSync(app)) throw new Error(`desktop DMG does not contain ${appName}`);
-			const installed = join(root, "ThinkRail.app");
+			const installed = join(root, "RailDesign.app");
 			cpSync(app, installed, { recursive: true });
 			return join(installed, "Contents", "MacOS", "launcher");
 		} finally {
@@ -151,11 +151,11 @@ function installerExitError(code: number): Error | undefined {
 
 function installedLauncherPath(): string {
 	return process.platform === "darwin"
-		? join(root, "ThinkRail.app", "Contents", "MacOS", "launcher")
+		? join(root, "RailDesign.app", "Contents", "MacOS", "launcher")
 		: join(
 				root,
 				process.platform === "win32" ? "local" : "xdg-data",
-				"ai.thinkrail.app",
+				"io.github.bouchee.raildesign",
 				channel,
 				"app",
 				"bin",

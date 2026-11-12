@@ -9,6 +9,12 @@ references: [central-integration]
 tags: [ui]
 ---
 
+## RailDesign stage 1
+
+Active panels offer no continue-to-workspace execution, agent plan review or streaming plan send. Historical continuation and plan rendering stay available. A prompt directed to an existing busy chat is restored to its draft instead of being queued. New Workspace preserves Skills catalog management and project-trust actions alongside templates, models and normal creation. MCP configuration, validation, trust and OAuth remain available through Settings. The complete subagent settings component retains inheritance, limits and real persistence callbacks; its controls are disabled with an explicit notice while SDK child execution is unavailable.
+
+The application owns message, tool, usage and event types in `sessionProtocol.ts`. `session.event` carries `{sessionId,runId,seq,event}` with increasing per-session sequence numbers. Initial transcript hydration buffers events and applies only events above `SessionSummary.eventSeq`. Stable IDs join streamed and final messages. SDK details, routing credentials and checkpoints stay on the host. Basic confirmations carry session, run, interaction and revision ownership, and remain visible on reply failure. Stage 1 exposes read/search/command/edit, approval and Stop; continuous-input, compaction and advanced execution controls wait for their respective implementation stages. RailDesign does not offer upstream analytics consent, surveys, Central or old Pi configuration folders.
+
 ## Responsibility
 
 The layout-agnostic, store-driven feature views. A panel fills its container and never knows its
@@ -544,35 +550,9 @@ The gate lives in the store (`onboardingWizard`: pending → shown | hidden) so 
 prompts while it is undecided. Finishing or skipping writes `onboardingDismissed: true`, so a returning user — even one who later removes
 every project and provider — gets the regular Welcome; a failed write still closes the wizard locally.
 
-Beneath it, **`ProjectTrustNotice`** is the pre-workspace trust surface (so trust is reachable with no
-workspace yet): **presence-gated** — renders nothing unless the selected project ships something a trust
-grant would load. Presence comes from `chat/useProjectTrustSummary` (`project.trustSummary` on hosts at
-`PROJECT_TRUST_PROTOCOL_VERSION`, gated by the store's `selectSupportsProjectTrust`: alias skill names and
-the kinds of pi's own trust-requiring resources and project subagent definitions, and the count of
-`.pi/mcp.json` entries; older hosts answer
-`project.aliasSkills` only, read as "aliases only"), and the
-pure `chat/projectTrust` derivation — shared with `chat/SkillsDialog`'s trust banner and New Workspace, so
-the three surfaces cannot disagree about what a grant loads — `deriveProjectTrustNotice` evaluates the alias grant (`Project.trusted`) and pi-level trust
-(`Project.piResourceTrust`) **separately**, so the notice names only what is still off: "ships N skills and
-its own Pi resources → *Trust project*", plus — when pi-level resources are gated — exactly the kinds a
-grant loads (the summary's `piResources`: skills, prompts, themes, system prompt, subagent definitions) and,
-only when `extensions` or `settings` are among them, that those run code on this machine, and that its N MCP
-servers still need approval one by one (a repository whose only gated content is `.pi/mcp.json` still shows the
-notice and its grant asks for pi-level trust). *Trust project* sends
-`project.setTrust` built by `trustGrantParams`: `resources: true` only when the notice names pi-level
-resources (and so said what they load and run); an alias-only notice grants alias trust only. After trust
-it shows a "N new → *Review & enable*" state for skills that appeared later (`project.acknowledgeSkills`),
-else a quiet "trusted" line. *Stop trusting* (behind a destructive `ConfirmDialog`) shows in every state
-where either grant is held (`canStopTrusting`), not only the fully trusted one — a project pi already
-trusted when it was added, or one trusted only partly, keeps a revoke path — and sends
-`project.setTrust({ trusted: false })`, revoking both grants; its confirmation (`stopTrustingText`) says pi
-resources stop loading, running subagents stop and open chats reload only when `piResourceTrust` is
-`granted` and the host supports project trust, otherwise that project skills stop loading in new chats. It never renders the skills'
-(attacker-controlled) names before trust. The full manager (`chat/SkillsDialog` in **project mode**
-— trust + group/skill toggles, no session yet) is reached from **New Workspace**, whose opener is the shared
-`chat/SkillsButton` primitive (so it cannot drift from the chat header's Skills trigger). This is the
-pre-session half of the user's skill settings; the chat header opens the same dialog in workspace mode
-(with Reload).
+Beneath it, **`ProjectTrustNotice`** is the presence-gated pre-workspace trust surface. `useProjectTrustSummary` reads `project.trustSummary` to name alias skills, application resource kinds, and repository MCP entries. The shared `chat/projectTrust` derivation evaluates `Project.trusted` (alias content plus acknowledgement) separately from `Project.resourceTrust` (`granted` or `untrusted` for application resources). `.agents` and `.raildesign` content uses the application resource gate; external project aliases use the alias gate. `trustGrantParams` includes `resources: true` only when the notice names application resources or MCP entries. Newly discovered aliases still require acknowledgement; either held grant offers a revoke action.
+
+Trust permits reading the kinds shown in the notice. It does not itself execute settings or extensions, load model tools, or promise an idle conversation reload. Repository MCP entries need their individual approval, and testing or connecting a stdio server starts a host process. Revocation removes both read grants and stops the project's MCP servers. Skills management remains reachable before a workspace exists through New Workspace and inside chats through the shared Skills button. The complete catalog/group/skill/acknowledgement controls retain real host routes. Stage 1 displays the pending model-execution integration explicitly and disables live session reload without replacing its implementation with a successful no-op.
 
 **`NewWorkspaceDialog`** is the start-working surface: **a target control** (a two-option segment — a
 native radio group, `fieldset` + sr-only `legend` over visually-hidden radio inputs, so assistive tech
@@ -627,12 +607,10 @@ a project picker, the prompt hero, and the reused
   runnable by the held model by asking the host for pi's clamp (**`model.clampThinking`**) rather than
   deciding locally, so an explicit switch and a refresh that shrank a model's set resolve the same way
   pi would. `model.default` needs no adjustment: the host already returns a self-consistent pair.
-  On open and project-picker changes, the dialog reads **`skill.list({projectId})`**; whenever a leading
-  slash token becomes active it also reads **`template.list({projectId})`**. It feeds both into the shared
+  Whenever a leading slash token becomes active, the dialog reads **`template.list({projectId})`**. It feeds templates into the shared
   `prompt` module, so Create Workspace and live chat use the same filtering, menu, keyboard navigation,
-  race-safe template pick, and Tab-through placeholder state machine. Skills come from the selected project's
-  **current checkout** plus personal/bundled sources; templates merge global + current-checkout project scope
-  with project precedence. Selecting a skill inserts `/skill:<name> `; selecting a template reads
+  race-safe template pick, and Tab-through placeholder state machine. Templates merge global + current-checkout project scope
+  with project precedence. Selecting a template reads
   `template.get({projectId, name})`, replaces the complete draft with its body, and activates its placeholders.
   Up/Down navigate, Enter/Tab select, Escape dismisses the menu; outside an open menu Tab/Shift+Tab cycle active
   template slots and Escape ends that session. Submission mirrors edited repeated slots and removes untouched
@@ -640,14 +618,9 @@ a project picker, the prompt hero, and the reused
   submission is held but the prompt remains editable; editing cancels the delayed apply. Changing projects also
   invalidates an in-flight pick, so a response from the previous checkout cannot populate the next project's
   prompt. The first prompt is snapshotted before asynchronous workspace creation begins.
-  Listing/get failures preserve the draft and degrade to whichever source remains available. Extension commands and `/compact` stay absent because no live
+  Listing/get failures preserve the draft. Extension commands and `/compact` stay absent because no live
   session exists. A caption under the prompt marks the catalog as **from the current checkout** (the created
-  worktree's session is authoritative if the selected base branch differs). When the selected project ships anything
-  still **untrusted** (the same `useProjectTrustSummary` + `deriveProjectTrustNotice` pair as the Welcome
-  notice — counts and kinds, never names), a **trust notice** shows a *Trust project* button — the repo's
-  skills and pi resources stay withheld until granted (`project.setTrust` from the same `trustGrantParams`,
-  so `resources: true` travels only when the notice named pi-level resources; it folds the updated project
-  back into the store and re-previews); personal + bundled skills show regardless. When the menu is closed, **Enter submits** (matching the submit button's
+  worktree's session is authoritative if the selected base branch differs). Stage 1 offers no Skills manager or project-trust UI and makes no skill/trust requests; unsupported resource loading cannot gate workspace creation. The model picker, templates, target and branch choices remain available. When the menu is closed, **Enter submits** (matching the submit button's
   `↵` affordance) and
   **Shift+Enter** inserts a newline. **Worktree-mode submit on a v103+ host** = `workspace.startCreate({
   projectId, baseRef, kickoff })`, where the kickoff always travels — text, any attached images, and the held
@@ -836,77 +809,8 @@ a project picker, the prompt hero, and the reused
   row's USER chip describes the server, not the grant; each chip's × ("Ask again before <tool> in this
   project") sends `mcp.revokeToolGrant` through `requestMcpList` and is
   disabled while the row is read-only or busy. This is the only place grants are revoked. The empty state offers presets, the form, JSON import and a
-  host notice. Live sections: **`ProvidersSettings`** (the in-app
-  provider-auth surface — a header line with an in-page **Refresh** (`providers-refresh`, disabled while a
-  status read is in flight) over the groups **Connected** (each row with a **Sign-out only when
-  `canLogout`** — env / models.json auth shows a "Managed" tag instead, since the host can't unset it; a
-  `kind: "central"` row is labelled "JetBrains AI" and its Managed tag points at the JetBrains AI card,
-  which owns that connection), the **JetBrains AI** card, **Subscriptions** (unconfigured `canOAuth`
-  providers) and **Available (N)** (the `canApiKey`-only rest, capped with a "Show N more" expander).
-  Every unconfigured provider is one row offering **Sign in** when `canOAuth` and **API key** when
-  `canApiKey` — **both routes start `provider.loginStart`**
-  (`type` `"oauth"` / `"api_key"`, issue #97) into the same store-driven `auth/LoginDialog` (open the
-  URL / paste a code / answer the provider's own key prompts, `provider.loginReply` — no inline key
-  field); a "configured outside the app" note for rows with neither flag; **`CustomEndpointsSettings`**
-  (v101, hidden below `CUSTOM_ENDPOINTS_PROTOCOL_VERSION`; re-read on `providerVersion`) — the **Custom
-  servers** group listing every `customEndpoints.list` endpoint (name, address, model count; **Edit** and a
-  **Remove** icon behind a `ConfirmDialog`) plus **Add server**. The page's **Refresh** reloads the list together with
-  `provider.status`. Providers the group lists are filtered out of the
-  generic provider rows so each appears once (only listed ids: an unlisted `custom-*` provider, or any on
-  a host without the group, stays a generic row); hand-written `models.json` providers stay in Connected as
-  "Managed", not repeated here. The dialog is one form for a company gateway and a local server: name,
-  address with local preset chips (Ollama, LM Studio, vLLM, llama.cpp — they only fill the address and an
-  empty or preset name; there is no server-kind choice), a password key field (blank keeps a saved key on
-  edit; an edit that changes the address's origin shows a warning and disables Save, since a different
-  server is added as a new one; **Remove key** sends `apiKey: ""` and keeps Detect from reusing it), **Find models**
-  (`customEndpoints.probe`, run automatically when an edit opens), a per-model use switch, and a manual
-  model-id field for gateways that list nothing. **A model row has no editable parameters** (decision: they
-  describe the server rather than configure it — its real limits are set by whoever runs it). It shows only
-  the facts the server reported (context, thinking, images, tools; "No tools" in warning tone), and an
-  unreported fact is simply absent and left to pi's default. Re-detecting keeps selections and saved
-  facts the server doesn't report, takes reported ones, drops a saved max output once a new context is
-  reported, and keeps models the server no longer lists; an unchanged saved address stays as written. The
-  pure draft rules live in `customEndpointDraft`; probe failures render as localized inline status and
-  host save errors render inline; and
-  the **`JetBrainsAiCard`** — route Central-supported models through the user's JetBrains subscription while
-  keeping ThinkRail's embedded PI — a state machine over the typed `JbcentralStatus` +
-  `provider.jbcentral*`: absent (official host-OS install guidance + Recheck), outdated — below the host's
-  minimum supported Central (guided Update), invalid/unverifiable version (safe guidance, no native action;
-  a version *above* the minimum is simply ready, never gated), **signed out** — the card
-  **states it and offers only Sign in**: the primary action *replaces* Connect rather than sitting beside it,
-  and on `supported` the signed-out line replaces the "Central is ready" claim instead of annotating it. The
-  rule is that the card never advertises an action that cannot succeed — connecting without credentials
-  fails — so the prerequisite becomes the offer, and Connect returns once the host reports credentials.
-  **Signed out renders as one state, whatever the configuration underneath:** the body says only that Central
-  is signed out — never paired with a "Connected" line that would contradict it — and **Sign in is the only
-  action**, Disconnect withheld along with Connect. Once authenticated, a configured status whose proxy is
-  positively observed stopped likewise replaces the success claim with “Central's proxy is not running” and
-  offers only **Start proxy**; after it starts, Connected + Disconnect return. The prerequisite order is
-  therefore Sign in → Start proxy → ordinary connected controls, never competing actions. Unknown proxy
-  health does not manufacture a demand. A broken session asks for the one thing that resolves its current
-  prerequisite rather than pairing a fix with an unrelated choice or success message.
-  **Signing in is one button, never a menu:** ThinkRail launches Central's flow on the host, and the
-  `central login` command appears *only* where that launch failed — printing it beside a working button makes
-  the user choose between two routes to the same place. Because the flow opens on the **host's** browser, the
-  launched confirmation says so and names Refresh as the next step, since Connect is not on screen yet. The
-  *reactive* guidance survives for the case the probe cannot see: credentials present, action refused
-  anyway —, sign-in required (launch Central sign-in +
-  Retry), ready (Connect), configuring (a Central action or watched candidate rebuild is in flight),
-  connected (the current runtime for new work applied Central; Disconnect), load-failed (the last runtime or
-  boot-time plain fallback remains usable; Retry or Disconnect), and generic action error (Retry/Recheck).
-  There is no restart prompt, affected-chat list, blocked state, or recovery mode. Existing live chats may
-  retain an older runtime—including Central after Disconnect—and the card says its state applies to new chats.
-  Update/connect/disconnect state is host-authoritative and shared across clients; every mutation re-reads
-  `provider.status`, while `provider.changed` invalidations from watched external changes trigger the same
-  re-read plus model-list invalidation. Status reads are request-sequenced so an older response cannot replace
-  a newer watched/action result. Copy never promises only Claude/GPT, never asks for standalone PI,
-  never renders child output/diagnostics/artifact content/paths/proxy data/secrets/raw models, and maps only
-  closed reason codes to ThinkRail-authored text. On protocol v59+, the same card always shows the
-  synchronized **Show quota in top bar** switch and **Refresh every _ seconds** field, in every Central
-  lifecycle state. The flag defaults on; the interval defaults to 30 and accepts whole `1–3600` values.
-  Off disables (but retains) the interval. The field edits locally, commits on blur/Enter, reports invalid
-  range inline, and waits for `settings.changed` rather than installing optimistic authority. Older hosts get
-  neither control. **`GithubSettings`** (the Integrations section's "Local GitHub" group —
+  host notice. Live sections: **`ProvidersSettings`** exposes the shared Responses-compatible endpoint form. It lists endpoints from `customEndpoints.list`, with add/edit/remove actions. The password field keeps a saved key when left blank and removes it only on explicit request. Model discovery/manual IDs are validated against the accepted host configuration; unknown pricing/context is not invented. Save/probe failures remain inline. Local-server presets, OAuth and Central account controls are removed.
+  **`GithubSettings`** (the Integrations section's "Local GitHub" group —
   `github.authStatus()` shown as `settings-gh-status[data-connected]`: Connected + login, or a Not connected
   notice naming `gh auth login`; Refresh (`github.refresh`) is offered in both states);
   **`LanguageSettings`** (gated by `LOCALES_PROTOCOL_VERSION`; a store-integrating container over the
@@ -998,19 +902,7 @@ a project picker, the prompt hero, and the reused
   may inject its stable backend-profile/window adapter. Another browser, native window, or host is unaffected. Composer growth
   remains a top-level `AppConfig` field and converges on `settings.changed`, with a toast on rejection.
   Explanatory copy says “message box” rather than the internal “composer” name for where the user types.
-  The final **Subagents** group (`SubagentSettings.tsx`) is rows, not a table: global **Allow subagents**
-  and, from `SUBAGENT_CONCURRENCY_PROTOCOL_VERSION`, **Per chat at once**; then, with an active workspace, a
-  **This workspace** sub-heading naming it over the same two rows. The whole group requires
-  `SUBAGENT_SETTINGS_PROTOCOL_VERSION`, so an
-  independently shipped client never offers unsupported mutations against an older host. Workspace rows
-  show the *effective* value with a Global/Custom tag: toggling writes `on`/`off`, a typed limit writes an
-  override, an empty limit field (placeholder = global) or the Custom tag (a reset button) sends `null`, so later global
-  changes keep flowing through. Limit fields follow the auto-save input pattern, validated by
-  `isSubagentMaxConcurrent` (an invalid draft stays visible with its range error and is not saved), and
-  never clamp. A workspace limit is disabled while that workspace's subagents are effectively off; the
-  global limit stays editable even when global is off, because workspaces forced on still inherit it.
-  Global mutations converge through `settings.changed`, workspace ones through `workspace.updated`; none
-  is optimistic);
+  The final **Subagents** group (`SubagentSettings.tsx`) retains global enablement and concurrency limits, workspace inheritance, Custom/Global source tags, resets, range validation, and real persistence callbacks. A missing override inherits its global value; a disabled workspace also disables its limit. The active Stage 1 settings panel explicitly disables all switches, limit inputs and reset buttons with an execution-unavailable notice. The component and its tests retain the full behavior for when SDK child execution is enabled);
   the
   **shell-owned injected Layout
   section** (Balanced/Focus/Review
@@ -1067,7 +959,7 @@ a project picker, the prompt hero, and the reused
   inline like the replay picker: zustand's React binding feeds `renderToStaticMarkup` its frozen
   `getInitialState()` snapshot (`useSyncExternalStore`'s `getServerSnapshot` argument), never a test's
   `setState`, so any settings section that must stay assertable under that render path takes its store
-  values as props instead — the same shape `ChatSettings` already uses for `SubagentSettings`; and
+  values as props instead; and
   **`TemplatesSettings`** — two groups, **Project templates** then **Global templates**, each a header
   with a soft **New** button plus its rows (without an active workspace the project group is only a notice
   to open a project, with no New), fetched via **two independent `template.list` calls** (both refetched whenever the
@@ -1111,47 +1003,6 @@ a project picker, the prompt hero, and the reused
   channel — the visible, in-app acquisition path that does not depend on an
   out-of-focus event. The notification pipeline, suppression, and away-path permission preface live in
   [[submodule-web-notifications]].
-  **`PrivacySettings`** manages the additional-data preference and
-  confirmation together; the event contract belongs to [[submodule-server-analytics]]. The pane ends with a link to the analytics section of the project readme.
-  **`AnalyticsConsentDialog`** mounts once through shell after a capable host's unconfirmed config hydrates,
-  held back (with the survey invitation) while the cold-start onboarding wizard may still show or is
-  showing (`selectOnboardingActive`): a new user meets the product before a privacy question, and sharing
-  stays off until the dialog mounts, so holding it never collects without asking. The wizard itself asks at
-  its natural seam — **Get started** leads to its own **privacy** step (same `AnalyticsConsentChoice` body,
-  priming and saving through `useAnalyticsConsent`; **Continue** confirms and advances only once that save
-  lands, so a failed write keeps the step with its draft and error instead of moving on with sharing still
-  primed on) before the model list, and only
-  while consent is unconfirmed — so neither the intro nor the first project opens on a privacy prompt;
-  skipping on the intro hands the question back to the shell's dialog. The cost is that the intro carries
-  only basic events.
-  It initializes the draft switch on and immediately persists `{ analyticsEnabled: true }`; persistence and
-  broadcast activate the host gate while the dialog stays open. **Done**, Close, Escape, and backdrop persist
-  the current draft with `analyticsConsentConfirmed: true`, so the ordinary result is on. Switching off
-  immediately persists off/confirmed and the resulting config broadcast closes the dialog. Confirmed on/off
-  configurations never mount or prime. Failed persistence leaves the draft and error visible for retry.
-  Until the user flips the switch on this surface, a decision confirmed elsewhere meanwhile (Settings →
-  Privacy, another window) is adopted, not overwritten: the switch shows the saved value and Continue / Done
-  advances without a write — only a choice made here is persisted. Saved
-  decisions survive restarts and change later through Settings. The dialog keeps only the short
-  product-usage copy and shared switch; Settings adds the optional outcomes, report dimensions, and
-  excluded content. Older hosts retain their legacy privacy control without the new consent dialog.
-  **`FeedbackSettings`** is the always-present Feedback pane: **Take the survey** (only while a survey is
-  launched and unfinished) opens the survey window, beside the Discord link and `info@thinkrail.ai`. Settings
-  never draws the questions itself and never calls `feedback.respond`.
-  **`SurveyInvitationDialog`** is the automatic invitation: **Never show again** records `never`, **Not
-  now** and closing record `postpone`, and **Take the survey** opens the window and records `postpone`, so
-  leaving the survey unsent re-invites later. Each action closes the dialog at once; a failed response is a
-  toast, never a trapped modal.
-  **`SurveyWindow`** is the one survey UI. Its first page carries the data notice (what is sent, linked
-  to a random installation ID, no secrets/code/personal data, deletion via `info@thinkrail.ai`; no links)
-  above the first question; `SurveyForm` then draws one question per step (rating points are real radio
-  inputs; selecting Other focuses its text field) with **Continue**, and **Send** on the last. Nothing is sent before Send, closing never calls the
-  host, and the analytics setting plays no part. `SURVEY_CHANGED` reloads the survey and restarts it with a
-  short notice; other refusals stay inline; success shows PostHog's thank-you header or the app's. The form
-  is keyed by survey id, iteration and `language`, so a reload in another language restarts it rather than
-  mixing languages, and Send echoes `survey.language`. A pre-v98 host gets the older submission shape (Other text
-  inline, no `language`) through `surveyDraft`'s `inlineOthers`; while no host is welcomed (disconnected) Send is
-  disabled, so no request is queued and replayed in a shape chosen without knowing the host.
   **`ModelsSettings`** is the **Models** section, visible only at protocol v72 or newer. It re-reads
   `model.default` on open, whenever the live catalog changes (empty included), and after every save — the
   host resolves the saved model and its effort levels against its settled catalog, so a vanished or changed
@@ -1322,9 +1173,8 @@ a project picker, the prompt hero, and the reused
   live in `panels/environmentDraft.ts`; the props-driven `EnvironmentForm` is what tests render. No folder
   picker: `dialog.selectDirectory` is the project-setup picker and records setup analytics.
   `ProvidersSettings`/`McpSettings`/`AppearanceSettings`/`LineWidthControl`/`ChatSettings`/`TemplatesSettings`/
-  `WorkspacesSettings`/`PrivacySettings`/`ModelsSettings`/`FeedbackSettings`/`ExtensionsSettings`/`EnvironmentSettings`, the onboarding
-  `ConnectProviderDialog`/`CreateProjectDialog`/`OnboardingWizard`, and the app-wide **`SurveyInvitationDialog`** /
-  **`SurveyWindow`** are the panels-owned **integration pieces** (store + transport).
+  `WorkspacesSettings`/`ModelsSettings`/`EnvironmentSettings`, the onboarding
+  `ConnectProviderDialog`/`CreateProjectDialog`/`OnboardingWizard`, are the panels-owned **integration pieces** (store + transport).
   `SettingsDialog` receives the Layout section from the
   shell composition root so no panel reaches sideways into shell, and the `LoginDialog` stays presentational
   (`auth` module).
@@ -1486,7 +1336,7 @@ a project picker, the prompt hero, and the reused
   `Check it` fires the AGENT review (`todo.startReview` — a hidden review subagent) and STAYS on
   the plan page: the row's `Checking…` pulse and a toast are the only signals, success AND failure —
   the review runs with no chat of its own, so the toast must carry the error. The verdict lands via the
-  `review.changed` broadcast (`useChatTodos` refetches the plan on it), not a `pi.event` for this
+  `review.changed` broadcast (`useChatTodos` refetches the plan on it), not a `session.event` for this
   session — the subagent's events are hidden; a post-ack failure lands via the `review.failed` broadcast
   (`useChatTodos` raises it as an error toast, filtered to the owning `sessionId` and deduped across split
   views by the toast body).
@@ -1694,7 +1544,7 @@ own section. The kebab menu (`plan-menu`, a
   `planCompletionSummary`. `FileRow` (`planFileRow.tsx`, its own module so plan surfaces
   share one row without cycles) is the shared change-set row. Live by
   construction, it reads through the same `useChatTodos` hook as the TODO rail (per-mount fetch +
-  `pi.event` refetch), so it cannot show a stale snapshot.
+  `session.event` refetch), so it cannot show a stale snapshot.
   `TerminalWorkbench` owns one visibility-gated terminal body per semantic terminal identity and
   the host-atomic close flow. A busy close remains one correlated request through confirmation and forced
   retry; dialog auto-close cannot release that request, authoritative catalog removal dismisses stale

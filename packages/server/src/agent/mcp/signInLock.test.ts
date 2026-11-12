@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { acquireMcpSignInLock } from "./signInLock";
 
-test("server names sharing pi's credential namespace share one sign-in lock", () => {
+test("server names sharing the normalized tool namespace share one sign-in lock", () => {
 	const lock = acquireMcpSignInLock("issue-tracker", "settings");
 	if (!("release" in lock)) throw new Error("lock already held");
 	try {

@@ -1,6 +1,5 @@
 import type {
 	AppConfig,
-	AppSurvey,
 	ChatContinuation,
 	ComposerGrowthLimit,
 	ExtUiRequest,
@@ -14,7 +13,6 @@ import type {
 	LoginPush,
 	McpListResult,
 	McpStatusSnapshot,
-	PiEvent,
 	Project,
 	ProviderStatusReport,
 	ProviderWarning,
@@ -24,6 +22,7 @@ import type {
 	ResourceRecord,
 	ReviewChangedPayload,
 	ReviewSnapshot,
+	SessionEvent,
 	SessionEventPayload,
 	SessionQueueState,
 	SessionResources,
@@ -497,6 +496,7 @@ export interface MarkedUnread {
 }
 
 export interface SessionRuntime {
+	lastEventSeq: number;
 	turns: ChatTurn[];
 	turnIdByMessageIndex?: (string | null)[];
 	toolResults: Record<string, ToolResultState>;
@@ -530,6 +530,7 @@ function newRuntime(
 	syncedConnectionGeneration = 0,
 ): SessionRuntime {
 	return {
+		lastEventSeq: 0,
 		turns: [],
 		toolResults: {},
 		toolResponses: {},
@@ -585,7 +586,9 @@ function removeSupersededAssistant(
 	return index < 0 ? turns : [...turns.slice(0, index), ...turns.slice(index + 1)];
 }
 
-function compactionOutcome(event: Extract<PiEvent, { type: "compaction_end" }>): CompactionState {
+function compactionOutcome(
+	event: Extract<SessionEvent, { type: "compaction_end" }>,
+): CompactionState {
 	if (event.aborted) return { status: "cancelled" };
 	if (event.errorMessage) return { status: "failed", detail: event.errorMessage };
 	const tokensBefore = event.result?.tokensBefore;
@@ -609,7 +612,7 @@ function clearCompactionResuming(turns: ChatTurn[]): ChatTurn[] {
 
 function settleCompactionTurn(
 	turns: ChatTurn[],
-	event: Extract<PiEvent, { type: "compaction_end" }>,
+	event: Extract<SessionEvent, { type: "compaction_end" }>,
 ): ChatTurn[] {
 	const outcome = compactionOutcome(event);
 	const index = turns.findLastIndex((t) => t.kind === "compaction" && t.status === "running");
@@ -676,7 +679,7 @@ function clearRetryTurns(rt: SessionRuntime, source: RetrySource): SessionRuntim
 
 const STATS_ENTRY_TYPES = new Set(["usage", "compaction", "branch_summary", "context_edit"]);
 
-function invalidatesSessionStats(event: PiEvent): boolean {
+function invalidatesSessionStats(event: SessionEvent): boolean {
 	return (
 		event.type === "message_end" ||
 		event.type === "compaction_end" ||
@@ -685,7 +688,20 @@ function invalidatesSessionStats(event: PiEvent): boolean {
 	);
 }
 
-export function reduceSessionEvent(rt: SessionRuntime, event: PiEvent): SessionRuntime {
+function applySessionPayload(
+	runtime: SessionRuntime,
+	payload: SessionEventPayload,
+): SessionRuntime {
+	if (payload.seq <= runtime.lastEventSeq) return runtime;
+	return {
+		...reduceSessionEvent(runtime, payload.event),
+		lastEventSeq: payload.seq,
+		eventRevision: runtime.eventRevision + 1,
+		statsRefreshTick: runtime.statsRefreshTick + (invalidatesSessionStats(payload.event) ? 1 : 0),
+	};
+}
+
+export function reduceSessionEvent(rt: SessionRuntime, event: SessionEvent): SessionRuntime {
 	switch (event.type) {
 		case "agent_start":
 			return {
@@ -707,7 +723,7 @@ export function reduceSessionEvent(rt: SessionRuntime, event: PiEvent): SessionR
 			if (event.message.role === "assistant")
 				return {
 					...rt,
-					currentAssistantId: crypto.randomUUID(),
+					currentAssistantId: event.message.id ?? crypto.randomUUID(),
 					attemptAssistantId: null,
 					turns: clearTurnStreaming(rt.turns),
 				};
@@ -725,13 +741,17 @@ export function reduceSessionEvent(rt: SessionRuntime, event: PiEvent): SessionR
 					) {
 						return {
 							...rt,
-							turns: [...rt.turns.slice(0, -1), { ...last, message }],
+							turns: [...rt.turns.slice(0, -1), { ...last, id: message.id ?? last.id, message }],
 						};
 					}
 				}
 				return {
 					...rt,
-					turns: [...rt.turns, { kind: "user", id: crypto.randomUUID(), message }],
+					turns: rt.turns.some((turn) => turn.id === message.id)
+						? rt.turns.map((turn) =>
+								turn.id === message.id ? { kind: "user", id: turn.id, message } : turn,
+							)
+						: [...rt.turns, { kind: "user", id: message.id ?? crypto.randomUUID(), message }],
 				};
 			}
 			return rt;
@@ -747,7 +767,7 @@ export function reduceSessionEvent(rt: SessionRuntime, event: PiEvent): SessionR
 							? ame.error
 							: null;
 			if (!snapshot) return rt;
-			const id = rt.currentAssistantId ?? crypto.randomUUID();
+			const id = snapshot.id ?? rt.currentAssistantId ?? crypto.randomUUID();
 			const streaming = !(ame.type === "done" || ame.type === "error");
 			const turn: ChatTurn = { kind: "assistant", id, message: snapshot, streaming };
 			return {
@@ -760,6 +780,8 @@ export function reduceSessionEvent(rt: SessionRuntime, event: PiEvent): SessionR
 			};
 		}
 		case "message_end": {
+			if (event.message.role === "user")
+				return reduceSessionEvent(rt, { type: "message_start", message: event.message });
 			const toolResponse = readToolResponseMessage(event.message);
 			if (toolResponse) {
 				const { toolCallId, response } = toolResponse;
@@ -837,8 +859,9 @@ export function reduceSessionEvent(rt: SessionRuntime, event: PiEvent): SessionR
 					],
 				};
 			}
-			if (event.message.role !== "assistant" || !rt.currentAssistantId) return rt;
-			const id = rt.currentAssistantId;
+			if (event.message.role !== "assistant") return rt;
+			const id = event.message.id ?? rt.currentAssistantId;
+			if (!id) return rt;
 			const turn: ChatTurn = { kind: "assistant", id, message: event.message, streaming: false };
 			return {
 				...rt,
@@ -990,20 +1013,19 @@ function reduceExtUi(
 
 function withHostState(runtime: SessionRuntime, hostState: SessionState | null): SessionRuntime {
 	let next = runtime.hostState === hostState ? runtime : { ...runtime, hostState };
-	const dialogId =
-		hostState?.needsInput?.kind === "dialog" ? hostState.needsInput.request.id : null;
-	if (dialogId === null) {
+	const request = hostState?.needsInput?.kind === "dialog" ? hostState.needsInput.request : null;
+	if (request === null) {
 		if (!next.pendingExtUi && next.extUiQueue.length === 0) return next;
 		return { ...next, pendingExtUi: null, extUiQueue: [] };
 	}
-	while (next.pendingExtUi && next.pendingExtUi.id !== dialogId) {
+	while (next.pendingExtUi && !dialogIsAuthorized(hostState, next.pendingExtUi)) {
 		next = reduceExtUi(next, {
 			id: next.pendingExtUi.id,
 			sessionId: next.pendingExtUi.sessionId,
 			kind: "dismiss",
 		});
 	}
-	return next;
+	return reduceExtUi(next, request);
 }
 
 export type ReviewFocusSurface = { kind: "inline" } | { kind: "diff"; scope: GitDiffScope };
@@ -1082,6 +1104,9 @@ interface AppState {
 	terminalsByWorkspace: Record<string, TerminalTab[]>;
 	activeTerminalByWorkspace: Record<string, string | null>;
 	sessions: Record<string, SessionRuntime>;
+	sessionEventsBeforeHydration: Record<string, SessionEventPayload[]>;
+	beginSessionHydration: (sessionId: string) => void;
+	cancelSessionHydration: (sessionId: string) => void;
 	sessionStateByWorkspace: Record<string, Record<string, SessionStateRecord>>;
 	sessionStateClock: number;
 	sessionStateSnapshotInstalled: boolean;
@@ -1129,9 +1154,6 @@ interface AppState {
 	unheldLoginFrame: LoginPush | null;
 	settingsOpen: boolean;
 	settingsSection: SettingsSection;
-	surveyInvitationOpen: boolean;
-	surveyWindowOpen: boolean;
-	inAppSurvey: AppSurvey | null;
 	notificationPromptOpen: boolean;
 	searchOpen: boolean;
 	searchSession: number;
@@ -1139,14 +1161,10 @@ interface AppState {
 	theme: ThemeId;
 	themeMode: ThemeMode;
 	systemThemePair: SystemThemePair | undefined;
-	analyticsEnabled: boolean;
-	analyticsConsentConfirmed: boolean;
 	notificationsEnabled: boolean;
 	subagentsEnabled: boolean;
 	subagentMaxConcurrent: number;
 	settleIdleDays: number | null;
-	jbcentralQuotaEnabled: boolean;
-	jbcentralQuotaRefreshSeconds: number;
 	terminalReplayKb: number;
 	terminalWindowsShell: TerminalWindowsShell;
 	composerGrowthLimit: ComposerGrowthLimit;
@@ -1459,8 +1477,8 @@ interface AppState {
 		observedTurnIds: ReadonlySet<string>,
 		detail: string,
 	) => void;
-	handlePiEvent: (event: PiEvent, sessionId: string) => void;
-	handlePiEvents: (payloads: readonly SessionEventPayload[]) => void;
+	handleSessionEvent: (event: SessionEvent, sessionId: string) => void;
+	handleSessionEvents: (payloads: readonly SessionEventPayload[]) => void;
 	setModelsForProviderVersion: (providerVersion: number, models: WireModel[]) => void;
 	hydrateHiddenModels: (hidden: ModelRef[]) => void;
 	setModelVisibility: (model: ModelRef, visible: boolean) => void;
@@ -1497,11 +1515,6 @@ interface AppState {
 	openSettings: (section?: SettingsSection) => void;
 	closeSettings: () => void;
 	setSettingsSection: (section: SettingsSection) => void;
-	showSurveyInvitation: () => void;
-	hideSurveyInvitation: () => void;
-	openSurveyWindow: () => void;
-	closeSurveyWindow: () => void;
-	setInAppSurvey: (survey: AppSurvey | null) => void;
 	openNotificationPrompt: () => void;
 	closeNotificationPrompt: () => void;
 	openSearch: () => void;
@@ -1543,14 +1556,6 @@ function configPatch(config: AppConfig) {
 	return {
 		...themePreference,
 		systemThemePair: themePreference.systemThemePair,
-		analyticsEnabled:
-			typeof config.analyticsEnabled === "boolean"
-				? config.analyticsEnabled
-				: DEFAULT_CONFIG.analyticsEnabled,
-		analyticsConsentConfirmed:
-			typeof config.analyticsConsentConfirmed === "boolean"
-				? config.analyticsConsentConfirmed
-				: DEFAULT_CONFIG.analyticsConsentConfirmed,
 		notificationsEnabled:
 			typeof config.notificationsEnabled === "boolean"
 				? config.notificationsEnabled
@@ -1562,9 +1567,6 @@ function configPatch(config: AppConfig) {
 		settleIdleDays: isSettleIdleDays(config.settleIdleDays)
 			? config.settleIdleDays
 			: DEFAULT_CONFIG.settleIdleDays,
-		jbcentralQuotaEnabled: config.jbcentralQuotaEnabled ?? DEFAULT_CONFIG.jbcentralQuotaEnabled,
-		jbcentralQuotaRefreshSeconds:
-			config.jbcentralQuotaRefreshSeconds ?? DEFAULT_CONFIG.jbcentralQuotaRefreshSeconds,
 		terminalReplayKb: config.terminalReplayKb,
 		terminalWindowsShell: isTerminalWindowsShell(config.terminalWindowsShell)
 			? config.terminalWindowsShell
@@ -2046,6 +2048,7 @@ function withoutChat(
 	const closed = s.closedChatsByWorkspace[workspaceId] ?? [];
 	const inHistory = closed.some((chat) => chat.sessionId === sessionId);
 	const hasRuntime = s.sessions[sessionId] !== undefined;
+	const hasHydration = s.sessionEventsBeforeHydration[sessionId] !== undefined;
 	const hasResources = s.resourceSnapshots[workspaceId]?.[sessionId] !== undefined;
 	const hasMcpStatus = s.mcpByWorkspace[workspaceId]?.sessions[sessionId] !== undefined;
 	const hasHostState = s.sessionStateByWorkspace[workspaceId]?.[sessionId] !== undefined;
@@ -2066,6 +2069,7 @@ function withoutChat(
 		sessionTabs.length === 0 &&
 		!inHistory &&
 		!hasRuntime &&
+		!hasHydration &&
 		!hasResources &&
 		!hasMcpStatus &&
 		!hasHostState &&
@@ -2134,6 +2138,9 @@ function withoutChat(
 				}
 			: {}),
 		...(hasRuntime ? { sessions: omitKey(s.sessions, sessionId) } : {}),
+		...(hasHydration
+			? { sessionEventsBeforeHydration: omitKey(s.sessionEventsBeforeHydration, sessionId) }
+			: {}),
 		...(hasResources
 			? {
 					resourceSnapshots: {
@@ -2212,7 +2219,10 @@ function dialogIsAuthorized(
 	return (
 		isDialogRequest(request) &&
 		state?.needsInput?.kind === "dialog" &&
-		state.needsInput.request.id === request.id
+		state.needsInput.request.id === request.id &&
+		state.needsInput.request.sessionId === request.sessionId &&
+		state.needsInput.request.runId === request.runId &&
+		state.needsInput.request.revision === request.revision
 	);
 }
 
@@ -2449,6 +2459,19 @@ export const useAppStore = create<AppState>((set, get) => ({
 	terminalsByWorkspace: {},
 	activeTerminalByWorkspace: {},
 	sessions: {},
+	sessionEventsBeforeHydration: {},
+	beginSessionHydration: (sessionId) =>
+		set((s) =>
+			s.sessions[sessionId] || s.sessionEventsBeforeHydration[sessionId]
+				? {}
+				: { sessionEventsBeforeHydration: { ...s.sessionEventsBeforeHydration, [sessionId]: [] } },
+		),
+	cancelSessionHydration: (sessionId) =>
+		set((s) => {
+			const pending = { ...s.sessionEventsBeforeHydration };
+			delete pending[sessionId];
+			return { sessionEventsBeforeHydration: pending };
+		}),
 	sessionStateByWorkspace: {},
 	sessionStateClock: 0,
 	sessionStateSnapshotInstalled: false,
@@ -2487,9 +2510,6 @@ export const useAppStore = create<AppState>((set, get) => ({
 	unheldLoginFrame: null,
 	settingsOpen: false,
 	settingsSection: SettingsSection.Providers,
-	surveyInvitationOpen: false,
-	surveyWindowOpen: false,
-	inAppSurvey: null,
 	notificationPromptOpen: false,
 	searchOpen: false,
 	searchSession: 0,
@@ -2497,14 +2517,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 	theme: DEFAULT_CONFIG.theme,
 	themeMode: DEFAULT_CONFIG.themeMode,
 	systemThemePair: DEFAULT_CONFIG.systemThemePair,
-	analyticsEnabled: DEFAULT_CONFIG.analyticsEnabled,
-	analyticsConsentConfirmed: DEFAULT_CONFIG.analyticsConsentConfirmed,
 	notificationsEnabled: DEFAULT_CONFIG.notificationsEnabled,
 	subagentsEnabled: DEFAULT_CONFIG.subagentsEnabled,
 	subagentMaxConcurrent: DEFAULT_CONFIG.subagentMaxConcurrent,
 	settleIdleDays: DEFAULT_CONFIG.settleIdleDays,
-	jbcentralQuotaEnabled: DEFAULT_CONFIG.jbcentralQuotaEnabled,
-	jbcentralQuotaRefreshSeconds: DEFAULT_CONFIG.jbcentralQuotaRefreshSeconds,
 	terminalReplayKb: DEFAULT_CONFIG.terminalReplayKb,
 	terminalWindowsShell: DEFAULT_CONFIG.terminalWindowsShell,
 	composerGrowthLimit: DEFAULT_CONFIG.composerGrowthLimit,
@@ -2712,6 +2728,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 			connectionGeneration:
 				status === "connected" ? state.connectionGeneration + 1 : state.connectionGeneration,
 			sessionStateSnapshotInstalled: false,
+			sessionEventsBeforeHydration: {},
 		})),
 	installWelcomeSnapshot: (
 		protocolVersion,
@@ -3937,10 +3954,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 				sessions: fresh
 					? {
 							...s.sessions,
-							[sessionId]: {
-								...newRuntime(model, thinkingLevel, s.connectionGeneration),
-								hostState: s.sessionStateByWorkspace[workspaceId]?.[sessionId]?.state ?? null,
-							},
+							[sessionId]: withHostState(
+								newRuntime(model, thinkingLevel, s.connectionGeneration),
+								s.sessionStateByWorkspace[workspaceId]?.[sessionId]?.state ?? null,
+							),
 						}
 					: s.sessions,
 				...(fresh
@@ -3957,8 +3974,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 	},
 	closeChatRuntime: (sessionId) =>
 		set((s) => {
-			if (!s.sessions[sessionId]) return {};
+			if (!s.sessions[sessionId] && !s.sessionEventsBeforeHydration[sessionId]) return {};
 			return {
+				sessionEventsBeforeHydration: omitKey(s.sessionEventsBeforeHydration, sessionId),
 				sessions: omitKey(s.sessions, sessionId),
 				skillsSyncedTickBySession: omitKey(s.skillsSyncedTickBySession, sessionId),
 			};
@@ -4348,21 +4366,28 @@ export const useAppStore = create<AppState>((set, get) => ({
 			}
 			if (s.sessions[summary.sessionId]) return {};
 			const wsId = summary.workspaceId;
-			const runtime: SessionRuntime = {
-				...newRuntime(summary.model, summary.thinkingLevel, s.connectionGeneration),
-				turns: hydrated.turns,
-				toolResults: hydrated.toolResults,
-				toolResponses: hydrated.toolResponses,
-				isStreaming: summary.isStreaming,
-				hostState:
+			let runtime = withHostState(
+				{
+					...newRuntime(summary.model, summary.thinkingLevel, s.connectionGeneration),
+					lastEventSeq: summary.eventSeq ?? 0,
+					turns: hydrated.turns,
+					toolResults: hydrated.toolResults,
+					toolResponses: hydrated.toolResponses,
+					isStreaming: summary.isStreaming,
+					...(summary.queue ? { queue: summary.queue } : {}),
+					...(hydrated.turnIdByMessageIndex
+						? { turnIdByMessageIndex: hydrated.turnIdByMessageIndex }
+						: {}),
+				},
+				s.sessionStateByWorkspace[summary.workspaceId]?.[summary.sessionId]?.state ??
 					summary.state ??
-					s.sessionStateByWorkspace[summary.workspaceId]?.[summary.sessionId]?.state ??
 					null,
-				...(summary.queue ? { queue: summary.queue } : {}),
-				...(hydrated.turnIdByMessageIndex
-					? { turnIdByMessageIndex: hydrated.turnIdByMessageIndex }
-					: {}),
-			};
+			);
+			for (const payload of s.sessionEventsBeforeHydration[summary.sessionId] ?? []) {
+				runtime = applySessionPayload(runtime, payload);
+			}
+			const sessionEventsBeforeHydration = { ...s.sessionEventsBeforeHydration };
+			delete sessionEventsBeforeHydration[summary.sessionId];
 			const tabs = s.tabsByWorkspace[wsId] ?? [];
 			const existing = tabs.find(
 				(candidate): candidate is ChatTab =>
@@ -4393,6 +4418,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 						}
 					: {}),
 				sessions: { ...s.sessions, [summary.sessionId]: runtime },
+				sessionEventsBeforeHydration,
 				...(syncedTick !== undefined
 					? {
 							skillsSyncedTickBySession: {
@@ -4441,30 +4467,32 @@ export const useAppStore = create<AppState>((set, get) => ({
 			}
 			const { turnIdByMessageIndex: _previousMessageIndex, ...preserved } = current;
 			void _previousMessageIndex;
-			const runtime: SessionRuntime = {
-				...preserved,
-				turns: reconcileCompactionTurns(current.turns, hydrated.turns, summary.isStreaming),
-				toolResults: hydrated.toolResults,
-				toolResponses: hydrated.toolResponses,
-				currentAssistantId: null,
-				attemptAssistantId: null,
-				isStreaming: summary.isStreaming,
-				queue: summary.queue ?? EMPTY_QUEUE,
-				model: summary.model,
-				thinkingLevel: summary.thinkingLevel,
-				hostState:
+			const runtime = withHostState(
+				{
+					...preserved,
+					turns: reconcileCompactionTurns(current.turns, hydrated.turns, summary.isStreaming),
+					toolResults: hydrated.toolResults,
+					toolResponses: hydrated.toolResponses,
+					currentAssistantId: null,
+					attemptAssistantId: null,
+					isStreaming: summary.isStreaming,
+					queue: summary.queue ?? EMPTY_QUEUE,
+					model: summary.model,
+					thinkingLevel: summary.thinkingLevel,
+					lastEventSeq: summary.eventSeq ?? current.lastEventSeq,
+					eventRevision: current.eventRevision + 1,
+					syncedConnectionGeneration: Math.max(
+						current.syncedConnectionGeneration,
+						connectionGeneration,
+					),
+					...(hydrated.turnIdByMessageIndex
+						? { turnIdByMessageIndex: hydrated.turnIdByMessageIndex }
+						: {}),
+				},
+				s.sessionStateByWorkspace[summary.workspaceId]?.[summary.sessionId]?.state ??
 					summary.state ??
-					s.sessionStateByWorkspace[summary.workspaceId]?.[summary.sessionId]?.state ??
 					current.hostState,
-				eventRevision: current.eventRevision + 1,
-				syncedConnectionGeneration: Math.max(
-					current.syncedConnectionGeneration,
-					connectionGeneration,
-				),
-				...(hydrated.turnIdByMessageIndex
-					? { turnIdByMessageIndex: hydrated.turnIdByMessageIndex }
-					: {}),
-			};
+			);
 			applied = true;
 			return { sessions: { ...s.sessions, [summary.sessionId]: runtime } };
 		});
@@ -4521,28 +4549,39 @@ export const useAppStore = create<AppState>((set, get) => ({
 						};
 			}),
 		),
-	handlePiEvent: (event, sessionId) => get().handlePiEvents([{ event, sessionId }]),
-	handlePiEvents: (payloads) =>
+	handleSessionEvent: (event, sessionId) =>
+		get().handleSessionEvents([
+			{
+				event,
+				sessionId,
+				runId: get().sessions[sessionId]?.hostState?.runId ?? null,
+				seq: (get().sessions[sessionId]?.lastEventSeq ?? 0) + 1,
+			},
+		]),
+	handleSessionEvents: (payloads) =>
 		set((s) => {
 			let state = s;
 			let sessions = s.sessions;
-			for (const { event, sessionId } of payloads) {
+			let buffered = s.sessionEventsBeforeHydration;
+			for (const payload of payloads) {
+				const { event, sessionId, seq } = payload;
+				if (!sessions[sessionId] && buffered[sessionId]) {
+					buffered = { ...buffered, [sessionId]: [...buffered[sessionId], payload] };
+					continue;
+				}
+				const runtime = sessions[sessionId];
+				if (runtime && seq <= runtime.lastEventSeq) continue;
 				if (event.type === "session_info_changed") {
 					const title = event.name?.trim() ?? "";
 					const renamed = renameChat(state, sessionId, title);
 					if (renamed && Object.keys(renamed).length > 0) state = { ...state, ...renamed };
 				}
-				const runtime = sessions[sessionId];
 				if (!runtime) continue;
 				if (sessions === s.sessions) sessions = { ...sessions };
-				const next = reduceSessionEvent(runtime, event);
-				sessions[sessionId] = {
-					...next,
-					eventRevision: runtime.eventRevision + 1,
-					statsRefreshTick: runtime.statsRefreshTick + (invalidatesSessionStats(event) ? 1 : 0),
-				};
+				sessions[sessionId] = applySessionPayload(runtime, payload);
 			}
-			if (sessions !== s.sessions) state = { ...state, sessions };
+			if (sessions !== s.sessions || buffered !== s.sessionEventsBeforeHydration)
+				state = { ...state, sessions, sessionEventsBeforeHydration: buffered };
 			return state;
 		}),
 	setModelsForProviderVersion: (providerVersion, models) =>
@@ -4640,7 +4679,13 @@ export const useAppStore = create<AppState>((set, get) => ({
 			if (request.kind === "setTitle")
 				return renameChat(s, request.sessionId, request.title) ?? bufferExtUiOrphan(s, request);
 			if (!s.sessions[request.sessionId]) return bufferExtUiOrphan(s, request);
-			return withRuntime(s, request.sessionId, (rt) => reduceExtUi(rt, request));
+			return withRuntime(s, request.sessionId, (rt) =>
+				isDialogRequest(request) &&
+				request.runId !== undefined &&
+				!dialogIsAuthorized(rt.hostState, request)
+					? rt
+					: reduceExtUi(rt, request),
+			);
 		}),
 	reserveLogin: () => {
 		const state = get();
@@ -4710,13 +4755,6 @@ export const useAppStore = create<AppState>((set, get) => ({
 	closeSearch: () => set((state) => (state.searchOpen ? { searchOpen: false } : state)),
 	setDoubleShiftSearch: (doubleShiftSearch) =>
 		set((state) => (state.doubleShiftSearch === doubleShiftSearch ? state : { doubleShiftSearch })),
-	showSurveyInvitation: () =>
-		set((state) => (state.surveyInvitationOpen ? state : { surveyInvitationOpen: true })),
-	hideSurveyInvitation: () => set({ surveyInvitationOpen: false }),
-	openSurveyWindow: () =>
-		set({ surveyWindowOpen: true, surveyInvitationOpen: false, settingsOpen: false }),
-	closeSurveyWindow: () => set({ surveyWindowOpen: false }),
-	setInAppSurvey: (survey) => set({ inAppSurvey: survey }),
 	setChatMessageOrder: (chatMessageOrder) => set({ chatMessageOrder }),
 	applyConfig: (config) => set(configPatch(config)),
 	requestToolView: (workspaceId, tool) =>

@@ -72,7 +72,7 @@ describe("ExtUiPrompt", () => {
 		expect(labels).toEqual(approval.options);
 		expect(markup).not.toContain("ext-ui-cancel");
 		expect(markup).toContain("Your input is needed");
-		expect(markup).toContain("Sending a chat message cancels this request.");
+		expect(markup).toContain("Reject this request or use Stop to cancel the task.");
 	});
 
 	it("shows a title's later lines as supporting text and names its fields by the first line", () => {

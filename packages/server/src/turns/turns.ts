@@ -1,4 +1,4 @@
-import type { GitDiffScope, PiEvent, TurnChangeSet } from "@thinkrail/contracts";
+import type { GitDiffScope, SessionEvent, TurnChangeSet } from "@thinkrail/contracts";
 import { gitStatus, snapshotWorktree } from "../git";
 import { logger } from "../log";
 import { loadTurns, loadWorkspaces, saveTurns } from "../persistence";
@@ -70,7 +70,7 @@ export class TurnTracker {
 		this.snapshot = snapshot;
 	}
 
-	observe(sessionId: string, event: PiEvent): Promise<void> {
+	observe(sessionId: string, event: SessionEvent): Promise<void> {
 		if (event.type === "agent_start") {
 			if (this.pending.has(sessionId)) return Promise.resolve();
 			const target = this.resolve(sessionId);

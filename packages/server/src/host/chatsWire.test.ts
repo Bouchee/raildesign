@@ -1,30 +1,16 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
-import { createFauxCore, fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
-import { ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
-import type { ChatContinuation, ChatCreateResult, Workspace, WsResult } from "@thinkrail/contracts";
-import {
-	CHATS_PROTOCOL_VERSION,
-	CONTINUATION_PROTOCOL_VERSION,
-	WS_CHANNELS,
-} from "@thinkrail/contracts";
-import {
-	configurePiRuntime,
-	configurePiRuntimeFactory,
-	notifyExtUi,
-	promptSession,
-	setSessionManagerFactory,
-} from "../agent";
-import { resetAnalyticsForTests } from "../analytics";
-import { resetJbcentralStateForTests } from "../auth";
+import { assistantMessage, modelResponse, ScriptedModel } from "@openai/agents/testing";
+import type { ChatCreateResult } from "@thinkrail/contracts";
+import { CHATS_PROTOCOL_VERSION, WS_CHANNELS } from "@thinkrail/contracts";
+import { configureAgentModelFactory, notifyExtUi, promptSession } from "../agent";
 import { resetChatsStoreForTests } from "../persistence";
-import { openProject } from "../projects";
-import { resetConfigCache, updateConfig } from "../settings";
+import { resetConfigCache } from "../settings";
 import { setTrashImplementationForTests } from "../trash";
 import { resetChatIdCache } from "../workspaces";
+import { seedSdkTestModel, useSdkTestModel } from "./sdkTestFixture";
 import { createServer, type RunningServer } from "./server";
 
 interface Frame {
@@ -44,21 +30,6 @@ interface Client {
 	close(): void;
 }
 
-const model = {
-	id: "wire-model",
-	name: "wire-model",
-	reasoning: false,
-	input: ["text"] as ("text" | "image")[],
-	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-	contextWindow: 100_000,
-	maxTokens: 4096,
-};
-const faux = createFauxCore({
-	provider: "wire",
-	api: "wire",
-	models: [model],
-	tokensPerSecond: 10000,
-});
 const saved = {
 	agent: process.env.PI_CODING_AGENT_DIR,
 	data: process.env.THINKRAIL_DATA_DIR,
@@ -68,28 +39,6 @@ const saved = {
 const root = realpathSync.native(mkdtempSync(join(tmpdir(), "trpi-chats-wire-")));
 let server: RunningServer;
 let nextRequest = 0;
-
-function gitRepo(path: string): string {
-	mkdirSync(path, { recursive: true });
-	for (const args of [
-		["init", "-b", "main"],
-		[
-			"-c",
-			"user.email=t@thinkrail.test",
-			"-c",
-			"user.name=test",
-			"commit",
-			"--allow-empty",
-			"-m",
-			"init",
-		],
-	]) {
-		const result = Bun.spawnSync(["git", "-C", path, ...args], { stdout: "pipe", stderr: "pipe" });
-		if (!result.success) throw new Error(`git ${args.join(" ")} failed`);
-	}
-	writeFileSync(join(path, "README.md"), "# repo\n");
-	return path;
-}
 
 async function connect(client: string, protocol: number): Promise<Client> {
 	const socket = new WebSocket(
@@ -141,22 +90,10 @@ beforeAll(async () => {
 	resetConfigCache();
 	resetChatIdCache();
 	resetChatsStoreForTests();
-	await resetJbcentralStateForTests();
-	const runtime = await ModelRuntime.create({
-		credentials: new InMemoryCredentialStore(),
-		modelsPath: null,
-		allowModelNetwork: false,
-	});
-	runtime.registerProvider("wire", {
-		api: faux.api,
-		apiKey: "test",
-		baseUrl: "http://faux.local",
-		streamSimple: faux.streamSimple,
-		models: [{ ...model, api: faux.api }],
-	});
-	configurePiRuntime(null);
-	configurePiRuntimeFactory(async () => runtime);
-	setSessionManagerFactory((cwd) => SessionManager.create(cwd));
+	seedSdkTestModel(join(root, "data"), "wire");
+	configureAgentModelFactory(
+		() => new ScriptedModel([modelResponse([assistantMessage("fixture reply")])]),
+	);
 	setTrashImplementationForTests(async (input) => {
 		for (const path of typeof input === "string" ? [input] : input) {
 			rmSync(path, { recursive: true, force: true });
@@ -167,10 +104,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
 	await server.shutdown();
-	resetAnalyticsForTests();
-	await resetJbcentralStateForTests();
-	configurePiRuntimeFactory();
-	configurePiRuntime(null);
+	configureAgentModelFactory();
 	setTrashImplementationForTests(undefined);
 	resetConfigCache();
 	resetChatIdCache();
@@ -194,7 +128,7 @@ test("an older socket hears nothing of a chat: not its records, its extension UI
 		const created = (await current.request("chat.create", {})) as ChatCreateResult;
 		const { workspace, sessionId } = created;
 		notifyExtUi(sessionId, "a notice about the chat", "info");
-		faux.setResponses([fauxAssistantMessage("persisted")]);
+		useSdkTestModel([modelResponse([assistantMessage("persisted")])]);
 		await promptSession(sessionId, "persist this chat");
 		await current.request("session.dispose", { sessionId });
 		await current.request("session.rename", {
@@ -207,14 +141,18 @@ test("an older socket hears nothing of a chat: not its records, its extension UI
 
 		const pushes = (client: Client, channel: string) =>
 			client.frames.filter((frame) => frame.channel === channel);
-		expect(pushes(current, WS_CHANNELS.piExtensionUi)).toContainEqual(
+		expect(pushes(current, WS_CHANNELS.sessionExtensionUi)).toContainEqual(
 			expect.objectContaining({
 				data: expect.objectContaining({ sessionId, message: "a notice about the chat" }),
 			}),
 		);
-		expect(pushes(current, WS_CHANNELS.piEvent)).toContainEqual(
+		expect(pushes(current, WS_CHANNELS.sessionEvent)).toContainEqual(
 			expect.objectContaining({
-				data: { sessionId, event: { type: "session_info_changed", name: "Renamed on disk" } },
+				data: expect.objectContaining({
+					sessionId,
+					seq: expect.any(Number),
+					event: { type: "session_info_changed", name: "Renamed on disk" },
+				}),
 			}),
 		);
 		const aboutTheChat = (frame: Frame) =>
@@ -227,133 +165,6 @@ test("an older socket hears nothing of a chat: not its records, its extension UI
 		await current.request("chat.delete", { workspaceId: workspace.id });
 	} finally {
 		older.close();
-		current.close();
-	}
-}, 30_000);
-
-test("an older socket hears nothing of a chat's extension UI even while its session is still starting", async () => {
-	const agentDir = process.env.PI_CODING_AGENT_DIR;
-	if (!agentDir) throw new Error("agent dir not isolated");
-	const extensionsDir = join(agentDir, "extensions");
-	mkdirSync(extensionsDir, { recursive: true });
-	const extensionPath = join(extensionsDir, "startup-notice.ts");
-	writeFileSync(
-		extensionPath,
-		[
-			'import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";',
-			"export default function (pi: ExtensionAPI) {",
-			'\tpi.on("session_start", async (_event, ctx) => {',
-			'\t\tctx.ui.notify("a notice while the chat starts", "info");',
-			"\t});",
-			"}",
-			"",
-		].join("\n"),
-	);
-	const older = await connect("older-start", CHATS_PROTOCOL_VERSION - 1);
-	const current = await connect("current-start", CHATS_PROTOCOL_VERSION);
-	try {
-		const { workspace, sessionId } = (await current.request("chat.create", {})) as ChatCreateResult;
-		await older.request("project.list", {});
-		const notices = (client: Client) =>
-			client.frames.filter(
-				(frame) =>
-					frame.channel === WS_CHANNELS.piExtensionUi &&
-					JSON.stringify(frame.data ?? null).includes(sessionId),
-			);
-		expect(notices(current)).toContainEqual(
-			expect.objectContaining({
-				data: expect.objectContaining({ sessionId, message: "a notice while the chat starts" }),
-			}),
-		);
-		expect(notices(older)).toEqual([]);
-		await current.request("chat.delete", { workspaceId: workspace.id });
-	} finally {
-		older.close();
-		current.close();
-		rmSync(extensionPath, { force: true });
-	}
-}, 30_000);
-
-test("neither Agent review nor the spec tools reach a chat's session: no tool, no guideline, no spec rule", async () => {
-	updateConfig({ agentReviewEnabled: true });
-	const client = await connect("review", CHATS_PROTOCOL_VERSION);
-	const requests: string[] = [];
-	const capture = (_context: unknown) => {
-		requests.push(JSON.stringify(_context));
-		return fauxAssistantMessage("ok");
-	};
-	try {
-		const project = openProject(gitRepo(join(root, "review-repo")));
-		const rows = (await client.request("workspace.list", {
-			projectId: project.id,
-		})) as Workspace[];
-		const repository = (await client.request("session.create", {
-			workspaceId: rows[0]?.id,
-		})) as WsResult<"session.create">;
-		const chat = (await client.request("chat.create", {})) as ChatCreateResult;
-		faux.setResponses([capture, capture]);
-		await promptSession(repository.sessionId, "review my step");
-		await promptSession(chat.sessionId, "review my step");
-		expect(requests).toHaveLength(2);
-		expect(requests[0]).toContain("request_review");
-		expect(requests[1]).not.toContain("request_review");
-		const specTools = (request: string | undefined) => {
-			const { messages } = JSON.parse(request ?? "{}") as {
-				messages?: { role: string; sections?: { tools?: string } }[];
-			};
-			const tools = messages?.find((message) => message.role === "system")?.sections?.tools ?? "";
-			return [...tools.matchAll(/^- (spec_\w+):/gm)].map((match) => match[1]);
-		};
-		expect(specTools(requests[0])).toContain("spec_grep");
-		expect(requests[0]).toContain("Specs are this project's ground truth.");
-		expect(specTools(requests[1])).toEqual([]);
-		expect(requests[1]).not.toContain("Specs are this project");
-		await client.request("chat.delete", { workspaceId: chat.workspace.id });
-	} finally {
-		updateConfig({ agentReviewEnabled: false });
-		client.close();
-	}
-}, 30_000);
-
-test("continuation phases reach only sockets at the continuation protocol, and nothing reaches one older than chats", async () => {
-	const project = openProject(gitRepo(join(root, "repo-continue")));
-	const oldest = await connect("oldest", CHATS_PROTOCOL_VERSION - 1);
-	const chatsOnly = await connect("chats-only", CONTINUATION_PROTOCOL_VERSION - 1);
-	const current = await connect("continuing", CONTINUATION_PROTOCOL_VERSION);
-	try {
-		const created = (await current.request("chat.create", {})) as ChatCreateResult;
-		faux.setResponses([fauxAssistantMessage("ready")]);
-		await promptSession(created.sessionId, "start");
-		faux.setResponses([fauxAssistantMessage("No summary this time.")]);
-		const { operationId } = (await current.request("chat.continue", {
-			workspaceId: created.workspace.id,
-			projectId: project.id,
-		})) as { operationId: string };
-		await current.next(
-			(frame) =>
-				frame.channel === WS_CHANNELS.chatContinuation &&
-				(frame.data as ChatContinuation).operationId === operationId &&
-				(frame.data as ChatContinuation).phase === "failed",
-		);
-		await oldest.request("project.list", {});
-		await chatsOnly.request("project.list", {});
-		const continuations = (client: Client) =>
-			client.frames.filter((frame) => frame.channel === WS_CHANNELS.chatContinuation);
-		expect(continuations(current).map((frame) => (frame.data as ChatContinuation).phase)).toEqual([
-			"requested",
-			"summarizing",
-			"failed",
-		]);
-		expect(continuations(chatsOnly)).toEqual([]);
-		expect(
-			oldest.frames.filter((frame) =>
-				JSON.stringify(frame.data ?? null).includes(created.workspace.id),
-			),
-		).toEqual([]);
-		await current.request("chat.delete", { workspaceId: created.workspace.id });
-	} finally {
-		oldest.close();
-		chatsOnly.close();
 		current.close();
 	}
 }, 30_000);

@@ -1,13 +1,24 @@
-import type { WsMethodName, WsParams, WsRequest, WsResult } from "@thinkrail/contracts";
+import {
+	PROTOCOL_VERSION,
+	type WsMethodName,
+	type WsParams,
+	type WsRequest,
+	type WsResult,
+} from "@thinkrail/contracts";
 import { E2E_PORT } from "./paths";
 
 export class E2eWireTransientError extends Error {}
 
-function readResponse(data: unknown, id: string): { ok: boolean; result?: unknown } | null {
+function readResponse(
+	data: unknown,
+	id: string,
+): { ok: boolean; result?: unknown; error?: string } | null {
 	if (typeof data !== "object" || data === null) return null;
 	const frame = data as Record<string, unknown>;
 	if (frame.id !== id || typeof frame.ok !== "boolean") return null;
-	return frame.ok ? { ok: true, result: frame.result } : { ok: false };
+	return frame.ok
+		? { ok: true, result: frame.result }
+		: { ok: false, error: typeof frame.error === "string" ? frame.error : "Unknown host error" };
 }
 
 export class E2eWire {
@@ -19,7 +30,7 @@ export class E2eWire {
 	}
 
 	static async connect(port = E2E_PORT, timeoutMs = 10_000): Promise<E2eWire> {
-		const socket = new WebSocket(`ws://localhost:${port}/ws`);
+		const socket = new WebSocket(`ws://localhost:${port}/ws?protocol=${PROTOCOL_VERSION}`);
 		await new Promise<void>((resolve, reject) => {
 			const timer = setTimeout(() => {
 				socket.close();
@@ -72,7 +83,7 @@ export class E2eWire {
 				if (!response) return;
 				cleanup();
 				if (response.ok) resolve(response.result as WsResult<M>);
-				else reject(new Error(`${method} failed on the isolated host wire`));
+				else reject(new Error(`${method} failed on the isolated host wire: ${response.error}`));
 			};
 			const onClose = () => {
 				cleanup();

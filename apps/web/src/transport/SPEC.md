@@ -7,6 +7,10 @@ parent: module-web
 depends-on: [module-contracts]
 ---
 
+## RailDesign stage 1
+
+The application owns message, tool, usage and event types in `sessionProtocol.ts`. `session.event` carries `{sessionId,runId,seq,event}` with increasing per-session sequence numbers. Initial transcript hydration buffers events and applies only events above `SessionSummary.eventSeq`. Stable IDs join streamed and final messages. SDK details, routing credentials and checkpoints stay on the host. Basic confirmations carry session, run, interaction and revision ownership, and remain visible on reply failure. Stage 1 exposes read/search/command/edit, approval and Stop; continuous-input, compaction and advanced execution controls wait for their respective implementation stages. RailDesign does not offer upstream analytics consent, surveys, Central or old Pi configuration folders.
+
 ## Responsibility
 
 The single WebSocket client to the host, its app-wide singleton, and the ordered delivery boundary that
@@ -34,19 +38,19 @@ batches high-frequency Pi events without allowing later wire messages to overtak
   response can, and the request it named is already gone from `pending`, so nothing would replay or re-ack it;
   `resume` repairs them all at once by restating the truth rather than confirming the confirmations —, channel
   `subscribe` with last-value replay for snapshots; append-only terminal data and the one-shot terminal
-  exit/detach + session-creation/deletion + `provider.changed` invalidation + addressed `feedback.interview`, `feedback.githubStar`
+  exit/detach + session-creation/deletion + `provider.changed` invalidation
   and `search.textResults` channels, plus scoped `session.resourcesChanged` invalidations and per-session `mcp.status` snapshots, are never cached or replayed to late
   subscribers. Resource metadata hydration belongs to the mounted chat integration, not replayed
   invalidation payloads. Reconnect/backoff;
   `inferUrl` defaults to
   same-origin; **`httpBase()`** derives the host's HTTP origin
   from the WS `url` — for building host HTTP URLs like the `/files/<workspaceId>/<path>` worktree-file
-  endpoint the markdown viewer points relative `<img>`s at, targeting the same host the transport dials); `piEventBatcher.ts`
-  (the browser-side bounded queue for consecutive `pi.event` frames: exact arrival order, no dropped events,
+  endpoint the markdown viewer points relative `<img>`s at, targeting the same host the transport dials); `sessionEventBatcher.ts`
+  (the browser-side bounded queue for consecutive `session.event` frames: exact arrival order, no dropped events,
   one atomic delivery at roughly 30 Hz, a 128-event forced-flush ceiling, and `flush`/`dispose` lifecycle);
   `wireTransport.ts` (`initTransport`/
-  `getTransport` singleton; routes `server.welcome`, **`host.updateAvailable`**, **`project.updated`**, `pi.event`, `pi.extensionUi`,
-  **`session.created`**, **`session.deleted`**, **`provider.changed`**, addressed **`feedback.interview`** and **`feedback.githubStar`**, **the
+  `getTransport` singleton; routes `server.welcome`, **`host.updateAvailable`**, **`project.updated`**, `session.event`, `session.interaction`,
+  **`session.created`**, **`session.deleted`**, **`provider.changed`**,  **the
   `workspace.created`/`updated`/`removed` lifecycle trio, the `workspace.creationChanged`/`creationRemoved`
   pair, and `workspace.fsChanged`** into the store — and
   folds every connection transition through
@@ -67,8 +71,8 @@ batches high-frequency Pi events without allowing later wire messages to overtak
   re-listing the watched creation's project when the creation is gone, so a create that finished while
   disconnected lands on its workspace instead of racing the list refresh;
   the full host-update lifecycle snapshot via `applyHostUpdate`, project snapshots via
-  `applyProjectUpdated`, consecutive `pi.event` frames through the batcher into one
-  `handlePiEvents(payloads)` store commit, `pi.extensionUi` via `applyExtUi(request)`,
+  `applyProjectUpdated`, consecutive `session.event` frames through the batcher into one
+  `handleSessionEvents(payloads)` store commit, `session.interaction` via `applyExtUi(request)`,
   `workspace.created` via `addWorkspace(workspace)`, `workspace.updated` via `updateWorkspace(workspace)`,
   `workspace.removed` via `retireWorkspace(projectId, id)` (`applyWorkspaceRemoved` plus login cancellation), `session.created` via `noteClosedChats`
   (peer-created domain state enters history only, never local placement), `session.deleted` via the idempotent
@@ -79,17 +83,6 @@ batches high-frequency Pi events without allowing later wire messages to overtak
   guard (the model-catalog hook uses the same guarded write for every list/refresh, so an older reply cannot
   restore a removed generation's models; provider settings observes the same version and re-reads
   `provider.status`), each valid `server.welcome` first clearing any popup projection left by a host restart,
-  then `feedback.interview` via the idempotent `showSurveyInvitation()`, only from a v97+ host (an older host
-  still sends the retired interview invitation on that channel) — the shell holds the invitation
-  behind onboarding and the consent dialog, and additional analytics may be off (a surviving host claim
-  re-delivers the addressed event immediately after welcome). `feedback.githubStar` raises one info toast (`githubStar.ts`: 60 s,
-  a "View on GitHub" action opening `REPO_URL`, labelled `| ☆ 7.1k` with the host-read star count formatted like the
-  website, plain when the payload has none); the host decides when, reads the count and sends it once, so the client
-  keeps no count or gate of its own and never contacts GitHub. `loadInAppSurvey()` installs `feedback.survey` (asked in `currentLocale()`, so PostHog's
-  translation for the UI language is shown when it has one; a language switch applies on the next load)
-  into the store after welcome, when Settings opens, when the survey window opens, and after a
-  `SURVEY_CHANGED` refusal; it never rejects, and a stale reply is dropped by generation, so
-  `forgetInAppSurvey()` after a successful Send cannot be undone by a load still in flight,
   `workspace.fsChanged` via `noteFsChanged(payload)`, **`mcp.status`** via the generation-guarded
   `applyMcpStatus(snapshot)`, and **`settings.changed`** via `applyConfig(config)` — the post-startup server-synced app config broadcast;
   welcome config lands in the atomic install above.
@@ -163,9 +156,8 @@ the existing reconnect-safe request transport; the host's bounded probe lifetime
 class and the stack with the message cut out of it (a V8 stack header repeats the message, and its lines
 can look like frames) over fire-and-forget `client.reportError` — only to a host with
 `CLIENT_ERROR_REPORT_PROTOCOL_VERSION` (v90); reports raised before the welcome wait for it (≤ 10 queued), and a
-page sends at most 50. Each report carries the PostHog chunk ids (≤ 20) that the release build's
-injected `_posthogChunkIds` registry assigns to URLs in its own stack, so uploaded maps resolve its frames.
-The browser never scrubs or holds a vendor client: the host is the only sanitizer.
+page sends at most 50. Reports carry class, message-free stack and optional boundary only; there is no
+source-map registry or vendor client. The host validates untrusted reports for local diagnostics.
 `main.tsx` installs the listeners and injects the forwarder into `components`' error-boundary seam.
 
 - **Public surface (barrel):** `initTransport`, `getTransport`, `prewarmWorkspaceSkillLoad`, the three
@@ -211,7 +203,7 @@ The browser never scrubs or holds a vendor client: the host is the only sanitize
   and `git.diffFile` without `meta`, which the panes read as "text" — exactly the surface that host's own
   client showed — and `/blob` is only ever addressed for a side the host itself reported as byte-only.
 - **Allowed deps:** `contracts` (method maps, `WS_CHANNELS`, `Project` for welcome + `project.updated`, `SessionEventPayload`
-  for `pi.event`, `ExtUiRequest` for `pi.extensionUi`, `Workspace` for `workspace.created`/`updated`,
+  for `session.event`, `ExtUiRequest` for `session.interaction`, `Workspace` for `workspace.created`/`updated`,
   `WorkspaceRemoved` for `workspace.removed`, `SessionCreatedPayload` for `session.created`,
   `SessionDeletedPayload` for `session.deleted`,
   `HOST_UPDATE_RUN_PROTOCOL_VERSION` + `Ack` + the typed `host.update` method for the CLI-host update action,

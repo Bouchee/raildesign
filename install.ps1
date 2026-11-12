@@ -1,23 +1,23 @@
-# ThinkRail binary installer for Windows -- downloads the single-file thinkrail.exe from the GitHub
+# RailDesign binary installer for Windows -- downloads the single-file raildesign.exe from the GitHub
 # releases, verifies its checksum, and puts it on your PATH. The native counterpart of install.sh
 # (macOS/Linux/Git Bash); one script serves both cmd and PowerShell (Windows PowerShell 5.1+).
 #
-#   powershell -c "irm https://raw.githubusercontent.com/JetBrains/thinkrail/main/install.ps1 | iex"
+#   powershell -c "irm https://raw.githubusercontent.com/Bouchee/thinkrail/main/install.ps1 | iex"
 #
 # Options are env vars (the one syntax cmd and PowerShell share) -- set before running:
 #   THINKRAIL_CHANNEL         stable|nightly   (default: stable)
 #   THINKRAIL_VERSION         X.Y.Z|X.Y.Z-nightly.N|latest
 #                                             (default: latest)
-#   THINKRAIL_PREFIX          DIR              (default: %USERPROFILE%\.local; binary lands at <prefix>\bin\thinkrail.exe)
+#   THINKRAIL_PREFIX          DIR              (default: %USERPROFILE%\.local; binary lands at <prefix>\bin\raildesign.exe)
 #   THINKRAIL_NO_MODIFY_PATH  1                don't touch the user PATH; just print advice
 #
-#   PowerShell:  $env:THINKRAIL_CHANNEL='nightly'; irm https://raw.githubusercontent.com/JetBrains/thinkrail/main/install.ps1 | iex
-#   cmd:         set "THINKRAIL_CHANNEL=nightly" && powershell -c "irm https://raw.githubusercontent.com/JetBrains/thinkrail/main/install.ps1 | iex"
+#   PowerShell:  $env:THINKRAIL_CHANNEL='nightly'; irm https://raw.githubusercontent.com/Bouchee/thinkrail/main/install.ps1 | iex
+#   cmd:         set "THINKRAIL_CHANNEL=nightly" && powershell -c "irm https://raw.githubusercontent.com/Bouchee/thinkrail/main/install.ps1 | iex"
 #
 # A saved copy also takes params: .\install.ps1 -Channel nightly -Version 0.2.0-nightly.4 -Prefix D:\tools -NoModifyPath
 #
-# After install, run `thinkrail`. To update later, run `thinkrail update` (it re-runs this installer for
-# you, replacing the running exe); to remove it, run `thinkrail uninstall`.
+# After install, run `raildesign`. To update later, run `raildesign update` (it re-runs this installer for
+# you, replacing the running exe); to remove it, run `raildesign uninstall`.
 #
 # Kept ASCII-only on purpose: Windows PowerShell 5.1 parses a saved UTF-8 file without BOM as ANSI,
 # which would garble any non-ASCII character. Errors `throw` (never `exit`): under `irm | iex` the
@@ -31,7 +31,7 @@ param(
     [switch]$NoModifyPath = ($env:THINKRAIL_NO_MODIFY_PATH -eq '1')
 )
 
-function Resolve-ThinkRailTag {
+function Resolve-RailDesignTag {
     param([string]$Repo, [string]$Channel, [string]$Version)
     if ($Version -cne 'latest') { return 'v' + $Version }
     $headers = @{ Accept = 'application/vnd.github+json' }
@@ -53,12 +53,12 @@ function Resolve-ThinkRailTag {
     return $null
 }
 
-function Get-ThinkRailPersistentPath {
+function Get-RailDesignPersistentPath {
     # Raw (unexpanded) entries of the *persistent* PATH: the per-user value in HKCU\Environment plus the
     # machine value (readable without admin). Deliberately NOT $env:Path -- the live process PATH also
     # carries session-only edits (`$env:Path += ...`, a parent script, an earlier -NoModifyPath run whose
     # advice the user followed by hand), and taking those as proof of installation would skip the
-    # registry write and leave thinkrail off PATH in the next terminal. An unreadable hive contributes
+    # registry write and leave raildesign off PATH in the next terminal. An unreadable hive contributes
     # nothing, which at worst re-adds an entry that was already there.
     $entries = @()
     foreach ($scope in @('User', 'Machine')) {
@@ -84,7 +84,7 @@ function Get-ThinkRailPersistentPath {
     return , $entries
 }
 
-function Test-ThinkRailOnPath {
+function Test-RailDesignOnPath {
     # Is $Dir among these PATH entries (compared unexpanded and %VAR%-expanded, separator- and case-insensitively)?
     param([string]$Dir, [string[]]$PathEntries)
     $norm = $Dir.Replace('/', '\').TrimEnd('\')
@@ -98,7 +98,7 @@ function Test-ThinkRailOnPath {
     return $false
 }
 
-function Add-ThinkRailToUserPath {
+function Add-RailDesignToUserPath {
     # Append $Dir to the per-user PATH in HKCU\Environment. Deliberately NOT
     # [Environment]::SetEnvironmentVariable('Path', ..., 'User'): that expands %VARS% and rewrites
     # REG_EXPAND_SZ as REG_SZ, clobbering other tools' entries. Returns 'already', 'added', or 'failed'.
@@ -113,7 +113,7 @@ function Add-ThinkRailToUserPath {
             $kind = $key.GetValueKind('Path')
             $raw = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
         }
-        if (Test-ThinkRailOnPath -Dir $Dir -PathEntries (Get-ThinkRailPersistentPath)) { return 'already' }
+        if (Test-RailDesignOnPath -Dir $Dir -PathEntries (Get-RailDesignPersistentPath)) { return 'already' }
         $newRaw = if ($raw -and -not $raw.EndsWith(';')) { "$raw;$Dir" } elseif ($raw) { "$raw$Dir" } else { $Dir }
         $key.SetValue('Path', $newRaw, $kind)
         return 'added'
@@ -124,31 +124,31 @@ function Add-ThinkRailToUserPath {
     }
 }
 
-function Send-ThinkRailSettingChange {
+function Send-RailDesignSettingChange {
     # Broadcast WM_SETTINGCHANGE "Environment" so Explorer re-reads the registry PATH -- terminals
     # opened after this pick it up without a sign-out. Best-effort.
     try {
-        if (-not ('ThinkRail.NativeMethods' -as [type])) {
-            Add-Type -Namespace ThinkRail -Name NativeMethods -MemberDefinition @'
+        if (-not ('RailDesign.NativeMethods' -as [type])) {
+            Add-Type -Namespace RailDesign -Name NativeMethods -MemberDefinition @'
 [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
 public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);
 '@
         }
         $result = [UIntPtr]::Zero
         # HWND_BROADCAST (0xffff), WM_SETTINGCHANGE (0x1a), SMTO_ABORTIFHUNG (0x2), 5s timeout.
-        [void][ThinkRail.NativeMethods]::SendMessageTimeout([IntPtr]0xffff, 0x1a, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$result)
+        [void][RailDesign.NativeMethods]::SendMessageTimeout([IntPtr]0xffff, 0x1a, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$result)
     } catch {
         # Non-fatal: new terminals see the PATH after the next sign-in regardless.
     }
 }
 
-function Install-ThinkRailBinary {
+function Install-RailDesignBinary {
     # Put the verified download at $Dest so that no failure can leave the user without a working exe:
     #   1. Stage the asset *inside* $Dest's own directory first. Crossing volumes (a custom prefix on
     #      another drive) and running out of space happen here -- before anything installed is touched.
     #   2. Swap it in. From here every step is a same-volume rename: it either succeeds or changes
     #      nothing, so it cannot half-fail with the old binary already moved away.
-    #   3. Only if $Dest exists and refuses to be overwritten is it locked (thinkrail is running).
+    #   3. Only if $Dest exists and refuses to be overwritten is it locked (raildesign is running).
     #      Renaming a running exe IS allowed: move it aside, drop the new one in, leave the `.old` for
     #      the next install to clean. If $Dest does *not* exist the first failure was something else
     #      (permissions, AV, full disk) -- rethrow it rather than masking it with a bogus rename.
@@ -175,7 +175,7 @@ function Install-ThinkRailBinary {
     }
 }
 
-function Install-ThinkRail {
+function Install-RailDesign {
     param([string]$Channel, [string]$Version, [string]$Prefix, [switch]$NoModifyPath)
 
     # Function-scoped preferences: `irm | iex` runs in the caller's session, so top-level assignments
@@ -184,13 +184,13 @@ function Install-ThinkRail {
     $ProgressPreference = 'SilentlyContinue'
 
     if ($env:OS -ne 'Windows_NT') {
-        throw 'This installer is for Windows. On macOS/Linux use: curl -fsSL https://raw.githubusercontent.com/JetBrains/thinkrail/main/install.sh | bash'
+        throw 'This installer is for Windows. On macOS/Linux use: curl -fsSL https://raw.githubusercontent.com/Bouchee/thinkrail/main/install.sh | bash'
     }
 
     # Windows PowerShell 5.1 defaults can lack TLS 1.2, which github.com requires. Additive + process-wide.
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-    $repo = if ($env:THINKRAIL_REPO) { $env:THINKRAIL_REPO } else { 'JetBrains/thinkrail' }
+    $repo = if ($env:THINKRAIL_REPO) { $env:THINKRAIL_REPO } else { 'Bouchee/thinkrail' }
 
     # cmd's `set X=value && ...` embeds the space before && into the value -- trim every input.
     $channel = $Channel.Trim()
@@ -221,10 +221,10 @@ function Install-ThinkRail {
     }
 
     # Windows-on-ARM has no native build yet; the x64 binary runs under emulation (same as install.sh).
-    $assetName = 'thinkrail-windows-x64.exe'
+    $assetName = 'raildesign-windows-x64.exe'
 
     Write-Host "Resolving latest $channel release for windows/x64 ..."
-    $tag = Resolve-ThinkRailTag -Repo $repo -Channel $channel -Version $version
+    $tag = Resolve-RailDesignTag -Repo $repo -Channel $channel -Version $version
     if (-not $tag) {
         throw "Failed to resolve a $channel release. Has one been published yet?"
     }
@@ -239,8 +239,8 @@ function Install-ThinkRail {
     Write-Host "  -> $tag"
 
     $binDir = Join-Path $prefix 'bin'
-    $dest = Join-Path $binDir 'thinkrail.exe'
-    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('thinkrail-install-' + [System.IO.Path]::GetRandomFileName())
+    $dest = Join-Path $binDir 'raildesign.exe'
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('raildesign-install-' + [System.IO.Path]::GetRandomFileName())
     New-Item -ItemType Directory -Path $tmp -Force | Out-Null
     try {
         $assetPath = Join-Path $tmp $assetName
@@ -269,18 +269,18 @@ function Install-ThinkRail {
         New-Item -ItemType Directory -Path $binDir -Force | Out-Null
         # Leftovers from earlier installs: `.old` (a renamed-aside running exe) and `.new` (a staged
         # download whose swap was interrupted). Best-effort -- an `.old` may still be running.
-        Get-ChildItem -Path $binDir -Filter 'thinkrail.exe.*' -File -ErrorAction SilentlyContinue |
+        Get-ChildItem -Path $binDir -Filter 'raildesign.exe.*' -File -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -like '*.old' -or $_.Name -like '*.new' } |
             Remove-Item -Force -ErrorAction SilentlyContinue
-        Install-ThinkRailBinary -Source $assetPath -Dest $dest
+        Install-RailDesignBinary -Source $assetPath -Dest $dest
         Write-Host "Installed -> $dest"
     } finally {
         Remove-Item -Recurse -Force -Path $tmp -ErrorAction SilentlyContinue
     }
 
-    # Same file + shape install.sh writes; `thinkrail update` reads it (homedir()\.config\thinkrail).
+    # Same file + shape install.sh writes; `raildesign update` reads it (homedir()\.config\raildesign).
     # Written *after* the PATH section below, because it records whether that section added the entry.
-    $configDir = Join-Path $env:USERPROFILE '.config\thinkrail'
+    $configDir = Join-Path $env:USERPROFILE '.config\raildesign'
     $metaFile = Join-Path $configDir 'install.json'
     $previousMeta = $null
     try {
@@ -292,34 +292,34 @@ function Install-ThinkRail {
     }
 
     Write-Host ''
-    Write-Host "ThinkRail $($tag -replace '^v', '') ($channel) installed."
+    Write-Host "RailDesign $($tag -replace '^v', '') ($channel) installed."
 
     $pathAdvice = $null
     $pathStatus = $null
     if ($NoModifyPath) {
-        if (Test-ThinkRailOnPath -Dir $binDir -PathEntries (Get-ThinkRailPersistentPath)) {
+        if (Test-RailDesignOnPath -Dir $binDir -PathEntries (Get-RailDesignPersistentPath)) {
             Write-Host 'PATH:           already configured'
         } else {
             $pathAdvice = "$binDir (skipped: -NoModifyPath)"
         }
     } else {
-        $pathStatus = Add-ThinkRailToUserPath -Dir $binDir
+        $pathStatus = Add-RailDesignToUserPath -Dir $binDir
         switch ($pathStatus) {
             'already' { Write-Host 'PATH:           already configured' }
             'added' {
-                Send-ThinkRailSettingChange
+                Send-RailDesignSettingChange
                 Write-Host "PATH:           added $binDir to your user PATH"
                 Write-Host '                open a new terminal to pick it up'
             }
             'failed' { $pathAdvice = "$binDir (could not update the registry)" }
         }
-        # Persisted -- also make `thinkrail` runnable in *this* session (a saved-copy run in an
+        # Persisted -- also make `raildesign` runnable in *this* session (a saved-copy run in an
         # interactive shell), without duplicating an entry the process PATH already carries.
-        if ($pathStatus -ne 'failed' -and -not (Test-ThinkRailOnPath -Dir $binDir -PathEntries ($env:Path -split ';'))) {
+        if ($pathStatus -ne 'failed' -and -not (Test-RailDesignOnPath -Dir $binDir -PathEntries ($env:Path -split ';'))) {
             $env:Path = "$env:Path;$binDir"
         }
     }
-    # Did *we* put $binDir on the user PATH? `thinkrail uninstall` removes that entry only when this says
+    # Did *we* put $binDir on the user PATH? `raildesign uninstall` removes that entry only when this says
     # yes: nothing else in the registry marks it as ours, and a user who already had this dir on PATH for
     # other tools must not lose it. Sticky across re-installs of the same prefix -- an update sees
     # 'already' precisely because an earlier run of ours added it, and that ownership must not decay.
@@ -339,7 +339,7 @@ function Install-ThinkRail {
         installed_at     = ((Get-Date).ToUniversalTime().ToString('s') + 'Z')
     }
     # WriteAllText writes UTF-8 without BOM (PS 5.1's Set-Content -Encoding UTF8 adds one, which
-    # breaks the JSON.parse in `thinkrail update`).
+    # breaks the JSON.parse in `raildesign update`).
     $metaTemp = Join-Path $configDir ('.install.json.' + [System.IO.Path]::GetRandomFileName() + '.tmp')
     try {
         [System.IO.File]::WriteAllText($metaTemp, ($meta | ConvertTo-Json))
@@ -353,9 +353,9 @@ function Install-ThinkRail {
     }
 
     if ($pathAdvice) { Write-Host "Add to PATH:    $pathAdvice" }
-    Write-Host 'Run:            thinkrail'
-    Write-Host 'Update later:   thinkrail update'
-    Write-Host 'Uninstall:      thinkrail uninstall'
+    Write-Host 'Run:            raildesign'
+    Write-Host 'Update later:   raildesign update'
+    Write-Host 'Uninstall:      raildesign uninstall'
 }
 
-Install-ThinkRail -Channel $Channel -Version $Version -Prefix $Prefix -NoModifyPath:$NoModifyPath
+Install-RailDesign -Channel $Channel -Version $Version -Prefix $Prefix -NoModifyPath:$NoModifyPath

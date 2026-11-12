@@ -24,13 +24,13 @@ import {
 } from "./paths";
 import { psQuote, runPowerShellScript, spawnDetachedPowerShell } from "./powershell";
 
-export const RC_BLOCK_BEGIN = "# >>> thinkrail PATH >>>";
-export const RC_BLOCK_END = "# <<< thinkrail PATH <<<";
+export const RC_BLOCK_BEGIN = "# >>> raildesign PATH >>>";
+export const RC_BLOCK_END = "# <<< raildesign PATH <<<";
 
-export const UNINSTALL_USAGE = `Usage: thinkrail uninstall [options]
+export const UNINSTALL_USAGE = `Usage: raildesign uninstall [options]
 
-Remove ThinkRail from this machine: the executable, the installer's PATH entry, the install
-metadata, and the binary's staging cache. Your app state (~/.thinkrail) is kept unless you ask
+Remove RailDesign from this machine: the executable, the installer's PATH entry, the install
+metadata, and the binary's staging cache. Your app state (~/.raildesign) is kept unless you ask
 for it to be removed. pi's own state (~/.pi) is never touched.
 
 Options:
@@ -117,7 +117,7 @@ export interface ResolveUninstallInput {
 export function resolveUninstallTargets(input: ResolveUninstallInput): UninstallTargets {
 	const windows = input.platform === "win32";
 	const path = windows ? win32 : posix;
-	const exeName = windows ? "thinkrail.exe" : "thinkrail";
+	const exeName = windows ? "raildesign.exe" : "raildesign";
 	const recordedPrefix = input.installMeta.prefix;
 	const normalizedRecordedPrefix = windows
 		? normalizeWindowsInstallPrefix(recordedPrefix)
@@ -166,7 +166,7 @@ export function resolveUninstallTargets(input: ResolveUninstallInput): Uninstall
 		binDir,
 		pathEntryOwned,
 		rcFiles,
-		fishFile: windows ? "" : path.join(input.home, ".config", "fish", "conf.d", "thinkrail.fish"),
+		fishFile: windows ? "" : path.join(input.home, ".config", "fish", "conf.d", "raildesign.fish"),
 		installMetaFile: installMetaFile(input.home),
 		installConfigDir: installConfigDir(input.home),
 		stagingRoot: input.stagingRoot,
@@ -226,18 +226,18 @@ function Get-PathWithoutEntry {
     return ($kept -join ';')
 }
 
-function Send-ThinkRailSettingChange {
+function Send-RailDesignSettingChange {
     # Broadcast WM_SETTINGCHANGE "Environment" so terminals opened after this see the new PATH without a
     # sign-out (the same best-effort call install.ps1 makes after adding the entry).
     try {
-        if (-not ('ThinkRail.NativeMethods' -as [type])) {
-            Add-Type -Namespace ThinkRail -Name NativeMethods -MemberDefinition @'
+        if (-not ('RailDesign.NativeMethods' -as [type])) {
+            Add-Type -Namespace RailDesign -Name NativeMethods -MemberDefinition @'
 [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
 public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);
 '@
         }
         $result = [UIntPtr]::Zero
-        [void][ThinkRail.NativeMethods]::SendMessageTimeout([IntPtr]0xffff, 0x1a, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$result)
+        [void][RailDesign.NativeMethods]::SendMessageTimeout([IntPtr]0xffff, 0x1a, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$result)
     } catch {
         # Non-fatal: the registry is already updated; new terminals see it after the next sign-in.
     }
@@ -253,7 +253,7 @@ try {
     $next = Get-PathWithoutEntry -Raw $raw -Dir $Dir
     if ($null -eq $next) { 'absent'; return }
     $key.SetValue('Path', $next, $kind)
-    Send-ThinkRailSettingChange
+    Send-RailDesignSettingChange
     'removed'
 } catch {
     'failed'
@@ -323,7 +323,7 @@ function removeExecutable(path: string): Step {
 				"executable",
 				path,
 				"failed",
-				"it is locked by a running ThinkRail — close it and try again",
+				"it is locked by a running RailDesign — close it and try again",
 			);
 		}
 		const quoted = psQuote(aside);
@@ -335,7 +335,7 @@ function removeExecutable(path: string): Step {
 			path,
 			"removed",
 			scheduled
-				? `Windows can't delete a running program: renamed to ${basename(aside)}, which goes once no ThinkRail is running`
+				? `Windows can't delete a running program: renamed to ${basename(aside)}, which goes once no RailDesign is running`
 				: `Windows can't delete a running program: renamed to ${aside} — delete that file by hand`,
 		);
 	}
@@ -423,7 +423,7 @@ function removeWindowsLeftovers(targets: UninstallTargets): Step[] {
 	}
 	const steps: Step[] = [];
 	for (const entry of entries) {
-		if (!entry.startsWith("thinkrail.exe.")) continue;
+		if (!entry.startsWith("raildesign.exe.")) continue;
 		if (!entry.endsWith(".old") && !entry.endsWith(".new")) continue;
 		const path = join(targets.binDir, entry);
 		if (removeFile(path) === "removed") steps.push(step("leftover", path, "removed"));
@@ -460,8 +460,8 @@ function describePlan(
 	const width = Math.max(0, ...rows.map(([label]) => label.length));
 	const body = rows.length
 		? rows.map(([label, path]) => `  ${label.padEnd(width)}  ${path}`).join("\n")
-		: "  (nothing found — ThinkRail doesn't look installed from here)";
-	return `thinkrail ${version} (${channel}) — uninstall\n\n${body}\n`;
+		: "  (nothing found — RailDesign doesn't look installed from here)";
+	return `raildesign ${version} (${channel}) — uninstall\n\n${body}\n`;
 }
 
 const OUTCOME_WORD: Record<Outcome, string> = {
@@ -535,8 +535,8 @@ export async function runUninstall(
 				removeData = await askYesNo(rl, lines, "Delete it too? [y/N] ", false);
 			}
 			const question = removeData
-				? "Uninstall ThinkRail and delete the app state? [y/N] "
-				: "Uninstall ThinkRail (keeping the app state)? [y/N] ";
+				? "Uninstall RailDesign and delete the app state? [y/N] "
+				: "Uninstall RailDesign (keeping the app state)? [y/N] ";
 			if (!(await askYesNo(rl, lines, question, false))) {
 				console.log("\nAborted — nothing was removed.");
 				return 0;
@@ -575,7 +575,7 @@ export async function runUninstall(
 	console.log(
 		failed.length
 			? `Uninstall finished with ${failed.length} problem(s) — see FAILED above.`
-			: "ThinkRail is uninstalled.",
+			: "RailDesign is uninstalled.",
 	);
 	if (steps.some((item) => item.kind === "PATH entry" && item.outcome === "removed")) {
 		console.log("Open a new terminal for the PATH change to take effect.");

@@ -25,11 +25,11 @@ test("isolates both home variables without inheriting Windows case variants", ()
 	expect(inherited.UserProfile).toBe("real-profile");
 });
 
-test("unsets inherited agent-directory case variants for the default-agent probe", () => {
+test("unsets inherited model-key case variants for isolated artifact probes", () => {
 	expect(
-		hostEnvironment({}, ["PI_CODING_AGENT_DIR"], {
-			pi_coding_agent_dir: "real-agent",
-			PI_CODING_AGENT_DIR: "another-real-agent",
+		hostEnvironment({}, ["OPENAI_API_KEY"], {
+			openai_api_key: "real-key",
+			OPENAI_API_KEY: "another-real-key",
 			HOME: "isolated-home",
 			USERPROFILE: "isolated-home",
 		}),

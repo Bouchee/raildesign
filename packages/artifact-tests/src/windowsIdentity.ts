@@ -112,7 +112,7 @@ export function windowsIdentityMismatches(
 	if (
 		!actual.defaultIconFrames.every((frame) => frames.some((own) => sameBytes(frame, own.bytes)))
 	) {
-		mismatches.push("the shell's default icon group holds frames that are not ThinkRail's");
+		mismatches.push("the shell's default icon group holds frames that are not RailDesign's");
 	}
 	const strings: Record<string, string> = {
 		FileDescription: expected.productName,

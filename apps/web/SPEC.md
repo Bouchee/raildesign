@@ -8,9 +8,13 @@ depends-on: [module-contracts, module-locales, module-ui, module-extension-api, 
 tags: [ui]
 ---
 
+## RailDesign stage 1
+
+The application owns message, tool, usage and event types in `sessionProtocol.ts`. `session.event` carries `{sessionId,runId,seq,event}` with increasing per-session sequence numbers. Initial transcript hydration buffers events and applies only events above `SessionSummary.eventSeq`. Stable IDs join streamed and final messages. SDK details, routing credentials and checkpoints stay on the host. Basic confirmations carry session, run, interaction and revision ownership, and remain visible on reply failure. Stage 1 exposes read/search/command/edit, approval and Stop; continuous-input, compaction and advanced model execution controls wait for their respective implementation stages. MCP configuration, validation and OAuth plus Skills catalog/trust management remain available. The complete subagent configuration component and callbacks remain present with execution controls disabled, and live Skills session reload stays disabled until real SDK integration exists. RailDesign does not offer upstream analytics consent, surveys, Central or old Pi configuration folders.
+
 ## Responsibility
 
-The mobile-first React UI. Ships as static assets and dials an engine host over the wire. Renders `pi`'s
+The mobile-first React UI. Ships as static assets and dials an engine host over the wire. Renders the application-owned
 event stream as a chat-centric, multi-session IDE shell.
 
 ## Boundary
@@ -98,13 +102,7 @@ development build (`NODE_ENV=development vite build --mode development`) streams
 (`e2e/perf/chatReplay`) into a mounted chat and must keep `performance.getEntriesByType("measure")` flat.
 On 19.2.0 it grew by about 1,500 entries per 12 KB message; on the fixed releases it stays at zero.
 
-**Release source maps are build-only and never shipped.** With `THINKRAIL_SOURCEMAPS_RELEASE` set (a
-credentialed release build, [[module-ci-release]]), `vite.config.ts` emits hidden maps and the
-`sourceMapUpload.ts` plugin runs `posthog-cli sourcemap process --delete-after` on `dist`, failing if
-any `.map` remains; without it the build is unchanged. `posthogCli.ts` is the repo's only way to run
-posthog-cli (the root `posthog-cli` script exposes it to desktop's `preBuild`): it checks the binary against
-pinned SHA-256s before running it ([[module-ci-release]]). The injected chunk-id registry is what
-`transport` reads for UI error reports.
+Builds have no upstream telemetry or source-map upload integration.
 
 **The React Compiler is on for every `apps/web` bundle** (`vite.config.ts`: `@rolldown/plugin-babel` running
 `@vitejs/plugin-react`'s `reactCompilerPreset()` over dev and build). Three devDependencies live in this

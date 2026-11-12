@@ -258,7 +258,7 @@ test.skipIf(!target)(
 	},
 );
 
-test.skipIf(!target)("removing deletes ThinkRail's speech files", async () => {
+test.skipIf(!target)("removing deletes RailDesign's speech files", async () => {
 	await initSpeech();
 	installSpeech("multilingual");
 	await speechInstallSettled();

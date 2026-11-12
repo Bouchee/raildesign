@@ -2,32 +2,29 @@ import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import {
-	createFauxCore,
-	fauxAssistantMessage,
-	fauxToolCall,
-} from "@earendil-works/pi-ai/providers/faux";
-import { ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
-import type { PiEvent } from "@thinkrail/contracts";
+	assistantMessage,
+	functionCall,
+	modelResponder,
+	modelResponse,
+} from "@openai/agents/testing";
+import type { SessionEvent } from "@thinkrail/contracts";
 import {
-	configurePiRuntime,
-	configurePiRuntimeFactory,
+	configureAgentModelFactory,
 	createSession,
 	getSessionWorkspaceId,
 	promptSession,
 	removeSession,
-	setSessionManagerFactory,
+	resolveExtUi,
+	setExtUiPublisher,
 	setSessionPublisher,
-	toWireModel,
 } from "../agent";
-import { resetAnalyticsForTests } from "../analytics";
-import { resetJbcentralStateForTests } from "../auth";
 import * as git from "../git";
 import { loadTurns, saveWorkspaces } from "../persistence";
 import { resetConfigCache } from "../settings";
 import { listTurns, setTurnPublisher, TurnTracker } from "../turns";
 import { getWorkspace } from "../workspaces";
+import { seedSdkTestModel, useSdkTestModel } from "./sdkTestFixture";
 import { createServer, type RunningServer } from "./server";
 
 const saved = {
@@ -70,21 +67,17 @@ beforeEach(async () => {
 		},
 	]);
 	resetConfigCache();
-	await resetJbcentralStateForTests();
-	setSessionManagerFactory((cwd) => SessionManager.inMemory(cwd));
+	seedSdkTestModel(process.env.THINKRAIL_DATA_DIR, "turn-shutdown");
 });
 
 afterEach(async () => {
 	await server?.shutdown();
 	server = undefined;
 	setSessionPublisher(() => {});
+	setExtUiPublisher(() => {});
+	configureAgentModelFactory();
 	setTurnPublisher(() => {});
-	setSessionManagerFactory((cwd) => SessionManager.create(cwd));
-	resetAnalyticsForTests();
 	resetConfigCache();
-	await resetJbcentralStateForTests();
-	configurePiRuntimeFactory();
-	configurePiRuntime(null);
 	rmSync(directory, { recursive: true, force: true });
 	for (const [key, value] of Object.entries(saved)) {
 		if (value === undefined) delete process.env[key];
@@ -111,60 +104,38 @@ test.each(["removeSession", "shutdown"] as const)(
 		const observeSpy = spyOn(TurnTracker.prototype, "observe").mockImplementation(function (
 			this: TurnTracker,
 			sessionId: string,
-			event: PiEvent,
+			event: SessionEvent,
 		) {
 			const job = realObserve.call(this, sessionId, event);
 			if (event.type === "agent_settled") recording = job;
 			return job;
 		});
 		try {
-			const model = {
-				id: "turn-shutdown",
-				name: "Turn shutdown",
-				reasoning: false,
-				input: ["text"] as ("text" | "image")[],
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-				contextWindow: 100_000,
-				maxTokens: 4096,
-			};
-			const faux = createFauxCore({
-				provider: "turn-shutdown",
-				api: "turn-shutdown",
-				models: [model],
-				tokensPerSecond: 2000,
-			});
-			faux.setResponses([
-				async () => {
+			useSdkTestModel([
+				modelResponder(async () => {
 					await baseReady.promise;
-					return fauxAssistantMessage(
-						fauxToolCall("write", {
-							path: join(repo, "feature.ts"),
-							content: "export const feature = true;\n",
-						}),
-					);
-				},
-				fauxAssistantMessage("Done"),
+					return [
+						functionCall(
+							"apply_patch",
+							{ path: "feature.ts", diff: "+export const feature = true;\n", original: null },
+							{ callId: "write-feature" },
+						),
+					];
+				}),
+				modelResponse([assistantMessage("Done")]),
 			]);
-			const runtime = await ModelRuntime.create({
-				credentials: new InMemoryCredentialStore(),
-				modelsPath: null,
-				allowModelNetwork: false,
+			server = await createServer({ port: 0 });
+			setExtUiPublisher((request) => {
+				if (request.kind !== "confirm" || !request.runId || request.revision === undefined) return;
+				resolveExtUi({
+					id: request.id,
+					sessionId: request.sessionId,
+					runId: request.runId,
+					revision: request.revision,
+					value: true,
+				});
 			});
-			runtime.registerProvider("turn-shutdown", {
-				api: faux.api,
-				baseUrl: "http://faux.local",
-				apiKey: "faux",
-				streamSimple: faux.streamSimple,
-				models: [{ ...model, api: faux.api }],
-			});
-			configurePiRuntime(null);
-			configurePiRuntimeFactory(async () => runtime);
-			server = await createServer({ port: 0, analytics: { mute: true } });
-			const { sessionId } = await createSession({
-				cwd: repo,
-				workspaceId: "w1",
-				model: toWireModel(faux.getModel()),
-			});
+			const { sessionId } = await createSession({ cwd: repo, workspaceId: "w1" });
 			await promptSession(sessionId, "Write feature.ts");
 			expect(recording).toBeDefined();
 			expect(listTurns("w1")).toEqual([]);

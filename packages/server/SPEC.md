@@ -11,54 +11,30 @@ references: [module-artifact-tests]
 
 ## Responsibility
 
-The engine host as an embeddable library. Serves the browser↔host wire (`Bun.serve` HTTP+WS, static SPA)
-and runs the `pi` agent in-process via `createAgentSession`. Launched in-process by `apps/cli` and the
-Electrobun `apps/desktop`; it has no standalone entrypoint of its own (a `dev.ts` boots it for development /
-e2e).
+The embeddable Bun host serves the application HTTP/WebSocket protocol and owns workspace services
+and RailDesign state. CLI, desktop and development entries launch the same host. The installed OpenAI
+Agents SDK owns model calls, the agent loop and FunctionTool dispatch. There is one execution path.
 
 ## Boundary
 
-- **Owns:** the HTTP+WS server, static serving, the WS dispatch registry, server-side feature services
-  (project/workspace/git/fs/terminal + the in-process `AgentSession` manager), and `~/.thinkrail`
-  persistence.
-- **Public surface:** `createServer(options) → Promise<RunningServer>`
-  (`{ port, startAttributionClaim, stop, shutdown }`) — saved-choice attribution waits for the launcher's
-  explicit UI-readiness call; `stop()` is synchronous resource disposal for low-level tests while `shutdown()` is the idempotent,
-  bounded production lifecycle (settle sessions + drain turn receipts/analytics and dispose sockets/PTYS/watchers)
-  every launcher must await — the public
-  factory starts Central artifact watching and applies the initial current PI runtime before binding a socket
-  or exposing handlers—falling back to a plain runtime with closed `load-failed` status when the configured
-  Central extension fails—so every embedder gets the same bootstrap invariant — and
-  `bootHost(options) → BootedHost` (the process-boot wrapper: installs crash logging, resolves the
-  login-shell environment only when the launcher opts in with `resolveShellEnv: true`, applies the stored
-  host environment ([[submodule-server-environment]]), pre-warms the
-  same initialization before choosing a port, awaits `createServer`, and installs SIGINT/SIGTERM graceful-shutdown handlers), both re-exported from
-  `host/`; plus `registerBundledRuntime` (+ its types, re-exported from `agent/`) — the compiled-binary
-  seam by which a launcher that cannot path-load the bundled pi extensions (no `node_modules` inside a
-  `bun build --compile` binary or packaged Electrobun server runtime) injects them as value-imported factories + a staged skills dir (registry extensions need no injection — their factories arrive through the
-  static import graph), injects
-  the staged macOS/Windows OS-trash helper paths, and registers pi's statically-bundled provider flows
-  (the OAuth flows + the Bedrock module) that pi otherwise reaches through binary-hostile
-  variable-specifier dynamic imports (see the agent SPEC). Build-only
-  **`@thinkrail/server/build-support`** is the single manifest of bundled extension entries, skill roots,
-  per-platform `bun-pty` libraries, and trash helpers consumed by both launcher packagers. Artifact
-  fixture/assertion runners live in [[module-artifact-tests]], not in this library. The package also exposes the
-  **`@thinkrail/server/agent` subpath export** (the `agent` barrel): the
-  server-side session surface for the **headless workflow-test harness** (`e2e/workflows/`), which
-  drives real in-process sessions through the production wiring without booting the HTTP host — a
-  deliberate second entry that avoids evaluating `host` (Bun-only: `Bun.serve`, `bun-pty`) under the
-  node-run e2e worker. Not for `apps/*` use — the web/CLI boundary rules are unchanged.
-- **Allowed deps:** `contracts` (types + WS constants), `shared` (`shellEnv` and the Central adapter), `bun-pty`,
-  `@earendil-works/pi-coding-agent` + `@earendil-works/pi-ai` (runtime), `extension-api` (`./server` types)
-  + every `thinkrail-extensions/*` **server subpath only** (the registry's composition edge; the host no
-  longer depends directly on a pi package an extension owns), `pino` + its pretty/rolling
-  destinations (host diagnostics), `jsonc-parser` (targeted shared Pi configuration edits), Bun/Node.
-- **Deployment obligation:** product behavior lives in the owning server feature module and is composed by
-  `host`; launchers only supply boot options and packaged resources. When a demonstrated second environment
-  needs a different implementation, the owning feature defines one narrow injected port rather than a
-  host-wide platform adapter.
-- **Forbidden:** importing `web`/`cli`/`desktop`; being bundled into the browser; branching product behavior
-  on launcher identity.
+- `createServer(options) -> Promise<RunningServer>` returns `{port,stop,shutdown}`. Only one writer may
+  own a data directory. The host acquires a `proper-lockfile` claim before application-state access;
+  startup failure releases it, while successful shutdown releases it after sessions and turn receipts
+  drain. `shutdown()` is idempotent. Low-level `stop()` closes resources synchronously and starts the
+  same drain before releasing ownership.
+- `bootHost(options) -> BootedHost` installs local crash logging, optionally imports the login-shell
+  environment, applies saved environment variables, resolves the requested port and installs signal
+  cleanup. Login-shell import is opt-in (`resolveShellEnv:true`).
+- The root barrel exports host APIs, `dataDir`, `setBundledSkillPaths` and `setBundledTrashHelpers`. Build-only
+  `@thinkrail/server/build-support` supplies Skill content roots, native PTY libraries and trash helpers. The `/agent`
+  subpath exposes the production session surface to isolated tests; `/history-test-fixtures` exposes
+  test-only application-record builders. The development entry is `src/dev.ts`.
+- Main dependencies are contracts/shared, the locked Agents SDK and OpenAI client, Zod, Bun PTY,
+  local logging, `proper-lockfile`, YAML and existing pure graph/Todo services. No pi runtime,
+  credentials, Central service, telemetry or survey is initialized by a product entry.
+- Feature behavior belongs in its owning module; launchers supply boot options and native assets.
+  Browser code never imports server/shared internals or receives model keys/full SDK checkpoints.
+  Feature modules cannot import `host`, web, CLI or desktop.
 
 ## Internal modules
 
@@ -71,8 +47,8 @@ internals**. The edges between them are owned here (see the dependency graph), n
 | `host` | `Bun.serve` HTTP+WS, static SPA, the WS dispatch registry, channel publish | [host/SPEC.md](src/host/SPEC.md) |
 | `persistence` | JSON domain/config state under the data dir | [persistence/SPEC.md](src/persistence/SPEC.md) |
 | `log` | explicit leveled diagnostics → pretty stderr + agent-oriented JSONL under `<dataDir>/logs` (pino-roll daily/10 MB rotation, 14 rotated + active); arbitrary console output stays terminal-only | [log/SPEC.md](src/log/SPEC.md) |
-| `settings` | server-synced app config, including the shared custom-layout-preset catalog and Central quota preferences (never current/default layout) | [settings/SPEC.md](src/settings/SPEC.md) |
-| `environment` | the stored host environment (pi config folder + variables) applied to `process.env` at boot | [environment/SPEC.md](src/environment/SPEC.md) |
+| `settings` | server-synced app config, including the shared custom-layout-preset catalog (never current/default layout) | [settings/SPEC.md](src/settings/SPEC.md) |
+| `environment` | the stored host environment (variables) applied to `process.env` at boot | [environment/SPEC.md](src/environment/SPEC.md) |
 | `locales` | the user's local language files in `<dataDir>/locales/`: validate, watch, `locales.list`/`changed` | [locales/SPEC.md](src/locales/SPEC.md) |
 | `themes` | the user's theme files in `<dataDir>/themes/`: read, watch, `themes.list`/`changed` (the client validates) | [themes/SPEC.md](src/themes/SPEC.md) |
 | `fonts` | the user's font files in `<dataDir>/fonts/` (in-house sfnt reader, uploads, watch) and the OS's installed families: `fonts.list`/`installed`/`changed` | [fonts/SPEC.md](src/fonts/SPEC.md) |
@@ -94,129 +70,64 @@ internals**. The edges between them are owned here (see the dependency graph), n
 | `reviews` | draft review comments on files/diffs: store + anchoring + context-package render | [reviews/SPEC.md](src/reviews/SPEC.md) |
 | `watch` | per-worktree fs watcher → debounced `workspace.fsChanged` invalidation push | [watch/SPEC.md](src/watch/SPEC.md) |
 | `terminal` | workspace-scoped `bun-pty` terminals | [terminal/SPEC.md](src/terminal/SPEC.md) |
-| `agent` | in-process pi sessions + current/retained runtime generations + one-shot completions | [agent/SPEC.md](src/agent/SPEC.md) |
+| `agent` | SDK Agent/Runner sessions, application records, tools and one-shot completions | [agent/SPEC.md](src/agent/SPEC.md) |
 | `extensions` | the server registry of ThinkRail extensions (`@thinkrail/ext-*/server`): ordered descriptors + public specifiers, inline flattening, owner-scoped skill resolution | [extensions/SPEC.md](src/extensions/SPEC.md) |
-| `auth` | provider status/login plus native JetBrains Central lifecycle and quota orchestration | [auth/SPEC.md](src/auth/SPEC.md) |
+| `auth` | redacted status for configured SDK endpoints | [auth/SPEC.md](src/auth/SPEC.md) |
 | `assist` | ad-hoc one-shot tasks (plan summaries, PR descriptions) on a cheap model, best-effort | [assist/SPEC.md](src/assist/SPEC.md) |
-| `analytics` | always-on basic events + sanitized error reports, and preference-controlled optional insights → PostHog sink (privacy contract in its spec) | [analytics/SPEC.md](src/analytics/SPEC.md) |
-| `feedback` | host-scoped usage count, addressed survey invitation lifecycle and the launched PostHog survey | [feedback/SPEC.md](src/feedback/SPEC.md) |
 | `dialog` | the host's native folder picker | [dialog/SPEC.md](src/dialog/SPEC.md) |
 | `editors` | detect installed editors/IDEs, launch one at a worktree, reveal a worktree in the file manager | [editors/SPEC.md](src/editors/SPEC.md) |
-| `history` | prompt recall + conversation search over pi's session files | [history/SPEC.md](src/history/SPEC.md) |
+| `history` | prompt recall and conversation search over full RailDesign transcripts | [history/SPEC.md](src/history/SPEC.md) |
 | `search` | the search palette's host providers (file names and specs from one root, plans, chat transcripts — chats and workspaces are the palette's own rows) and the transcript preview, ranked with the shared matcher; Find in Files' bounded text search over the same root | [search/SPEC.md](src/search/SPEC.md) |
-| `templates` | file CRUD over pi's prompt-template dirs (global + project scoped) | [templates/SPEC.md](src/templates/SPEC.md) |
-
-`src/index.ts` re-exports `host` + the `agent` barrel's `registerBundledRuntime` seam; explicit package
-subpaths expose build support and sanctioned history fixtures without widening the runtime barrel. `src/dev.ts` boots
-the host from env via `bootHost` for dev/e2e.
+| `templates` | file CRUD over RailDesign prompt dirs (global + project scoped) | [templates/SPEC.md](src/templates/SPEC.md) |
 
 ## Internal dependency graph
 
-`host` is the **only composition root** — it wires each feature's handlers into the WS registry.
+`host` is the composition root. Every sibling call uses the owning barrel.
 
-- `host` → `projects`, `workspaces`, `git`, `github`, `branch-review`, `pr`, `fs`, `spec`, `todos`, `reviews`, `changes`, `turns`, `watch`, `terminal`, `dialog`, `editors`, `agent`, `auth`, `assist`, `settings`, `environment`, `locales`, `themes`, `fonts`, `speech`, `history`, `search`, `templates`, `analytics`, `feedback`, `trash` (a chat's folder), `log`, `persistence` (`dataDir`, for the crash report)
-- `search` → `contracts`, `git` (`gitAsyncStream` for `ls-files` and `grep`), `log`; `history`, `spec` and `todos` for types only — `host/search.ts` injects every reader (projects, workspace records, the history index's `sessions()`, spec snapshots, stored plans, the file check `fs.readableFileSize` and the text check `fs.classifyBytes`), the Default provisioning (`workspaces.listWorkspaces`) and the root watch (`watch.ensureWatch`, prewarm); it opens no file itself but the bounded text search's direct read of a chat folder's walked files (`git grep` reads a repository's) — files and specs preview client-side over `fs.readFile`
-- `workspaces` → `projects`, `git`, `persistence`
-- `branch-review` → `git`, `subprocess`
-- `pr` → `workspaces`, `git`, `todos`, `branch-review` (provider detection + gh-output parsing + the shared CLI runner), `github` (`ghSetupProblem` — the named compare-fallback reason)
-- `projects` → `git` (shared runner), `persistence`
-- `git` → `subprocess` (every child that talks to a network or another CLI), `fs` (`resourceMeta`/`decodeText` — a diff side's content classification is the same one `fs.readFile` reports)
-- `changes` → `git` (the scope→range resolver + the original side's blob at its resolved oid), `fs` (path containment + byte identity), `persistence` (workspace lookup), `trash` (a revert that removes a file)
-- `turns` → `git` (`snapshotWorktree` + the `turn` scope's `gitStatus`), `persistence` (`turns.json`), `log`; it never imports `agent` — `host` feeds it the session event stream and resolves a session to its workspace, the same composition the run analytics observer uses
-- `github` → `subprocess` (both `gh auth status` probes run under the same bounded runner as `git`/`branch-review`)
-- `fonts` → `subprocess` (the installed-font query runs under the same bounded runner)
-- `speech` → `subprocess` (PATH probe, archive unpack), `persistence` (`dataDir`), `log`
-- `git`, `fs`, `spec`, `watch`, `terminal`, `settings`, `locales`, `themes`, `fonts`, `analytics`, `feedback` → `persistence` (`locales` also → `@thinkrail/locales` root, external-style: catalog validation and file naming) (`spec` also → `pi-spec-graph/core`, external; `analytics` also → the pi-ai built-in provider/model catalog + `posthog-node`, external—the identity-bucketing vocabulary and delivery SDK)
-- `log` → `persistence` (`dataDir`) — and **any feature module (+ `host`) may → `log`**: it is the one
-  cross-cutting edge, like `persistence`, exempt from the never-each-other rule (today: `host`,
-  `agent`, `workspaces`, `watch`, `git`, `todos`, `reviews`, `analytics`, `resourceHistory`, `fonts`, `speech`, `search`). `persistence` never imports
-  `log` (would cycle); `initLogging` is called only from `host`'s `bootHost`
-- `todos` → `workspaces` (worktree path lookup) + `pi-todos/core` (external, value-imported, pi-free)
-- `reviews` → `workspaces` (worktree path lookup), `persistence` (data dir), `git` (the review's baseSha
-  resolve, plus the diff range + blob read behind a base-side anchor), `fs` (the shared byte
-  classification + sha-256 an anchor's `contentHash` is). The `review.send*` flows are
-  **composed in `host`'s handlers** (reviews builds the package, `agent` runs the session — no
-  `reviews`→`agent` edge; `host` serializes sends *and* review mutations per workspace via
-  `reviewLock`, and re-attaches the review's persisted chat via `agent.ensureSessionAttached`), and the
-  agent-side `resolve_comment` tool delegates back through a seam
-  `host` installs (`agent.setReviewCommentHandler` → `reviews.resolveCommentFromAgent`)
-- `environment` → `persistence` (`environment.json`), `log` (+ `@thinkrail/shared/shellEnv` for the launch keys and pi's `getAgentDir`, external); never `settings`
-- `assist` → `agent` (the one-shot completion primitive)
-- `auth` → `agent` (the current runtime/auth facade plus candidate prepare/activate; one-way, `agent` never imports `auth`)
-- `agent` → `log`, `persistence` (`dataDir` for delegation plus session lifecycle/receipt load-save operations),
-  `trash` (a chat delete's recoverable transcript move), `resourceHistory` (records its owners' lifecycle and reads
-  what they no longer hold), `extensions` (the registry's flattened parent and
-  child inline extensions plus, in unbundled dev, its skill roots) — otherwise the pi runtime alone; auth
-  passes desired opaque Central paths through its public generation seam
-- `extensions` → `@thinkrail/ext-*/server` + `@thinkrail/extension-api/server` (external); `buildSupport.ts`
-  (build-only) also reads it to stage the extensions' skill roots
-- `resourceHistory` → `persistence` (`dataDir`), `log`
-- `persistence`, `dialog`, `history`, `templates`, `subprocess`, `trash` → (leaves)
+- `host` composes project/workspace/Git/PR/filesystem/editor/terminal services; agent/auth/assist;
+  settings/environment; history/search/templates; themes/fonts/locales/speech; watch/reviews/turns;
+  and the retained pure Spec Graph/Todo/extension metadata services.
+- `agent` -> `fs`, `subprocess`, `persistence`, `trash`, `log`. Tools validate their assigned worktree;
+  commands use bounded execution; transcript deletion uses recoverable trash. Agent never imports host,
+  auth or settings. The host injects session publishers and resolves session-to-project ownership.
+- `auth` -> `agent` for redacted configured-endpoint status. `assist` -> `agent` for the same SDK
+  one-shot path. Neither module implements another model runner.
+- `projects` -> `git`, `persistence`; `workspaces` -> `projects`, `git`, `persistence`.
+- `git` -> `subprocess`, `fs`; `branch-review` -> `git`, `subprocess`; `github` -> `subprocess`.
+- `pr` -> `workspaces`, `git`, `todos`, `branch-review`, `github`. The host composes PR-description
+  generation with assist so PR does not gain an assist edge.
+- `changes` -> `git`, `fs`, `persistence`, `trash`; `turns` -> `git`, `persistence`, `log`.
+  Host supplies agent events to turns; turns never imports agent.
+- `reviews` -> `workspaces`, `persistence`, `git`, `fs`; host composes review sends with agent and
+  serializes changes/review mutations per workspace. Advanced review-tool execution is unavailable.
+- `todos` -> `workspaces` and the existing pure TodoStore. `spec` uses the existing pure graph core.
+- `search` -> `git`, `log`, with host-injected project/workspace/history/spec/plan/file readers.
+  Host injects history scope filters/labels; history never owns project registries.
+- `history` -> `persistence` for the session root; `templates` -> `persistence` for prompt roots and
+  the installed YAML library. Both read only RailDesign data.
+- `environment` -> `persistence`, `log`; `settings` -> `persistence`.
+- `speech` -> `subprocess`, `persistence`, `log`; `fonts` -> `subprocess`, `persistence`.
+- Filesystem/watch/terminal/locales/themes/resource-history services use persistence for their own
+  records. `log` is a cross-cutting dependency backed by persistence; persistence does not import log.
+- The retained extension metadata registry consumes server extension descriptors. It does not register
+  pi factories or load skills into the SDK during stage 1. Advanced tools require stage-3 integration.
 
-Rules: features never import `host`, and never each other except the edges above. The graph is acyclic.
-`agent`'s WS surface (`session.*` + `pi.event` forwarding) attaches to `host`. Features that push on their
-own never import `host` either: they expose a **publisher-injection seam** (`setTerminalPublisher`,
-`setSessionPublisher` + `setSessionCreatedPublisher` + `setSessionDeletedPublisher` +
-`setSessionStatePublisher`, `setLoginPublisher`, `projects`' `setProjectPublisher` for the full-snapshot
-`project.updated` lifecycle, `workspaces`' `setWorkspacePublisher` for the
-`workspace.created`/`updated`/`removed` lifecycle trio, `settings`' `setSettingsPublisher` for
-`settings.changed` (full merged config plus the successful applied update for host-side explicit-field effects),
-`feedback`'s addressed invitation publisher, and auth's Central action analytics +
-`provider.changed` invalidation publishers) that
-`host` installs at `createServer`—so channel/analytics wiring lives only in `host`. Current layout has no
-host module, persistence, method, or publisher.
-
-`settings` validates the bounded resource-free custom-layout-preset catalog it owns. Current/default preset,
-group limits, frame, workspace resource placement, selection, and geometry never reach the host. The
-workspace-create and boot-recovery paths compose `workspaces` with `terminal`: reserve the deterministic
-process-free default terminal, then clear the workspace's pending marker only after durable catalog success. No sibling imports
-another for that handshake.
-`history` stays registry-free (never imports `projects`/`workspaces`); `host` injects the scope filter
-+ labels from the registries at the handler layer (`history.search` handler). `templates` stays
-registry-free too — it takes a plain `cwd`, never a `workspaceId`; the `template.*` handler resolves
-`workspaceId` → `cwd` via `workspaces` before calling into `templates`.
-
-Analytics is host-mediated the same way: **every capture call site lives in `host`**. Host translates
-existing boot, session, setup, task, review and PR observations into the closed event vocabulary and
-syncs the additional-data delivery gate from applied updates that explicitly contain `analyticsEnabled`;
-unrelated settings broadcasts preserve the current preference. Correlation stays host-local and clears when
-sharing is disabled. `analytics` has no `settings` edge and no feature module knows analytics exists.
-
-The Chat Resources integration adds `agent` → `pi-background-commands` as an external
-package edge, alongside its existing delegation packages. `host` continues to compose the wire
-through the `agent` barrel; there is no new resource-manager sibling or `agent` → `terminal` /
-`subprocess` / `settings` edge. Command lifecycle and bounded output belong to the portable package,
-while the manager owns its association with an actual parent session. What must outlive the host — the
-chat's finished records and command log tails — lives in the `resourceHistory` leaf, which only `agent`
-feeds and reads; `host` reaches it solely through the `agent` barrel.
-
-Subagent availability is also host-mediated: `settings` owns the global default, `workspaces` owns the
-optional local override, and `host` injects their effective value into `agent` plus requests live-session
-reevaluation after either mutation. No feature imports a sibling to derive the policy.
-
-Extension on/off is host-mediated the same way: `settings` owns `disabledExtensions`, `extensions` owns the
-registry and its catalog derivation, and `host` injects the set into `agent` through
-`setDisabledExtensionsResolver`, answers `extension.list` by joining the registry catalog with the setting,
-and calls `refreshExtensionTools()` after an applied update that contains `disabledExtensions`. There is no
-`agent` → `settings` or `extensions` → `settings` edge.
+Push-capable services expose injected publishers; they never reach back into host. Current layout,
+workspace placement, navigation and focus remain frontend-local. Host initialization reserves the
+process-free default terminal and clears a workspace creation marker only after durable catalog success.
 
 ## Get right
 
-- **No process isolation** — a fatal agent/provider fault takes the whole host down (accepted tradeoff).
-- **No general cross-process state coordination** — `bootHost` permits multiple hosts to use the same data
-  directory. Installation identity, its one-time event claim, and browser-attribution attempts use narrow
-  exclusive filesystem operations; other shared persistence has no general lock, transaction, or
-  convergence guarantee, so concurrent writes may be last-writer-wins.
-- **One graceful shutdown per host** — launchers await `RunningServer.shutdown()`; repeated calls share one
-  promise, while abrupt death relies on operating-system process cleanup.
-- **WS commands return values directly**; only events + extension-UI use push channels.
-- Binds beyond localhost via `host` option (the Tailscale seam).
-- **Tests never see the developer's home** — `bunfig.toml` preloads `test/isolatedHome.ts`, which points
-  `HOME` at a fresh temp dir, removed after the run, and clears `CLAUDE_CONFIG_DIR` / `CODEX_HOME` /
-  `GEMINI_CLI_HOME` / `PI_CODING_AGENT_DIR` (turbo passes the last one through). Portable
-  skill aliases and pi's `~/.agents/skills` otherwise imported the machine's real libraries, so the skill
-  catalog budget and its hint made results depend on whoever ran the suite.
+- SDK/provider faults have no process isolation; fatal faults may terminate the host (accepted).
+- Keep a single writable owner. A second host must fail before it mutates application records.
+- Await graceful shutdown in production. Stop revokes agent grants and cancels owned processes; turn
+  receipts drain before resource disposal and writer-claim release.
+- Commands return direct results; application events and interaction cards use typed push channels.
+- Session storage is fresh RailDesign JSON. No pi import, old-record reader, migration or alternate
+  execution fallback is supplied.
+- Tests use disposable directories and isolated home variables. They never use ambient developer
+  credentials or run a provider unless the focused live gate was explicitly selected.
 
-## Later
-
-Persistence behind a data layer, `owner` threading.
+Stage 2 owns full session recovery, queues and summaries. Stage 3 owns advanced tools. Stage 4 owns
+complete legacy package removal and release-artifact acceptance; the presence of retained pure service
+code does not establish those later gates.

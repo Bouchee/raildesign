@@ -9,6 +9,14 @@ tags: [desktop, launcher, packaging]
 references: [submodule-web-navigation, module-artifact-tests, module-ci-release, submodule-web-shell, module-cli]
 ---
 
+## RailDesign identity and execution
+
+RailDesign uses `io.github.bouchee.raildesign`, new state under `~/.raildesign`, the `raildesign`
+CLI, and updates from `https://github.com/Bouchee/thinkrail/releases/download/desktop-updates`.
+The SDK execution path belongs to the shared host. Launchers contain native startup and packaging only.
+No JetBrains service, PostHog key, attribution or survey integration ships in development builds.
+The fork does not import the official application's records or configuration.
+
 ## Responsibility
 
 The native Electrobun launcher/client over the existing web UI and wire. The local-host profile embeds
@@ -44,10 +52,8 @@ and its actual port forms the window origin. The packaged `web/dist`, `/ws`, `/f
 therefore remain same-origin and the web client has no desktop branch. A dynamic loopback port is never
 persisted.
 
-Desktop, CLI, and source hosts do not exclude one another by data directory. Every launcher binds an
-independent serving port and initializes its own in-process services. If multiple hosts use the same mutable
-state, their persistence and event streams are not coordinated and concurrent changes may overwrite one
-another.
+Desktop, CLI and source use the same host writer-ownership policy. A second writer to the same mutable
+data directory is rejected; distinct data directories can run independently.
 
 ## Startup and packaged runtime
 
@@ -65,7 +71,7 @@ another.
    startup continues. An update-metadata failure here precedes host acquisition and quits directly.
    Unless the neutral or hidden artifact modes are set, startup then opens a small, centered, frameless
    splash.
-   - It reads "Starting ThinkRail…", or "Finishing update to X…" when the update journal is pending,
+   - It reads "Starting RailDesign…", or "Finishing update to X…" when the update journal is pending,
      from the saved native labels (`desktop.splash.*`, the desktop fills in `{{version}}`).
    - Its content is a `data:` URL given at creation. The SDK delays `html:` content behind a 100 ms timer,
      which the synchronous server import would block. Startup awaits the splash's own `dom-ready`,
@@ -73,64 +79,28 @@ another.
    - It closes when the main window first reaches `dom-ready`, and the main window is activated.
    - Before the startup error dialog it is hidden, not closed: as the last window it would trigger
      `exitOnLastWindowClosed` before the dialog appears.
-   - Closing the splash before the main window exists quits ThinkRail. Closing the main window before
+   - Closing the splash before the main window exists quits RailDesign. Closing the main window before
      it is ready also closes the splash, so the last window still goes and quit runs through the
      coordinator. A splash the user closed natively is never closed again.
    - The main window, RPC, navigation rules and first-`dom-ready` readiness are unchanged. Creating the
      main window early on a splash page was rejected: it would move origin-dependent navigation, readiness
      and host-bound RPC ahead of host boot.
-3. Start `resolveShellEnv()` right after the `chdir`, so the login shell it spawns also starts outside the
-   bundle, then dynamically import the separately built, unpacked `server-runtime.ts` resource, and await the
-   shell env before `startDesktopHost()`. A Dock/Finder launch pays for the login-shell probe (~100 ms on a
-   typical profile, seconds on a slow one); overlapping it with the splash and the bundle import hides up to
-   that time. The bundle's own `shellEnv` copy is a separate module instance, so the run is cached on a
-   `Symbol.for` global key: its `bootHost()` call awaits the same run instead of probing again. That bundle is
-   built with pi's `PI_BUNDLED_NODE=true` define, which makes PI use its embedded-modules extension loader
-   (static jiti with Babel bundled, plus virtual modules) for external extensions such as Central. Without the
-   define a single-file bundle is treated as a plain Node runtime and PI's lazy Babel `require` cannot resolve
-   inside it ([[submodule-server-agent]] owns the seam). Flattening PI into Electrobun's normal entry is still
-   forbidden: it would load `bun-pty` before `BUN_PTY_LIB` is set.
-4. The runtime value-imports the three bundled pi-package factories (`pi-spec-graph`,
-   `pi-thinkrail-workflow`, `pi-todos`) and calls `registerBundledRuntime()` with those factories, the
-   staged skills (every `BuildRuntimeSources.skillRoots` entry copied into one dir under its `route` —
-   host roots under `host/`, a registry extension's under `extensions/<name>/` — duplicate routes rejected), and
-   macOS/Windows trash helpers. ThinkRail extensions from the server
-   registry ([[submodule-server-extensions]]) need no generated entry: their factories reach the bundle
-   through `@thinkrail/server`'s static import graph. The generator's key map must satisfy every key of the server-owned
-   `BundledExtensions` contract, so adding a required launcher field fails desktop typecheck instead of
-   producing a packaged-only `undefined`. It then calls `bootHost({ resolveShellEnv: true, … })` on loopback port `0` with the staged web
-   directory, baked version and release-only analytics key, `desktop` analytics provenance, and, only when packaged, the launcher-supplied
-   `Utils.openExternal` callback used by the host's one-shot browser attribution claim. The callback passes through
-   `DesktopHostOptions` and the generated runtime. The first native-window `dom-ready` explicitly calls the
-   proxied `host.server.startAttributionClaim()` readiness method; host boot and elapsed time do not start a
-   saved-choice claim. No deep-link or RPC surface is added. The runtime also passes `appRoot`
-   (`runtimeDir/..`, i.e. `Resources/app`) so error-report frames are rooted at the packaged app, and returns
-   `reportDesktopError` as `DesktopHost.reportError`.
+3. Start `resolveShellEnv()` after leaving the bundle and await it before the host starts. The server
+   runtime is separately bundled and imported only after `BUN_PTY_LIB` is set. All agent, filesystem,
+   Git and PTY behavior remains in that shared host.
+4. Stage physical runtime resources and Skill content from the server build-support manifest, inject
+   their directory through `setBundledSkillPaths`, and call `bootHost` on
+   loopback port `0` with web assets and the shared application version. No release analytics key,
+   attribution callback or reporting service is supplied. Model execution uses the SDK path only.
 5. Restore the valid route fragment and bounded client-preference map for
    `{ backendProfileId: "local", windowId: "main" }`. The route is appended to the fresh origin; the
    preference map is serialized as data and prepended to the preload source so the web client can hydrate
    before React mounts despite the changing port. Open one normal native `BrowserWindow` with the system
    renderer.
 
-The runtime bundle is built with `--outdir` + `--entry-naming` (Bun refuses external maps with
-`--outfile`). Only in a credentialed release build (`THINKRAIL_SOURCEMAPS_RELEASE`, [[module-ci-release]])
-does `preBuild` emit an external map, inject the PostHog chunk id itself, upload a `.js` copy + map with
-`posthog-cli sourcemap upload` through the root `posthog-cli` script (the web package's checksum-verified
-runner), and delete the map: posthog-cli's own `inject` skips `.ts` files and would
-push Bun's `// @bun` pragma off line 1, so the registration statement becomes line 2 and the map shifts
-one line. The chunk id is a UUID hashed from the release, the code **and** its map: Bun emits
-byte-identical JS for a different checkout path (the generated entry's absolute imports live only in
-`sourcesContent`) or a comment-only source change, and posthog-cli's symbol-set upload fails on an
-existing chunk id with different content. `preBuild` also refuses to stage web `.map` files.
-
-Handled native-shell failures that carry an error (keyboard state, title-bar double-click, update
-listener/lifecycle/journal, native-label writes, leaving the bundle working directory, Windows frame restore,
-Windows window icon, Windows taskbar identity, startup) go through `errorReporting.ts`'s
-`desktopError(scope, message, error)`:
-the `[desktop] …` console line stays, and once the host has booted the error is forwarded to
-`DesktopHost.reportError` as a sanitized `desktop` error report ([[submodule-server-analytics]]); before
-that it is console-only. Uncaught main-process faults need no seam — they share the host's process
-handlers. `updates` reaches this sibling helper directly.
+The runtime bundle is built with `--outdir` and `--entry-naming`. It has no PostHog injection or
+sourcemap upload path. `preBuild` refuses to stage web `.map` files. Native-shell failures go through
+`desktopError(scope, message, error)` to the local console only.
 
 The Electrobun entry bundle contains native-shell code only. A static server import there is forbidden:
 it can load `bun-pty` before `BUN_PTY_LIB` and bypass the defined server-runtime build. Startup
@@ -375,7 +345,7 @@ grammar validator, and the preload exposes no host/domain capability.
 
 Webview-to-main RPC uses Electrobun's default loopback WebSocket on every platform. Post-mortem: Electrobun
 2.0.1 bound its fixed default port `50000` with address reuse on Windows, so a second running Electrobun app
-(another ThinkRail channel included) shared the port and received this webview's socket traffic; every
+(another RailDesign channel included) shared the port and received this webview's socket traffic; every
 request timed out and every message was lost. The launcher stripped the injected socket-port globals from
 the Windows preload to force the native host bridge. Electrobun 2.0.5's core binds the host transport with
 `SO_EXCLUSIVEADDRUSE` on Windows and moves to the next free port, injecting the port it actually bound, so
@@ -389,19 +359,19 @@ injects the literal URL as code on Linux.
 
 Voice input ([[submodule-web-speech]]) records in the page through `getUserMedia`. The page is the
 host's loopback origin, a secure context, and navigation rules keep every other origin out of the native
-webview, so granting the microphone to the webview grants it only to ThinkRail's own UI.
+webview, so granting the microphone to the webview grants it only to RailDesign's own UI.
 
 - **macOS.** `build.mac.entitlements` carries `com.apple.security.device.audio-input`, which the
   hardened runtime needs before TCC can prompt. Its string value is the usage text: Electrobun 2.0.5
   writes it as `NSMicrophoneUsageDescription` into `Info.plist` (verified on a `package:dev` build). The
   first dictation shows macOS's own prompt, plus the Electrobun WKWebView wrapper's per-origin
   "Microphone Access" dialog.
-- **TCC attribution.** macOS asks the *responsible* process. A ThinkRail launched from another app's
-  terminal (`bun run desktop:dev` inside ThinkRail) is attributed to that parent app. If the parent's
+- **TCC attribution.** macOS asks the *responsible* process. A RailDesign launched from another app's
+  terminal (`bun run desktop:dev` inside RailDesign) is attributed to that parent app. If the parent's
   `Info.plist` has no `NSMicrophoneUsageDescription` (any release before voice input), TCC cannot
   prompt, and WebKit denies `getUserMedia` within milliseconds. This was seen with a dev build started
-  from ThinkRail canary 0.4.0-nightly.3 (`responsible_path` in the `tccd` log). Test the microphone
-  with an app opened through LaunchServices (Finder or `open …/ThinkRail-dev.app`).
+  from RailDesign canary 0.4.0-nightly.3 (`responsible_path` in the `tccd` log). Test the microphone
+  with an app opened through LaunchServices (Finder or `open …/RailDesign-dev.app`).
 - WebKit also hides `navigator.mediaDevices` entirely in an app whose own `Info.plist` lacks the
   usage string (checked with a minimal WKWebView probe), so the page reports an unsupported browser
   there.
@@ -411,7 +381,7 @@ webview, so granting the microphone to the webview grants it only to ThinkRail's
 - **Release signing.** The private pipeline re-signs every Mach-O with its own entitlement plist, so
   `build.mac.entitlements` does not reach release builds; that plist and its verification must carry
   `com.apple.security.device.audio-input` too, or TCC denies the microphone without prompting. Check a
-  release with `codesign -d --entitlements - ThinkRail.app`.
+  release with `codesign -d --entitlements - RailDesign.app`.
 - **Unverified.** The Linux behavior is checked on release builds, not in CI.
 
 ## Lifecycle
@@ -419,7 +389,7 @@ webview, so granting the microphone to the webview grants it only to ThinkRail's
 Every quit path calls the shared idempotent asynchronous server shutdown once, including a startup
 failure after acquiring the host but before the native window or quit listener is ready. Shutdown ownership
 begins as soon as the host is acquired. It settles/aborts active agent work within its bound, drains
-analytics, disposes server resources and PTYs, and closes sockets.
+disposes server resources and PTYs, and closes sockets.
 Electrobun's synchronous `before-quit` callback cancels quit while that promise is pending and retries
 `Utils.quit()` under a completion guard. Startup failure also requests quit directly through that coordinator
 in the error-dialog finalizer, so even missing quit interception or a failed dialog cannot bypass shutdown.
@@ -519,8 +489,8 @@ and shows them as two taskbar buttons (blackboardsh/electrobun#514). The desktop
 itself:
 
 - **Process ID.** The first thing startup does, before any window, is set an explicit per-channel ID
-  derived from the product name: `JetBrains.ThinkRail`, `JetBrains.ThinkRail.Nightly`,
-  `JetBrains.ThinkRail.Dev`. Stable and nightly stay separate apps.
+  derived from the product name: `JetBrains.RailDesign`, `JetBrains.RailDesign.Nightly`,
+  `JetBrains.RailDesign.Dev`. Stable and nightly stay separate apps.
 - **Shortcut IDs.** Once the main window first reaches `dom-ready` and readiness is reported, the desktop
   writes the same ID onto every shortcut whose target is this install's `bin\launcher.exe`:
   - the Start-menu shortcut Electrobun records in `<channel root>\.electrobun-uninstall.json`
@@ -581,7 +551,7 @@ References: [official v2 migration](https://framework.blackboard.sh/electrobun/g
 Desktop installers ship beside the CLI artifacts for macOS ARM64, macOS x64, Windows x64, Linux x64, and
 Linux ARM64. Nightly maps to Electrobun canary and stable maps to stable. Standard formats are DMG on
 macOS, a setup-EXE-plus-payload ZIP on Windows, and a setup tar.gz on Linux. The private release pipeline
-retains the existing `thinkrail-desktop-*` download aliases; its collector selects the exact framework
+retains the existing `raildesign-desktop-*` download aliases; its collector selects the exact framework
 artifact for the channel and native target. The macOS app archive is transferred privately for SRE
 finalization, never published as an updater payload. Runtime updating is integrated below; feed
 publication remains release-owned and gated by the target policy.
@@ -636,7 +606,7 @@ one manual bootstrap installation.
 
 The swap is a directory rename, and Windows refuses to rename a directory while any live process's current
 directory is inside it. Before startup left the bundle (startup step 2), long-lived children inherited `app\bin`:
-the JetBrains Central proxy daemon started from a pi `session_start`, editors, MCP servers. Any of them
+editors and MCP servers. Any of them
 made the helper's `app → app.previous` rename fail with `AccessDenied` for its whole retry window, roll
 back, and relaunch the old build. POSIX renames are unaffected. Children started by a build without this
 rule keep the old cwd, so the first update from such a build may still need them ended once. The step is an

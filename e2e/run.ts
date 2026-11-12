@@ -1,7 +1,8 @@
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
 import { join } from "node:path";
-import { REAL_CENTRAL_E2E_ENV } from "./fixtures/centralAgent";
+import { stripAmbientModelCredentials } from "./ambientCredentials";
+import { LIVE_AGENT_E2E_ENV } from "./fixtures/sdkAgent";
 import { holdE2eIdleSleep } from "./idleSleep";
 import {
 	E2E_ROOT_DIR,
@@ -36,10 +37,10 @@ function playwrightCommand(args: string[]): string[] {
 }
 
 function childEnv(): NodeJS.ProcessEnv {
-	const env: NodeJS.ProcessEnv = { ...process.env, THINKRAIL_E2E_SKIP_BUILD: "1" };
+	const env = stripAmbientModelCredentials({ ...process.env, THINKRAIL_E2E_SKIP_BUILD: "1" });
 	delete env.THINKRAIL_E2E_LANE;
 	delete env.PLAYWRIGHT_BLOB_OUTPUT_FILE;
-	delete env[REAL_CENTRAL_E2E_ENV];
+	delete env[LIVE_AGENT_E2E_ENV];
 	delete env[PARENT_SIGNAL_OWNER_ENV];
 	return env;
 }

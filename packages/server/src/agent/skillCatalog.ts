@@ -1,15 +1,13 @@
-import type { Api, Model } from "@earendil-works/pi-ai";
+import { tool } from "@openai/agents";
 import {
-	type ExtensionAPI,
-	formatSkillsForPrompt,
-	parseSkillBlock,
-	type SessionEntry,
-	type Skill,
-	type ToolDefinition,
-} from "@earendil-works/pi-coding-agent";
-import { SKILL_LISTING_MAX_TOKENS, SKILL_LISTING_MIN_TOKENS } from "@thinkrail/contracts";
-import { Type } from "typebox";
+	SKILL_LISTING_MAX_TOKENS,
+	SKILL_LISTING_MIN_TOKENS,
+	type TranscriptMessage,
+	type WireModel,
+} from "@thinkrail/contracts";
+import { z } from "zod";
 import type { CompatibilitySkillProvider } from "./skillSources";
+import { formatSkillsForPrompt, type Skill } from "./skills";
 
 export const SKILL_SEARCH_TOOL = "skill_search";
 const CATALOG_WINDOW_SHARE = 0.02;
@@ -20,8 +18,7 @@ const SEARCH_DEFAULT_LIMIT = 8;
 const SEARCH_MAX_LIMIT = 20;
 const DISTINCTIVE_SHARE = 0.05;
 const HINT_LIMIT = 3;
-export const SKILL_HINT_CUSTOM_TYPE = "thinkrail/skill-hint";
-const PI_VIRTUAL_MODEL_API = "pi-virtual";
+export const SKILL_HINT_CUSTOM_TYPE = "raildesign/skill-hint";
 const FOREIGN_SOURCES: ReadonlySet<string> = new Set<CompatibilitySkillProvider>([
 	"claude",
 	"codex",
@@ -29,8 +26,8 @@ const FOREIGN_SOURCES: ReadonlySet<string> = new Set<CompatibilitySkillProvider>
 	"gemini",
 ]);
 
-export function catalogBudgetChars(model: Model<Api> | undefined): number {
-	const known = model && model.api !== PI_VIRTUAL_MODEL_API && model.contextWindow > 0;
+export function catalogBudgetChars(model: Pick<WireModel, "contextWindow"> | undefined): number {
+	const known = model && model.contextWindow > 0;
 	if (!known) return SKILL_LISTING_MIN_TOKENS * CHARS_PER_TOKEN;
 	const share = Math.max(SKILL_LISTING_MIN_TOKENS, model.contextWindow * CATALOG_WINDOW_SHARE);
 	const tokens = Math.floor(
@@ -181,7 +178,7 @@ export function formatSkillMatches(query: string, matches: readonly SkillMatch[]
 	if (matches.length === 0)
 		return `No skill matches "${query}". Try other keywords, or continue without a skill.`;
 	return [
-		`Skills matching "${query}", best first. Read a skill's file with the read tool before following it.`,
+		`Skills matching "${query}", best first. Load an approved skill before following it.`,
 		"",
 		...matches.map(({ skill }) => skillLine(skill)),
 	].join("\n");
@@ -212,10 +209,10 @@ export function formatSkillHint(skills: readonly Skill[]): string {
 	].join("\n");
 }
 
-export function hintedSkills(entries: readonly SessionEntry[]): Set<string> {
+export function hintedSkills(entries: readonly TranscriptMessage[]): Set<string> {
 	const names = new Set<string>();
 	for (const entry of entries) {
-		if (entry.type !== "custom_message" || entry.customType !== SKILL_HINT_CUSTOM_TYPE) continue;
+		if (entry.role !== "custom" || entry.customType !== SKILL_HINT_CUSTOM_TYPE) continue;
 		const details = entry.details;
 		if (!details || typeof details !== "object" || !("skills" in details)) continue;
 		if (!Array.isArray(details.skills)) continue;
@@ -224,65 +221,21 @@ export function hintedSkills(entries: readonly SessionEntry[]): Set<string> {
 	return names;
 }
 
-const searchParams = Type.Object({
-	query: Type.String({ description: "Keywords describing the task, e.g. 'pdf form fill'." }),
-	limit: Type.Optional(
-		Type.Number({
-			description: `Maximum results, 1-${SEARCH_MAX_LIMIT}. Default ${SEARCH_DEFAULT_LIMIT}.`,
-		}),
-	),
-});
-
-function createSkillSearchTool(
-	getSkills: () => readonly Skill[],
-): ToolDefinition<typeof searchParams, { matches: string[] }> {
-	return {
+export function createSkillSearchTool(getSkills: () => readonly Skill[]) {
+	return tool({
 		name: SKILL_SEARCH_TOOL,
-		label: "Search skills",
 		description:
-			"Search every available skill by keywords, including skills the system prompt does not list. Returns names, descriptions and SKILL.md locations to read.",
-		parameters: searchParams,
-		async execute(_toolCallId, input) {
-			const matches = searchSkills(getSkills(), input.query, input.limit);
+			"Search approved Skills by keywords. Returns names, descriptions and SKILL.md locations to load.",
+		parameters: z.object({
+			query: z.string().min(1),
+			limit: z.number().int().min(1).max(20).nullable(),
+		}),
+		execute({ query, limit }) {
+			const matches = searchSkills(getSkills(), query, limit ?? SEARCH_DEFAULT_LIMIT);
 			return {
-				content: [{ type: "text", text: formatSkillMatches(input.query, matches) }],
+				content: [{ type: "text", text: formatSkillMatches(query, matches) }],
 				details: { matches: matches.map(({ skill }) => skill.name) },
 			};
 		},
-	};
-}
-
-export function skillCatalog(pi: ExtensionAPI): void {
-	let skills: readonly Skill[] = [];
-	let memo: { key: string; section: BudgetedSection | undefined } | undefined;
-	pi.registerTool(createSkillSearchTool(() => skills));
-	pi.on("before_agent_start", (event, ctx) => {
-		const options = event.systemPromptOptions;
-		skills = options.skills;
-		const callable = (tool: string) =>
-			options.selectedTools.includes(tool) && !options.hiddenTools.includes(tool);
-		if (!callable("read") || !callable(SKILL_SEARCH_TOOL)) return;
-		const budget = catalogBudgetChars(ctx.model);
-		const key = `${budget}\n${skills.map((skill) => `${skill.filePath}\0${skill.description}`).join("\n")}`;
-		if (memo?.key !== key) memo = { key, section: budgetedSkillsSection(skills, budget) };
-		const section = memo.section;
-		if (!section) return;
-		options.sections.skills = section.text;
-		if (event.messageType !== "user") return;
-		const invoked = parseSkillBlock(event.prompt);
-		const request = invoked ? invoked.userMessage : event.prompt;
-		if (!request) return;
-		const exclude = hintedSkills(ctx.sessionManager.buildContextEntries());
-		if (invoked) exclude.add(invoked.name);
-		const hint = suggestSkills(skills, section.unlisted, request, exclude);
-		if (hint.length === 0) return;
-		return {
-			message: {
-				customType: SKILL_HINT_CUSTOM_TYPE,
-				content: formatSkillHint(hint),
-				details: { skills: hint.map((skill) => skill.name) },
-				display: false,
-			},
-		};
 	});
 }

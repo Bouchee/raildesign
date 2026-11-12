@@ -1,4 +1,4 @@
-import type { GitFileChange, PiEvent } from "@thinkrail/contracts";
+import type { GitFileChange, SessionEvent } from "@thinkrail/contracts";
 import { WORKSPACE_INTERNAL_DIR } from "@thinkrail/shared/paths";
 import { type TodoArtifact, type TodoPlan, TodoStore } from "pi-todos/core";
 import {
@@ -26,7 +26,7 @@ export type CommitWindow = (opts: { subject: string; paths: string[] }) => { sha
 const isAppStatePath = (path: string): boolean =>
 	path === WORKSPACE_INTERNAL_DIR || path.startsWith(`${WORKSPACE_INTERNAL_DIR}/`);
 
-export function isTodoToolEnd(event: PiEvent): boolean {
+export function isTodoToolEnd(event: SessionEvent): boolean {
 	return (
 		event.type === "tool_execution_end" &&
 		typeof event.toolName === "string" &&

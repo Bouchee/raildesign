@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
-import { QUESTION_PANEL_PROTOCOL_VERSION } from "@thinkrail/contracts";
+import {
+	QUESTION_PANEL_PROTOCOL_VERSION,
+	SUBAGENT_CONCURRENCY_PROTOCOL_VERSION,
+} from "@thinkrail/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
+import { useAppStore } from "@/store";
 import { ChatSettings, QuestionPanelHeightControl } from "./ChatSettings";
 
 test("Chat settings renders one chat line-width control with its Fit to pane switch", () => {
@@ -14,9 +18,22 @@ test("Chat settings renders one chat line-width control with its Fit to pane swi
 	expect(markup).not.toContain("file-line-width");
 });
 
-test("Chat settings hides subagents against a host without the subagent protocol", () => {
-	const markup = renderToStaticMarkup(<ChatSettings />);
-	expect(markup).not.toContain('data-testid="settings-subagents"');
+test("Chat settings preserves subagent configuration while execution is unavailable", () => {
+	const initial = useAppStore.getInitialState();
+	const previous = initial.protocolVersion;
+	initial.protocolVersion = SUBAGENT_CONCURRENCY_PROTOCOL_VERSION;
+	try {
+		const markup = renderToStaticMarkup(<ChatSettings />);
+		expect(markup).toContain('data-testid="settings-subagents"');
+		expect(markup.match(/<button[^>]*data-testid="subagents-global-toggle"[^>]*>/)?.[0]).toContain(
+			'disabled=""',
+		);
+		expect(
+			markup.match(/<input[^>]*data-testid="subagent-limit-global-input"[^>]*>/)?.[0],
+		).toContain('disabled=""');
+	} finally {
+		initial.protocolVersion = previous;
+	}
 });
 
 test("the question panel height is offered only to a host that stores it", () => {

@@ -1,16 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentMessage, ImageContent } from "@thinkrail/contracts";
+import type { ImageContent, TranscriptMessage } from "@thinkrail/contracts";
 import {
 	guardOversizedImages,
 	imageDimensions,
 	isAnthropicFamilyModel,
 	MANY_IMAGE_EDGE_LIMIT,
 	MANY_IMAGE_THRESHOLD,
-	oversizedImageGuard,
 	SINGLE_IMAGE_EDGE_LIMIT,
 } from "./imageGuard";
 
-function guardedContent(guarded: AgentMessage[] | undefined, index: number) {
+function guardedContent(guarded: TranscriptMessage[] | undefined, index: number) {
 	const message = guarded?.[index] as { content?: { type: string; text?: string }[] } | undefined;
 	if (!message?.content) throw new Error(`no guarded message at ${index}`);
 	return message.content;
@@ -92,8 +91,9 @@ const image = (bytes: Buffer, mimeType = "image/png"): ImageContent => ({
 	mimeType,
 });
 
-const user = (content: string | (ImageContent | { type: "text"; text: string })[]): AgentMessage =>
-	({ role: "user", content, timestamp: 1 }) as AgentMessage;
+const user = (
+	content: string | (ImageContent | { type: "text"; text: string })[],
+): TranscriptMessage => ({ role: "user", content, timestamp: 1 }) as TranscriptMessage;
 
 const toolResult = (content: (ImageContent | { type: "text"; text: string })[]) =>
 	({
@@ -103,7 +103,7 @@ const toolResult = (content: (ImageContent | { type: "text"; text: string })[]) 
 		content,
 		isError: false,
 		timestamp: 1,
-	}) as AgentMessage;
+	}) as TranscriptMessage;
 
 describe("imageDimensions", () => {
 	test("reads PNG IHDR dimensions", () => {
@@ -209,7 +209,7 @@ describe("guardOversizedImages", () => {
 	test("applies the stricter 2000px cap once the context carries more than 20 images", () => {
 		const small = image(pngBytes(100, 100));
 		const big = image(pngBytes(2100, 1000));
-		const messages: AgentMessage[] = [
+		const messages: TranscriptMessage[] = [
 			toolResult(Array.from({ length: MANY_IMAGE_THRESHOLD }, () => small)),
 			user([big]),
 		];
@@ -224,7 +224,7 @@ describe("guardOversizedImages", () => {
 
 	test("the same 2100px image is kept while the context holds 20 images or fewer", () => {
 		const small = image(pngBytes(100, 100));
-		const messages: AgentMessage[] = [
+		const messages: TranscriptMessage[] = [
 			toolResult(Array.from({ length: MANY_IMAGE_THRESHOLD - 1 }, () => small)),
 			user([image(pngBytes(2100, 1000))]),
 		];
@@ -243,7 +243,7 @@ describe("guardOversizedImages", () => {
 	});
 
 	test("no-ops (returns undefined) when nothing is oversized", () => {
-		const messages: AgentMessage[] = [
+		const messages: TranscriptMessage[] = [
 			user("plain string content"),
 			user([{ type: "text", text: "hi" }, image(pngBytes(1568, 882))]),
 			toolResult([{ type: "text", text: "ok" }]),
@@ -270,7 +270,7 @@ describe("guardOversizedImages", () => {
 		expect(content[1]?.text).toContain("4.5MB image payload limit");
 	});
 
-	test("strips an image whose DECODED size is under Anthropic's 5MB but whose base64 exceeds pi's 4.5MB cap", () => {
+	test("strips an image whose DECODED size is under Anthropic's 5MB but whose base64 exceeds the application's 4.5MB cap", () => {
 		const decoded = Buffer.concat([
 			gifBytes(100, 100),
 			Buffer.alloc(Math.round(3.6 * 1024 * 1024) - gifBytes(100, 100).length, 0xab),
@@ -282,7 +282,7 @@ describe("guardOversizedImages", () => {
 		expect(content[0]?.text).toContain("4.5MB image payload limit");
 	});
 
-	test("strips a provider-unsupported media type even when small and within bounds — legacy HEIC/BMP heals", () => {
+	test("strips a provider-unsupported media type even when small and within bounds", () => {
 		const guarded = guardOversizedImages([
 			user([
 				image(Buffer.from("tiny-heic-payload"), "image/heic"),
@@ -340,7 +340,7 @@ describe("guardOversizedImages", () => {
 
 	test("re-evaluates the count-aware cap as it strips: largest-first, only down to the threshold", () => {
 		const small = image(pngBytes(500, 500));
-		const messages: AgentMessage[] = [
+		const messages: TranscriptMessage[] = [
 			toolResult(Array.from({ length: 18 }, () => small)),
 			user([image(pngBytes(2600, 100)), image(pngBytes(2500, 100)), image(pngBytes(2400, 100))]),
 		];
@@ -375,48 +375,4 @@ describe("isAnthropicFamilyModel", () => {
 		expect(isAnthropicFamilyModel({ provider: "google", id: "gemini-3-pro" })).toBe(false);
 		expect(isAnthropicFamilyModel(undefined)).toBe(false);
 	});
-});
-
-type ContextHandler = (
-	event: { type: "context"; messages: AgentMessage[] },
-	ctx: { model: { api?: string; provider?: string; id?: string } | undefined },
-) => unknown;
-
-function registeredHandler(): ContextHandler {
-	let handler: ContextHandler | undefined;
-	const pi = {
-		on: (event: string, h: ContextHandler) => {
-			if (event === "context") handler = h;
-		},
-	};
-	oversizedImageGuard(pi as never);
-	if (!handler) throw new Error("no context handler registered");
-	return handler;
-}
-
-const anthropicCtx = { model: { provider: "anthropic", api: "anthropic-messages", id: "claude" } };
-
-test("oversizedImageGuard registers a context handler that returns replaced messages", async () => {
-	const handler = registeredHandler();
-
-	const clean = await handler({ type: "context", messages: [user("hello")] }, anthropicCtx);
-	expect(clean).toBeUndefined();
-
-	const dirty = (await handler(
-		{ type: "context", messages: [user([image(pngBytes(9000, 100))])] },
-		anthropicCtx,
-	)) as { messages: AgentMessage[] };
-	expect(dirty?.messages).toBeDefined();
-});
-
-test("the guard is a no-op for a non-Anthropic model — the caps are Anthropic's, not the provider's", async () => {
-	const handler = registeredHandler();
-	const oversized = { type: "context" as const, messages: [user([image(pngBytes(9000, 100))])] };
-
-	expect(
-		await handler(oversized, {
-			model: { provider: "openai", api: "openai-responses", id: "gpt-5" },
-		}),
-	).toBeUndefined();
-	expect(await handler(oversized, { model: undefined })).toBeUndefined();
 });

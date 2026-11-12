@@ -1,12 +1,10 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { type BuildKind, bootHost } from "@thinkrail/server";
+import { bootHost } from "@thinkrail/server";
 import { spawnDetached } from "@thinkrail/shared/spawn";
 import { printStartupMark } from "@thinkrail/shared/startupMark";
-import { channel, posthogProjectKey, version } from "@thinkrail/shared/version";
+import { channel, version } from "@thinkrail/shared/version";
 import { type CliOptions, parseArgs, parseSubcommand, USAGE } from "./args";
-import { openUiThenStartAttribution } from "./attributionReadiness";
-import { BINARY_SOURCE_MAP_BASE } from "./binarySourceMap";
 import { runUninstall } from "./uninstall";
 import { createCliHostUpdate, runUpdate } from "./update";
 
@@ -22,7 +20,7 @@ function openBrowser(url: string): void {
 	spawnDetached(command);
 }
 
-async function bootstrap(build: BuildKind): Promise<void> {
+async function bootstrap(build: "source" | "binary"): Promise<void> {
 	const argv = Bun.argv.slice(2);
 	const subcommand = parseSubcommand(argv);
 	if (subcommand) {
@@ -61,7 +59,7 @@ async function bootstrap(build: BuildKind): Promise<void> {
 		platform: process.platform,
 		execPath: process.execPath,
 	});
-	const { server, port, requested } = await bootHost({
+	const { port, requested } = await bootHost({
 		port: options.port,
 		host: options.host,
 		portMode: "free",
@@ -69,14 +67,7 @@ async function bootstrap(build: BuildKind): Promise<void> {
 		staticDir,
 		appVersion: version,
 		...(options.verbose ? { verbose: true } : {}),
-		analytics: {
-			posthogApiKey: posthogProjectKey,
-			channel,
-			build,
-			...(build === "binary" ? { remapBase: BINARY_SOURCE_MAP_BASE } : {}),
-			mute: options.noAnalytics,
-			...(options.open ? { openExternal: openBrowser } : {}),
-		},
+
 		...(hostUpdate ? { hostUpdate } : {}),
 		...(options.projectDir ? { projectPath: resolve(process.cwd(), options.projectDir) } : {}),
 	});
@@ -87,11 +78,11 @@ async function bootstrap(build: BuildKind): Promise<void> {
 	const openHost = options.host === "0.0.0.0" || options.host === "::" ? "localhost" : options.host;
 	const url = `http://${openHost}:${port}`;
 	printStartupMark({ status: "host ready", endpoint: url });
-	console.log(`thinkrail → ${url}`);
-	openUiThenStartAttribution(options.open, url, openBrowser, server.startAttributionClaim);
+	console.log(`raildesign → ${url}`);
+	if (options.open) openBrowser(url);
 }
 
-export async function launch(build: BuildKind): Promise<void> {
+export async function launch(build: "source" | "binary"): Promise<void> {
 	try {
 		await bootstrap(build);
 	} catch (err) {

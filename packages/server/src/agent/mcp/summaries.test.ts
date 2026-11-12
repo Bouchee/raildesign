@@ -12,7 +12,7 @@ test("summaries cover scope, approval states, replacement, folded overrides, rec
 	const agentDir = join(root, "agent");
 	const cwd = join(root, "project");
 	mkdirSync(agentDir, { recursive: true });
-	mkdirSync(join(cwd, ".pi"), { recursive: true });
+	mkdirSync(join(cwd, ".raildesign"), { recursive: true });
 	const repo = {
 		command: "npx",
 		args: ["-y", "repo-server", "--header", "Authorization: Bearer abc"],
@@ -31,7 +31,7 @@ test("summaries cover scope, approval states, replacement, folded overrides, rec
 		}),
 	);
 	writeFileSync(
-		join(cwd, ".pi", "mcp.json"),
+		join(cwd, ".raildesign", "mcp.json"),
 		JSON.stringify({
 			mcpServers: {
 				repo,
@@ -120,13 +120,13 @@ test("an entry that is not an object keeps its row, and an unreadable file is li
 	const agentDir = join(root, "odd-agent");
 	const cwd = join(root, "odd-project");
 	mkdirSync(agentDir, { recursive: true });
-	mkdirSync(join(cwd, ".pi"), { recursive: true });
+	mkdirSync(join(cwd, ".raildesign"), { recursive: true });
 	writeFileSync(
 		join(agentDir, "mcp.json"),
 		JSON.stringify({ mcpServers: { bad: null, docs: { url: "https://docs.example/mcp" } } }),
 	);
 	writeFileSync(
-		join(cwd, ".pi", "mcp.json"),
+		join(cwd, ".raildesign", "mcp.json"),
 		'{ "mcpServers": { "gh": { "url": "https://gh.example/mcp", "headers": { "Authorization": ghp_abcdefghijklmnopqrstuvwx1234 } } } }',
 	);
 	const files = { agentDir, cwd, projectTrusted: true };
@@ -139,7 +139,7 @@ test("an entry that is not an object keeps its row, and an unreadable file is li
 		["user", "docs", undefined],
 	]);
 	const errors = summarizeMcpConfigErrors(files);
-	expect(errors.map((error) => error.source)).toEqual([join(cwd, ".pi", "mcp.json")]);
+	expect(errors.map((error) => error.source)).toEqual([join(cwd, ".raildesign", "mcp.json")]);
 	expect(errors[0]?.message).toBeTruthy();
 	expect(JSON.stringify(errors)).not.toContain("abcdefghijklmnopqrstuvwx1234");
 	expect(summarizeMcpConfigErrors({ ...files, projectTrusted: false })).toEqual([]);
@@ -149,7 +149,7 @@ test("folded project overrides retain validation errors regardless of approval",
 	const agentDir = join(root, "invalid-override-agent");
 	const cwd = join(root, "invalid-override-project");
 	mkdirSync(agentDir, { recursive: true });
-	mkdirSync(join(cwd, ".pi"), { recursive: true });
+	mkdirSync(join(cwd, ".raildesign"), { recursive: true });
 	const overrides = {
 		enabled: { enabled: "false" },
 		exposure: { exposure: "invalid" },
@@ -169,7 +169,7 @@ test("folded project overrides retain validation errors regardless of approval",
 			},
 		}),
 	);
-	writeFileSync(join(cwd, ".pi", "mcp.json"), JSON.stringify({ mcpServers: overrides }));
+	writeFileSync(join(cwd, ".raildesign", "mcp.json"), JSON.stringify({ mcpServers: overrides }));
 	for (const approved of [false, true]) {
 		const approvals = approved
 			? Object.fromEntries(

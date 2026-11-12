@@ -1,13 +1,31 @@
+import { appendFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { type FileHandle, open } from "node:fs/promises";
 import { join } from "node:path";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { McpServerLog } from "@thinkrail/contracts";
+import { dataDir } from "../../persistence";
 import { redactMcpText } from "./redact";
 
 const MCP_LOG_TAIL_LINES = 200;
 const MCP_LOG_READ_BYTES = 8 * 1024 * 1024;
 const ENTRY_HEAD = /^\d{4}-\d\d-\d\dT[\d:.]+Z \[([A-Za-z0-9_-]+)\] /;
 const CONTINUATION = "    ";
+
+export function appendMcpLog(name: string, message: string): void {
+	if (!/^[A-Za-z0-9_-]+$/.test(name)) throw new Error("Invalid MCP server name.");
+	const root = dataDir();
+	mkdirSync(root, { recursive: true });
+	const path = join(root, "mcp.log");
+	if (existsSync(path) && statSync(path).size > 1024 * 1024) renameSync(path, `${path}.1`);
+	const lines = redactMcpText(message).split("\n");
+	appendFileSync(
+		path,
+		`${new Date().toISOString()} [${name}] ${lines[0] ?? ""}\n${lines
+			.slice(1)
+			.map((line) => `${CONTINUATION}${line}\n`)
+			.join("")}`,
+		{ mode: 0o600 },
+	);
+}
 
 export function mcpServerLogLines(
 	text: string,
@@ -50,7 +68,7 @@ async function readTail(path: string): Promise<string> {
 }
 
 export async function readMcpServerLog(name: string): Promise<McpServerLog> {
-	const path = join(getAgentDir(), "mcp.log");
+	const path = join(dataDir(), "mcp.log");
 	const [rotated, current] = await Promise.all([readTail(`${path}.1`), readTail(path)]);
 	const lines = mcpServerLogLines(`${rotated}\n${current}`, name);
 	return { path, text: redactMcpText(lines.join("\n")) };

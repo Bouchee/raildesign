@@ -19,7 +19,6 @@ import {
 } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { prepareChatTitle } from "../chat/chatTitle";
-import { useAutoPlanSummary } from "../chat/useChatTodos";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { preloadedLazy } from "../components/preloadedLazy";
 import { QuietScrollArea } from "../components/QuietScrollArea";
@@ -40,7 +39,6 @@ import { useLoadWorkspaceTurns } from "../panels/useWorkspaceTurns";
 import {
 	createChangesTab,
 	type EditorTab,
-	editorSessionId,
 	isChatWorkspace,
 	isConnectedGeneration,
 	isDefaultWorkspace,
@@ -97,17 +95,6 @@ import { syncLegacySelectionFromAttention, useLegacySelectionAdapter } from "./l
 import { useTerminalPlacementReconciliation } from "./terminalReconciliation";
 import { useIdleEditorPreload } from "./useIdleEditorPreload";
 import { WorkspaceChatHistory } from "./WorkspaceChatHistory";
-
-function PlanSummaryAutoDraft({
-	workspaceId,
-	sessionId,
-}: {
-	workspaceId: string;
-	sessionId: string;
-}) {
-	useAutoPlanSummary(workspaceId, sessionId);
-	return null;
-}
 
 const ChatView = preloadedLazy(() => import("../chat/ChatView"));
 const PlanPane = lazy(() => import("../panels/PlanPane"));
@@ -345,14 +332,6 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 	const workspace = useAppStore((state) => selectWorkspaceById(state, workspaceId));
 	const contextProject = useAppStore(selectContextProject);
 	const editorTabs = useAppStore((state) => state.tabsByWorkspace[workspaceId] ?? NO_EDITOR_TABS);
-	const planSessionIds = useMemo(() => {
-		const seen = new Set<string>();
-		for (const tab of editorTabs) {
-			const sid = editorSessionId(tab);
-			if (sid) seen.add(sid);
-		}
-		return [...seen];
-	}, [editorTabs]);
 	const chatStarting = useAppStore((state) => (state.chatStartsByWorkspace[workspaceId] ?? 0) > 0);
 	const deletedSessions = useAppStore((state) => state.deletedSessionsByWorkspace[workspaceId]);
 	const terminalClose = useTerminalClose();
@@ -878,13 +857,6 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 
 	return (
 		<div data-testid="workspace-workbench" data-layout-status="settled" className="contents">
-			{planSessionIds.map((sessionId) => (
-				<PlanSummaryAutoDraft
-					key={`plan-summary-draft:${workspaceId}:${sessionId}`}
-					workspaceId={workspaceId}
-					sessionId={sessionId}
-				/>
-			))}
 			<Workbench
 				workspaceId={workspaceId}
 				document={rendered.document}

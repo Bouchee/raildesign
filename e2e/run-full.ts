@@ -1,10 +1,11 @@
 import { join } from "node:path";
 import {
-	CENTRAL_PLAYWRIGHT_RUNNER_AUTH_ENV,
 	createAgentRunPlan,
+	LIVE_PLAYWRIGHT_RUNNER_AUTH_ENV,
 	WEB_BUILD_READY_ENV,
 } from "./agentRunPlan";
-import { REAL_CENTRAL_E2E_ENV } from "./fixtures/centralAgent";
+import { stripAmbientModelCredentials } from "./ambientCredentials";
+import { LIVE_AGENT_E2E_ENV } from "./fixtures/sdkAgent";
 import { REAL_SPEECH_E2E_ENV } from "./fixtures/speech";
 import {
 	countSelectedPlaywrightTests,
@@ -23,11 +24,11 @@ import {
 const bun = process.execPath;
 
 function noAgentEnv(): NodeJS.ProcessEnv {
-	const env: NodeJS.ProcessEnv = { ...process.env, THINKRAIL_E2E_SKIP_BUILD: "1" };
+	const env = stripAmbientModelCredentials({ ...process.env, THINKRAIL_E2E_SKIP_BUILD: "1" });
 	delete env.THINKRAIL_E2E_LANE;
 	delete env.PLAYWRIGHT_BLOB_OUTPUT_FILE;
-	delete env[REAL_CENTRAL_E2E_ENV];
-	delete env[CENTRAL_PLAYWRIGHT_RUNNER_AUTH_ENV];
+	delete env[LIVE_AGENT_E2E_ENV];
+	delete env[LIVE_PLAYWRIGHT_RUNNER_AUTH_ENV];
 	delete env[REAL_SPEECH_E2E_ENV];
 	return env;
 }

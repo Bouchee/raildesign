@@ -1,10 +1,10 @@
-import { isJbcentralConnected, type ProviderStatusReport } from "@thinkrail/contracts";
+import type { ProviderStatusReport } from "@thinkrail/contracts";
 import { useEffect } from "react";
 import { type ProviderStatusSnapshot, useAppStore } from "@/store";
 import { getTransport } from "@/transport";
 
 export function reportHasModelSource(report: ProviderStatusReport): boolean {
-	return report.providers.some((p) => p.configured) || isJbcentralConnected(report.jbcentral);
+	return report.providers.some((p) => p.configured);
 }
 
 let inflight: { version: number; read: Promise<void> } | null = null;

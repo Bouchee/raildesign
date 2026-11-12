@@ -1,5 +1,4 @@
 import {
-	ANALYTICS_CONSENT_PROTOCOL_VERSION,
 	type BackgroundCommandSummary,
 	CHAT_RESOURCES_PROTOCOL_VERSION,
 	CHATS_PROTOCOL_VERSION,
@@ -81,28 +80,6 @@ export function selectLoginBusy(state: {
 	loginStarting: boolean;
 }): boolean {
 	return state.loginStarting || state.activeLogin !== null;
-}
-
-interface AnalyticsConsentState {
-	protocolVersion: number | null;
-	welcomeGeneration: number;
-	analyticsConsentConfirmed: boolean;
-}
-
-export function selectAnalyticsConsentSupported(
-	state: Pick<AnalyticsConsentState, "protocolVersion">,
-): boolean {
-	return (
-		state.protocolVersion !== null && state.protocolVersion >= ANALYTICS_CONSENT_PROTOCOL_VERSION
-	);
-}
-
-export function selectAnalyticsConsentPromptOpen(state: AnalyticsConsentState): boolean {
-	return (
-		selectAnalyticsConsentSupported(state) &&
-		state.welcomeGeneration > 0 &&
-		!state.analyticsConsentConfirmed
-	);
 }
 
 interface ConnectionGenerationState {

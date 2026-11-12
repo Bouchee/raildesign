@@ -8,8 +8,8 @@ import {
 	worktreeRow,
 	worktreeRows,
 } from "./fixtures/app";
-import { isExactE2eModel, resolveE2eModel } from "./fixtures/centralAgent";
 import { E2E_CENTRAL_ARTIFACT, E2E_PI_AGENT_DIR } from "./fixtures/paths";
+import { isExactE2eModel, resolveE2eModel } from "./fixtures/sdkAgent";
 import { E2eWire } from "./fixtures/wire";
 
 async function kickOff(page: import("@playwright/test").Page, prompt: string): Promise<void> {

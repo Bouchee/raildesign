@@ -1,12 +1,17 @@
 {
 	"$schema": "https://turbo.build/schema.json",
-	"globalPassThroughEnv": ["THINKRAIL_*", "PI_CODING_AGENT_DIR"],
+	"globalPassThroughEnv": [
+		"THINKRAIL_*",
+		"PI_CODING_AGENT_DIR",
+		"RAILDESIGN_*",
+		"OPENAI_BASE_URL",
+		"OPENAI_MODEL",
+		"OPENAI_API_KEY"
+	],
 	"globalDependencies": ["patches/**"],
 	"tasks": {
 		"build": {
 			"dependsOn": ["^build"],
-			"env": ["THINKRAIL_SOURCEMAPS_RELEASE"],
-			"passThroughEnv": ["POSTHOG_CLI_API_KEY", "POSTHOG_CLI_PROJECT_ID", "POSTHOG_CLI_HOST"],
 			"outputs": ["dist/**"]
 		},
 		"dev": {
