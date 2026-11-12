@@ -21,6 +21,13 @@ The fork does not import the official application's records or configuration.
 Cross-cutting runtime utilities used by the engine host and its launchers. Server-side only — never
 bundled into `apps/web`. Exposed through explicit subpath exports, not a barrel.
 
+## Tool output
+
+`@thinkrail/shared/toolOutput` supplies `truncateHead`, the 2,000-line and 50 KiB limits, and the text-only `ToolResult` type.
+Truncation preserves complete UTF-8 lines and reports the original size and output size.
+An oversized first line produces empty preview text and an explicit flag.
+Plan and Spec tools use this helper without an engine dependency.
+
 ## Boundary
 
 - **Owns:** host-side runtime helpers that are neither engine- nor transport-specific, and the native
