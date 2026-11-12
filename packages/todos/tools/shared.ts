@@ -2,12 +2,11 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-	type AgentToolResult,
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
-	type ExtensionContext,
+	type ToolResult,
 	truncateHead,
-} from "@earendil-works/pi-coding-agent";
+} from "@thinkrail/shared/toolOutput";
 import { Type } from "typebox";
 import {
 	flatItems,
@@ -18,22 +17,29 @@ import {
 	TodoStore,
 } from "../core/index.ts";
 
-export function storeFor(ctx: ExtensionContext): TodoStore {
-	return new TodoStore(ctx.cwd, ctx.sessionManager.getSessionId());
+export interface TodoToolServices {
+	cwd: string;
+	sessionId: string;
+	assertActive(): void;
+	markToolFailed(callId: string | undefined): void;
+}
+
+export function storeFor(services: TodoToolServices): TodoStore {
+	return new TodoStore(services.cwd, services.sessionId);
 }
 
 export async function textResult<T>(
 	text: string,
 	details: T,
 	continuation = "",
-): Promise<AgentToolResult<T>> {
+): Promise<ToolResult<T>> {
 	if (continuation) text += `\n${continuation}`;
 	const preview = truncateHead(text);
 	if (!preview.truncated) return { content: [{ type: "text", text }], details };
 	let fullOutputPath: string | undefined;
 	let notice: string;
 	try {
-		const directory = await mkdtemp(join(tmpdir(), "pi-todo-output-"));
+		const directory = await mkdtemp(join(tmpdir(), "raildesign-todo-output-"));
 		const path = join(directory, "output.txt");
 		await writeFile(path, text, { mode: 0o600 });
 		fullOutputPath = path;
@@ -59,10 +65,20 @@ export async function textResult<T>(
 	};
 }
 
-export async function errorResult(message: string): Promise<AgentToolResult<{ error: string }>> {
+export async function errorResult(message: string): Promise<ToolResult<{ error: string }>> {
 	const inline = `Error: ${message}`;
 	const text = truncateHead(inline).truncated ? `Error:\n${message}` : inline;
 	return { ...(await textResult(text, { error: message })), isError: true };
+}
+
+export async function toolError(
+	services: TodoToolServices,
+	error: unknown,
+	callId: string | undefined,
+): Promise<string> {
+	services.markToolFailed(callId);
+	const result = await errorResult(error instanceof Error ? error.message : String(error));
+	return result.content.map((block) => block.text).join("\n");
 }
 
 const GLYPH: Record<Todo["status"], string> = {

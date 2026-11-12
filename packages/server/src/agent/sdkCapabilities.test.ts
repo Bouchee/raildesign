@@ -8,6 +8,7 @@ import {
 	modelResponse,
 	ScriptedModel,
 } from "@openai/agents/testing";
+import { TodoStore } from "@thinkrail/todos/core";
 import { loadWorkspaces, saveWorkspaces } from "../persistence";
 import { configureAgentModelFactory } from "./modelConfiguration";
 import {
@@ -159,4 +160,32 @@ test("manual-only Skill commands expand under the run grant and rejected command
 	expect(getSessionState(sessionId).execution).toBe("idle");
 	await promptSession(sessionId, "Continue normally");
 	expect(model.calls).toHaveLength(3);
+});
+
+test("SDK Plan dispatch mutates the shared store and preserves UI details outside model history", async () => {
+	const model = new ScriptedModel([
+		call("todo_add", { title: "Add actual Plan state", group: "Stage 3" }, "plan-add"),
+		done(),
+	]);
+	configureAgentModelFactory(() => model);
+	await promptSession(sessionId, "Create the Plan");
+	expect(new TodoStore(cwd, sessionId).read().groups[0]?.todos[0]?.title).toBe(
+		"Add actual Plan state",
+	);
+	const record = readSessionRecord(sessionId);
+	const result = record?.messages.find(
+		(message) => message.role === "toolResult" && message.toolCallId === "plan-add",
+	);
+	expect(result?.role === "toolResult" && result.details !== undefined).toBe(true);
+	expect(result?.role === "toolResult" && result.isError).toBe(false);
+	const modelResult = record?.history.find(
+		(item) => item.type === "function_call_result" && item.callId === "plan-add",
+	);
+	expect(
+		modelResult?.type === "function_call_result" &&
+			typeof modelResult.output === "string" &&
+			modelResult.output.includes('"details"'),
+	).toBe(false);
+	expect(JSON.stringify(model.calls[0]?.request)).toContain("shared TODO list");
+	expect(record?.effects["plan-add"]?.status).toBe("completed");
 });

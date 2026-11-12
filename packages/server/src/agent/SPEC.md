@@ -252,3 +252,9 @@ atomic conditional title write. The check and write share the attached session e
 proposal cannot replace a manual title or a previously accepted automatic title. The normal manual
 rename operation remains unconditional. Tool registration for automatic title/workspace actions
 belongs to the later advanced-tool gate.
+
+## SDK Plan tools
+
+The manager composes seven `@thinkrail/todos` FunctionTools with the session identity and current run grant.
+`TODO_RULE` describes Plan creation and maintenance. Structured tool details remain in the application
+transcript; the model receives bounded text. The existing TodoStore owns all Plan mutation.

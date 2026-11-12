@@ -654,14 +654,14 @@ test("turnDivider splits specs from code changes via isSpec, each path on exactl
 	const turns: ChatTurn[] = [
 		user("u1", 0),
 		assistantWithPaths("a1", [
-			{ name: "write", path: "packages/pi-todos/SPEC.md" },
-			{ name: "edit", path: "packages/pi-todos/core/store.ts" },
+			{ name: "write", path: "packages/todos/SPEC.md" },
+			{ name: "edit", path: "packages/todos/core/store.ts" },
 		]),
 		done("s1", 5_000),
 	];
 	const d = turnDivider(turns, 2, (p) => p.endsWith("SPEC.md"));
-	expect(d?.specs).toEqual(["packages/pi-todos/SPEC.md"]);
-	expect(d?.changedFiles).toEqual(["packages/pi-todos/core/store.ts"]);
+	expect(d?.specs).toEqual(["packages/todos/SPEC.md"]);
+	expect(d?.changedFiles).toEqual(["packages/todos/core/store.ts"]);
 });
 
 test("turnDivider counts a gitignored scratch spec as a spec, not as a (never-visible) change", () => {

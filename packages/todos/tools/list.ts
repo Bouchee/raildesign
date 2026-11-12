@@ -1,11 +1,9 @@
-import {
-	DEFAULT_MAX_BYTES,
-	DEFAULT_MAX_LINES,
-	type ExtensionAPI,
-	truncateHead,
-} from "@earendil-works/pi-coding-agent";
+import { tool } from "@openai/agents";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, truncateHead } from "@thinkrail/shared/toolOutput";
 import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { countItems, flatItems, TODO_STATUSES, type TodoPlan } from "../core/index.ts";
+import type { TodoToolServices } from "./shared.ts";
 import {
 	consistencyNudge,
 	errorResult,
@@ -14,6 +12,7 @@ import {
 	storeFor,
 	stringEnum,
 	textResult,
+	toolError,
 	withNudges,
 } from "./shared.ts";
 
@@ -35,20 +34,22 @@ const parameters = Type.Object({
 	),
 });
 
-export function registerTodoList(pi: ExtensionAPI): void {
-	pi.registerTool<typeof parameters, { plan: TodoPlan; nextOffset?: number } | { error: string }>({
+export function createTodoList(services: TodoToolServices) {
+	return tool({
 		name: "todo_list",
-		label: "Todo List",
 		description:
-			"Read this chat's TODO plan — loose items plus named groups (optionally filtered by status). The plan is the source of truth and the user may edit it at any time, so re-read before choosing each next item, after user input, and before completion. A plan beyond Pi's 2,000-line / 50 KiB output limit continues at the offset given in the result; oversized text is saved to a temporary file.",
-		promptSnippet:
-			"todo_list — read this chat's TODO plan (source of truth; re-read to catch the user's edits).",
-		parameters,
-		async execute(_callId, params, _signal, _onUpdate, ctx) {
+			"Read this chat's TODO plan — loose items plus named groups (optionally filtered by status). The plan is the source of truth and the user may edit it at any time, so re-read before choosing each next item, after user input, and before completion. A plan beyond the 2,000-line / 50 KiB output limit continues at the offset given in the result; oversized text is saved to a temporary file.",
+		strict: false,
+		parameters: { ...parameters, required: parameters.required ?? [], additionalProperties: true },
+		errorFunction: (_context, error, details) =>
+			toolError(services, error, details?.toolCall?.callId),
+		async execute(params) {
+			services.assertActive();
+			if (!Value.Check(parameters, params)) throw new Error("Invalid tool arguments");
 			const offset = params.offset ?? 0;
 			if (!Number.isSafeInteger(offset) || offset < 0)
 				return errorResult("Use a nonnegative integer offset.");
-			const plan = storeFor(ctx).read();
+			const plan = storeFor(services).read();
 			const filtered: TodoPlan = params.status
 				? {
 						todos: plan.todos.filter((todo) => todo.status === params.status),

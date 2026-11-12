@@ -2,14 +2,14 @@
 id: submodule-pi-todos-core
 type: submodule-design
 status: draft
-title: pi-todos core (pi-free model)
+title: Plan core (engine-independent model)
 parent: module-pi-todos
-tags: [pi-extension, todos]
+tags: [model, todos]
 ---
 
 ## Responsibility
 
-The pi-free TODO model: the `Todo` types (the status vocabulary) and `TodoStore` — a **per-session**
+The engine-independent TODO model: the `Todo` types (the status vocabulary) and `TodoStore` — a **per-session**
 list stored as one file, `.raildesign/context/todos/<sessionId>.json` (under the ephemeral context scratch
 dir), read and written by read-modify-write. The
 file is the source of truth; the store holds no mutable state, so every method re-reads and stale reads
@@ -198,9 +198,8 @@ reload.
 ## Boundary
 
 - **Allowed deps:** Node built-ins only (`node:fs`, `node:path`, `node:crypto`).
-- **Forbidden:** any `@earendil-works/*` **and any `@thinkrail/*`** import — this is the pi-free,
-  thinkrail-free layer the host can value-import without pulling pi into its bundle, and that stays
-  installable under vanilla `pi`. Consequence: `STORE_DIR` (`.raildesign/context/todos`) carries a **local
+- **Forbidden:** any `@earendil-works/*` **and any `@thinkrail/*`** import — this is the engine-independent,
+  store layer with no SDK or application dependency. Consequence: `STORE_DIR` (`.raildesign/context/todos`) carries a **local
   mirror** of `@thinkrail/shared`'s `WORKSPACE_CONTEXT_DIR` rather than importing it — the shared constant
   is the host-side source of truth; keep the two in step. `tools/` imports this through the barrel;
   nothing here imports `tools/`.

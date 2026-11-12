@@ -1,6 +1,8 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { tool } from "@openai/agents";
 import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { TODO_STATUSES, type Todo, type TodoPatch, type TodoPlan } from "../core/index.ts";
+import type { TodoToolServices } from "./shared.ts";
 import {
 	consistencyNudge,
 	errorResult,
@@ -8,6 +10,7 @@ import {
 	storeFor,
 	stringEnum,
 	textResult,
+	toolError,
 	withNudges,
 } from "./shared.ts";
 
@@ -62,16 +65,18 @@ function planCompleteNudge(plan: TodoPlan): string | undefined {
 	return "plan complete — write a cumulative overall summary with todo_plan_summary covering EVERYTHING done across all tasks, not just the last step, in PR-body shape (## Summary / ## Changes / ## Testing).";
 }
 
-export function registerTodoUpdate(pi: ExtensionAPI): void {
-	pi.registerTool<typeof parameters, { todo: Todo; paused: Todo[] } | { error: string }>({
+export function createTodoUpdate(services: TodoToolServices) {
+	return tool({
 		name: "todo_update",
-		label: "Todo Update",
 		description:
 			"Update one item by id (status, title, or note) — the tool for progressing your plan: flip an item to in_progress when you start it and done when you finish. Marking done is how items complete — they STAY in the list as history (don't remove them). This is the safe way to edit the list: it touches only the one item.",
-		promptSnippet:
-			"todo_update — progress one item (in_progress on start, done when finished; done items stay).",
-		parameters,
-		async execute(_callId, params, _signal, _onUpdate, ctx) {
+		strict: false,
+		parameters: { ...parameters, required: parameters.required ?? [], additionalProperties: true },
+		errorFunction: (_context, error, details) =>
+			toolError(services, error, details?.toolCall?.callId),
+		async execute(params) {
+			services.assertActive();
+			if (!Value.Check(parameters, params)) throw new Error("Invalid tool arguments");
 			const patch: TodoPatch = {};
 			if (params.status !== undefined) patch.status = params.status;
 			if (params.title !== undefined) patch.title = params.title;
@@ -79,7 +84,7 @@ export function registerTodoUpdate(pi: ExtensionAPI): void {
 			if (params.summary !== undefined) patch.summary = params.summary;
 			if (params.verification !== undefined) patch.verification = params.verification;
 			if (params.commitSubject !== undefined) patch.commitSubject = params.commitSubject;
-			const store = storeFor(ctx);
+			const store = storeFor(services);
 			const result = store.update(params.id, patch);
 			if (!result) return errorResult(`No TODO with id "${params.id}".`);
 			const { todo, paused } = result;

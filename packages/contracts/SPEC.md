@@ -468,9 +468,9 @@ the palette ranks with — kept here so host-side search can rank with the same 
   carries only what the panel renders (`type`/`status` stay `string`: tolerate whatever is on disk);
   **`TodoItem`/`TodoGroupItem`/`TodoPlan`/`TodoArtifact`** + the **`TodoStatus`/`TodoOrigin`/
   `TodoArtifactKind`** unions — the in-chat plan
-  DTOs, **mirrored** from `pi-todos/core` (never imported), carrying the chat's per-session TODO list.
+  DTOs, **mirrored** from `@thinkrail/todos/core` (never imported), carrying the chat's per-session TODO list.
   `TodoGroupItem` additionally carries **`status: TodoGroupStatus`** — the group's *task* lifecycle
-  (`pending`/`active`/`done`), **derived by the host** from the steps (`pi-todos`' `groupStatus`) rather than
+  (`pending`/`active`/`done`), **derived by the host** from the steps (`@thinkrail/todos`' `groupStatus`) rather than
   stored: shipping it means the truth table has one home and no client re-derives it. A `commit`
   artifact additionally carries **`files?: GitFileChange[]`** (path + status + `+/−` — the same rows
   the Changes panel renders at the commit scope) — host-derived from git by `todo.list`'s decoration

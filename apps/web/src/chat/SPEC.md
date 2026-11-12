@@ -1493,7 +1493,7 @@ both message orders. *Rejected:* keeping the modal for non-MCP extensions — ev
   inside a synchronous handler, and one read stays narrowable where repeated `.current` reads do not. A `History`-icon ghost button (`data-testid="history-open"`, `aria-label="Search history"`,
   tooltip of the same name, always rendered next to send) calls the same `openHistory` the global `Ctrl+R` reaches — the tap path
   on mobile, a discoverability affordance on desktop.
-- **Chat TODO plan** — the chat's `pi-todos` list, surfaced in the TODO rail and the Plan page (engine:
+- **Chat TODO plan** — the chat's `@thinkrail/todos` list, surfaced in the TODO rail and the Plan page (engine:
   [[module-pi-todos]]; host read/write: [[submodule-server-todos]]):
   `useChatTodos` (the `todo.*` data hook — fetch + live `session.event` refetch + edits + the add-nudge + the
   **review-snapshot refetch** (the plan's review

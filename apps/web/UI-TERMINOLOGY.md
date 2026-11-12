@@ -336,7 +336,7 @@ Children / associated surfaces:
   (rail body) + `panels/PlanPane.tsx` → `PlanPane` (center-tab page, opened via `openPlan`).
 - **Parent:** Right side-rail tool (`plan`) for the compact TODO list; center editor tab for the
   document-scale Plan page.
-- **Responsibility:** surface the chat's `pi-todos` plan (group-first, status-ordered). The TODO list
+- **Responsibility:** surface the chat's `@thinkrail/todos` plan (group-first, status-ordered). The TODO list
   is a side-rail tool next to Files / Specs / Review.
 
 ---

@@ -1,6 +1,6 @@
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { STORE_DIR, type TodoPlan as StoredPlan, TodoStore } from "pi-todos/core";
+import { STORE_DIR, type TodoPlan as StoredPlan, TodoStore } from "@thinkrail/todos/core";
 
 export interface StoredPlanFile {
 	readonly sessionId: string;

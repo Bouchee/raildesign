@@ -1248,7 +1248,7 @@ a project picker, the prompt hero, and the reused
   optimistic patch and toasts "Couldn't remove the step" via the store's error channel, so a stale
   click (row just became done between render and click) never surfaces as an unhandled rejection.
   The center-tab Plan page does NOT expose this affordance — it is a review-trail surface, and
-  queue manipulation lives on the rail. The agent still manages its own removal through pi-todos'
+  queue manipulation lives on the rail. The agent still manages its own removal through @thinkrail/todos'
   `todo_remove` tool, which bypasses the host guard.
 
   Center-tab Plan renders the session's TODO plan document-scale,

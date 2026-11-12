@@ -93,6 +93,7 @@ import {
 	setTerminalTabsPublisher,
 } from "../terminal";
 import { watchUserThemes } from "../themes";
+import { isTodoToolEnd, maybeAttachChangeArtifacts } from "../todos";
 import { setTurnPublisher, TurnTracker } from "../turns";
 import {
 	setIgnoredPathsResolver,
@@ -855,6 +856,10 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 		publishScoped(WS_CHANNELS.turnChanged, turn, { workspaceId: turn.workspaceId });
 	});
 	setSessionPublisher((payload, workspaceId) => {
+		if (isTodoToolEnd(payload.event))
+			void maybeAttachChangeArtifacts(workspaceId, payload.sessionId).catch((error) =>
+				log.warn("Plan artifact update failed", error),
+			);
 		void turnTracker
 			.observe(payload.sessionId, payload.event)
 			.catch((error) => log.warn("turn snapshot failed", error));

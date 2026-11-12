@@ -11,6 +11,7 @@ const modules = {
 	"packages/contracts": "@thinkrail/contracts",
 	"packages/shared": "@thinkrail/shared",
 	"packages/workflow": "@thinkrail/workflow",
+	"packages/todos": "@thinkrail/todos",
 	"packages/pi-background-commands": "pi-background-commands",
 	"packages/visualize": "@thinkrail/visualize",
 	"packages/ask-user-question": "@thinkrail/ask-user-question",

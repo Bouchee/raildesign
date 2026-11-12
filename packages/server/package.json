@@ -29,7 +29,7 @@
 		"pi-background-commands": "workspace:*",
 		"pi-spec-graph": "workspace:*",
 		"@thinkrail/workflow": "workspace:*",
-		"pi-todos": "workspace:*",
+		"@thinkrail/todos": "workspace:*",
 		"pino": "10.4.0",
 		"pino-pretty": "13.2.0",
 		"pino-roll": "4.0.0",

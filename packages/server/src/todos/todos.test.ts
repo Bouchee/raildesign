@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { Todo, TodoPlan } from "pi-todos/core";
+import type { Todo, TodoPlan } from "@thinkrail/todos/core";
 import { openTodoCount } from "./todos";
 
 let n = 0;

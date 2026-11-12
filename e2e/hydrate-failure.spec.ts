@@ -1,7 +1,7 @@
 import { mkdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
-import { TodoStore } from "pi-todos/core";
+import { TodoStore } from "@thinkrail/todos/core";
 import { defaultWorkspaceRow, enterDefaultWorkspace, openFixtureProject } from "./fixtures/app";
 import { E2E_FIXTURE_REPO } from "./fixtures/paths";
 import { seedWorkspaceSession } from "./fixtures/sessions";

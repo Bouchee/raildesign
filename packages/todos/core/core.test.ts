@@ -7,7 +7,7 @@ import { flatItems, groupStatus, storeRel, type TodoGroup, TodoStore } from "./i
 const SESSION = "sess-test";
 
 function tempRoot(): string {
-	return mkdtempSync(join(tmpdir(), "pi-todos-"));
+	return mkdtempSync(join(tmpdir(), "raildesign-todos-"));
 }
 
 function store(root: string): TodoStore {

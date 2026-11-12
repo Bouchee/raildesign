@@ -174,3 +174,7 @@ capabilities. A projectless chat must select an open repository; the Chats conta
 of model-supplied host-only flags, item-title lookup across all plan collections, and result text that
 respects blocked approvals and the automatic-fix budget. Reviewer execution, tool registration and
 automatic review/fix orchestration remain separately gated; pure parsing is not a review execution.
+
+The session publisher observes `todo_*` completion through `isTodoToolEnd` and schedules
+`maybeAttachChangeArtifacts` for the owning workspace/session. The existing Todo service serializes
+Git artifact reconciliation; failures are logged without failing event publication.

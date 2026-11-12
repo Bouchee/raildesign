@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { TodoStore } from "pi-todos/core";
+import { TodoStore } from "@thinkrail/todos/core";
 import { gitCommitPaths, setSyncGitTimeoutForTests } from "../git";
 import { maybeAttachChangeArtifacts, settleChangeArtifacts } from "./artifacts";
 import { readBaselines } from "./baselines";

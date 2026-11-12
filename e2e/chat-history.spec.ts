@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type WebSocketRoute } from "@playwright/test";
-import { TodoStore } from "pi-todos/core";
+import { TodoStore } from "@thinkrail/todos/core";
 import {
 	defaultWorkspaceRow,
 	enterDefaultWorkspace,

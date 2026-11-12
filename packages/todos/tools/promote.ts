@@ -1,7 +1,16 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { tool } from "@openai/agents";
 import { Type } from "typebox";
-import type { TodoGroup, TodoPromoteFailure } from "../core/index.ts";
-import { consistencyNudge, errorResult, storeFor, textResult, withNudges } from "./shared.ts";
+import { Value } from "typebox/value";
+import type { TodoPromoteFailure } from "../core/index.ts";
+import type { TodoToolServices } from "./shared.ts";
+import {
+	consistencyNudge,
+	errorResult,
+	storeFor,
+	textResult,
+	toolError,
+	withNudges,
+} from "./shared.ts";
 
 const FAILURE_MESSAGES: Record<TodoPromoteFailure, (id: string, title?: string) => string> = {
 	"unknown-id": (id) =>
@@ -27,17 +36,19 @@ const parameters = Type.Object({
 	),
 });
 
-export function registerTodoPromote(pi: ExtensionAPI): void {
-	pi.registerTool<typeof parameters, { group: TodoGroup } | { error: string }>({
+export function createTodoPromote(services: TodoToolServices) {
+	return tool({
 		name: "todo_promote",
-		label: "Todo Promote",
 		description:
 			'Promote one loose item into a group of its own in a single atomic step. The item disappears from the loose lane and a group inherits its id (and its title, unless you pass `title`). No duplicate window and no `todo_remove` dance — this IS the promotion. Use it the moment you take a loose item into work (typically a user-authored ask): one `todo_promote`, then `todo_add` the first step and flip it `in_progress`. The empty group is a valid "task taken, plan forming" state — don\'t backfill it with a synthetic placeholder.',
-		promptSnippet:
-			"todo_promote — turn one loose item into a group of its own (same id, same title), ready for todo_add to append its steps.",
-		parameters,
-		async execute(_callId, params, _signal, _onUpdate, ctx) {
-			const store = storeFor(ctx);
+		strict: false,
+		parameters: { ...parameters, required: parameters.required ?? [], additionalProperties: true },
+		errorFunction: (_context, error, details) =>
+			toolError(services, error, details?.toolCall?.callId),
+		async execute(params) {
+			services.assertActive();
+			if (!Value.Check(parameters, params)) throw new Error("Invalid tool arguments");
+			const store = storeFor(services);
 			const result = store.promote(params.id, params.title);
 			if (!result.ok) {
 				return errorResult(FAILURE_MESSAGES[result.reason](params.id, params.title));

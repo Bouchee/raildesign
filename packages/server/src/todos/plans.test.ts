@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { STORE_DIR } from "pi-todos/core";
+import { STORE_DIR } from "@thinkrail/todos/core";
 import { listStoredPlans } from "./plans";
 
 const root = mkdtempSync(join(tmpdir(), "thinkrail-plans-"));

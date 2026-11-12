@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ReviewComment, ReviewSnapshot, Workspace } from "@thinkrail/contracts";
-import { TodoStore } from "pi-todos/core";
+import { TodoStore } from "@thinkrail/todos/core";
 import { saveWorkspaces } from "../persistence";
 import { markClientStale } from "./todoReview";
 

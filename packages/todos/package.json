@@ -1,0 +1,33 @@
+{
+	"name": "@thinkrail/todos",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./index.ts",
+		"./index.ts": "./index.ts",
+		"./core": "./core/index.ts",
+		"./package.json": "./package.json"
+	},
+	"description": "SDK function tools and application data for conversation plans.",
+	"keywords": [
+		"agents-sdk",
+		"todos"
+	],
+	"scripts": {
+		"typecheck": "tsc --noEmit",
+		"test": "bun test"
+	},
+	"devDependencies": {
+		"@types/bun": "catalog:",
+		"typescript": "catalog:"
+	},
+	"dependencies": {
+		"@openai/agents": "catalog:",
+		"@thinkrail/shared": "workspace:*",
+		"typebox": "catalog:"
+	},
+	"skills": [
+		"./skills"
+	]
+}

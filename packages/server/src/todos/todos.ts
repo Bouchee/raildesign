@@ -13,7 +13,7 @@ import {
 	type Todo as StoredItem,
 	type TodoPlan as StoredPlan,
 	TodoStore,
-} from "pi-todos/core";
+} from "@thinkrail/todos/core";
 import { suggestPlanSummary } from "../assist";
 import { gitStatus, listCommits, readCommitSubject, resolveListedCommit } from "../git";
 import { getWorkspace, isChatWorkspace } from "../workspaces";

@@ -1,12 +1,15 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { tool } from "@openai/agents";
 import { Type } from "typebox";
+import { Value } from "typebox/value";
 import type { Todo, TodoInput } from "../core/index.ts";
+import type { TodoToolServices } from "./shared.ts";
 import {
 	consistencyNudge,
 	errorResult,
 	formatTodo,
 	storeFor,
 	textResult,
+	toolError,
 	withNudges,
 } from "./shared.ts";
 
@@ -32,17 +35,19 @@ const parameters = Type.Object({
 	),
 });
 
-export function registerTodoAdd(pi: ExtensionAPI): void {
-	pi.registerTool<typeof parameters, { todo: Todo } | { error: string }>({
+export function createTodoAdd(services: TodoToolServices) {
+	return tool({
 		name: "todo_add",
-		label: "Todo Add",
 		description:
 			"Add one item to this chat's TODO plan without touching the rest. Pass `group` (the task it belongs to — created if new) to append it as that task's next step, `after` (the id of an existing step **inside a task**) to insert it right after that step, or omit both to drop a raw item into the loose queue — the shared pre-work scratchpad you and the user both write to. Loose is for unprocessed notes/kernels only; when you actually take a loose item into work you promote it into a group first (see the skill). An `after` pointing at a loose item is rejected. Prefer this over todo_write for a single addition, which never disturbs existing (esp. done) items.",
-		promptSnippet:
-			"todo_add — add one step (into a `group`, `after` an existing step, or loose when both are omitted — a shared scratchpad with the user; promote before working it).",
-		parameters,
-		async execute(_callId, params, _signal, _onUpdate, ctx) {
-			const store = storeFor(ctx);
+		strict: false,
+		parameters: { ...parameters, required: parameters.required ?? [], additionalProperties: true },
+		errorFunction: (_context, error, details) =>
+			toolError(services, error, details?.toolCall?.callId),
+		async execute(params) {
+			services.assertActive();
+			if (!Value.Check(parameters, params)) throw new Error("Invalid tool arguments");
+			const store = storeFor(services);
 			if (params.after !== undefined) {
 				const plan = store.read();
 				if (!plan.groups.some((g) => g.todos.some((t) => t.id === params.after))) {

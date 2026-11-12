@@ -84,7 +84,7 @@ function bundledRoots(options: SkillLoadOptions): readonly string[] {
 	if (bundledSkillsDir === undefined) {
 		const require = createRequire(import.meta.url);
 		hostPaths = [
-			...["pi-spec-graph", "@thinkrail/workflow", "pi-todos"].map((name) =>
+			...["pi-spec-graph", "@thinkrail/workflow", "@thinkrail/todos"].map((name) =>
 				join(dirname(require.resolve(`${name}/package.json`)), "skills"),
 			),
 			fileURLToPath(new URL("../../skills", import.meta.url)),

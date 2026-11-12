@@ -1,6 +1,6 @@
 import type { GitFileChange, SessionEvent } from "@thinkrail/contracts";
 import { WORKSPACE_INTERNAL_DIR } from "@thinkrail/shared/paths";
-import { type TodoArtifact, type TodoPlan, TodoStore } from "pi-todos/core";
+import { type TodoArtifact, type TodoPlan, TodoStore } from "@thinkrail/todos/core";
 import {
 	gitCommitPaths,
 	gitHeadSha,

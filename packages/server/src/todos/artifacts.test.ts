@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { GitFileChange, Workspace } from "@thinkrail/contracts";
 import { WORKSPACE_TODOS_DIR } from "@thinkrail/shared/paths";
-import { STORE_DIR, storeRel, TodoStore } from "pi-todos/core";
+import { STORE_DIR, storeRel, TodoStore } from "@thinkrail/todos/core";
 import { saveWorkspaces } from "../persistence";
 import {
 	enqueueTodoMutation,
@@ -25,7 +25,7 @@ import { putReviewRecord, readReviewRecords } from "./reviews";
 const SESSION = "sess-artifacts";
 const STORE_PATH = storeRel(SESSION);
 
-test("pi-todos STORE_DIR mirrors the shared WORKSPACE_TODOS_DIR", async () => {
+test("@thinkrail/todos STORE_DIR mirrors the shared WORKSPACE_TODOS_DIR", async () => {
 	expect(STORE_DIR).toBe(WORKSPACE_TODOS_DIR);
 });
 

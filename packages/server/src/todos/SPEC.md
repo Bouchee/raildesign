@@ -14,9 +14,9 @@ tags: [todos]
 Serve the in-chat TODO plan for a chat session, mapped to the wire DTOs. The list is **scoped by
 `sessionId`** (one JSON file per session under the workspace's worktree, in the ephemeral context scratch
 dir `.raildesign/context/todos/<sessionId>.json`), not the worktree. Read-modify-write on demand: every call re-reads
-through `pi-todos`' pi-free `TodoStore`, so the agent's in-session `todo_*` writes and the user's UI edits
+through `@thinkrail/todos`' engine-independent `TodoStore`, so the agent's in-session `todo_*` writes and the user's UI edits
 converge on the same file with no staleness window. `listTodos` also **decorates each group with its
-derived `status`** (`pi-todos`' `groupStatus`) on the way out: the rule belongs to the package that owns plan
+derived `status`** (`@thinkrail/todos`' `groupStatus`) on the way out: the rule belongs to the package that owns plan
 semantics, and shipping the result keeps `apps/web` — which may import `contracts` only — from carrying a
 second copy of it.
 
@@ -35,7 +35,7 @@ wire response stays a bare `TodoItem` — the UI re-reads the whole plan on chan
 with the next `todo.list`.
 
 This module does **not** push: a user edit isn't broadcast to other clients. The acting client updates
-optimistically; a second viewer reconciles on the next `pi.event`-driven refetch. Fine for a single-owner
+optimistically; a second viewer reconciles on the next `session.event`-driven refetch. Fine for a single-owner
 host (the chat-plan UX this feeds: [[submodule-web-chat]]'s "Chat TODO plan").
 
 **Change artifacts (`artifacts.ts`) — a commit-based review map.** Status stays agent-owned, but the host
@@ -53,7 +53,7 @@ plan/sidecar writer** — the UI's `todo.add` / `todo.update` and `session.delet
 enqueue behind any in-flight reconcile (`enqueueTodoMutation`) — a reconcile reads plan + baselines,
 awaits git, and ends with a whole-map baseline write; an unqueued write landing inside that window
 would be resurrected by the stale pass. Agent-side
-`todo_*` plan writes can't be queued (they happen inside pi), so a reconcile fingerprints both the plan
+`todo_*` plan writes can't be queued (they happen inside SDK tools), so a reconcile fingerprints both the plan
 and persisted baseline sidecar it read and re-checks the authoritative fingerprint before each
 corresponding write. Drift aborts that stale pass before it can open a too-late baseline, commit a
 reopened item, erase an externally captured/shared window, or overwrite newer artifacts; the
@@ -69,7 +69,7 @@ restart mid-item changes nothing; `head` is the range base for **in-window commi
 A window opening while **another chat** already has one records `shared: true` and marks that other
 window shared too (`markOtherSessionWindowsShared`) — the flag is **sticky**, because "was this window
 exclusive for its whole life?" is what the gate needs and can't be re-derived once the other closed.
-(Two items of *one* plan can't overlap: `pi-todos` keeps exactly one item `in_progress` and a demoted
+(Two items of *one* plan can't overlap: `@thinkrail/todos` keeps exactly one item `in_progress` and a demoted
 item's window is dropped — pinned by a test, since the gate leans on it.) **Windows never outlive their
 owner**: a baseline whose item has vanished from the plan is pruned at the top of every reconcile,
 and `session.delete` removes the chat's whole sidecar (`removeSessionTodoWindows`) — an orphan would read
@@ -157,7 +157,7 @@ as a permanently open foreign window and force every sibling chat into the fallb
 
 The host's own on-disk state (anything under `WORKSPACE_INTERNAL_DIR` = `.raildesign/…`, e.g. the todos
 JSON under `context/todos/`) is filtered out of every change set — writing a todo shows up in `git status`
-but is never a change the step *produced*. The pi-free `TodoStore` never touches git; `commit`/`change`
+but is never a change the step *produced*. The engine-independent `TodoStore` never touches git; `commit`/`change`
 are host-only, while the agent attaches `file`/`spec` itself through the `todo_*` tools (see
 [[module-pi-todos]]). Known limitations (accepted): an agent that commits *itself* mid-item is handled by
 in-window commit adoption above (its commits attach to the step) **only for an exclusive, sole window
@@ -202,7 +202,7 @@ host's own todo-commits for a plan that was since cleared). So the same pass als
 `done` `TodoItem`** — `id: "commit:<sha>"`, `origin: "adopted"`, `title` = the commit subject, a single
 `commit` artifact decorated with the same per-sha `files` list, and the `review` decoration read from the
 sidecar keyed by that id. These items are **never written to the store** — the agent's plan JSON stays
-the agent's plan (the invariant), and `"adopted"` never reaches `pi-todos`; they are recomputed on every
+the agent's plan (the invariant), and `"adopted"` never reaches `@thinkrail/todos`; they are recomputed on every
 read. Lifecycle is free: `commit:<sha>` is stable, a rebased-away commit's id simply vanishes (its
 sidecar record goes inert, as any orphan does), and a loose commit later claimed by a real item drops out
 automatically (now owned). A commit owned by *another* session's plan item appears here too — accepted
@@ -325,7 +325,7 @@ every unsettled reviewable item on the plan's serial chain (`host/planReviewQueu
 state here (see host/SPEC.md).
 
 **The read barrier.** `listTodos` first awaits the workspace's in-flight reconciles
-(`settleChangeArtifacts` — the same per-workspace chain). A client's only refresh signal is the `pi.event`
+(`settleChangeArtifacts` — the same per-workspace chain). A client's only refresh signal is the `session.event`
 a `todo_*` tool end publishes, and the reconcile is enqueued *synchronously with that publish* but settles
 later (it commits) — so without the barrier a commit slower than the client's refetch debounce would hand
 back a `done` item with no change set, leaving an open plan page promising an affordance it doesn't show
@@ -359,8 +359,8 @@ before the already-enqueued replacement pass has reconciled the current plan.
   `gitCommitPaths` — the per-done-item delta commit; `gitHeadSha` — the baseline's head;
   `listCommits` — the `base..HEAD` enumeration behind `adoptedCommits` + the review resolver's
   synthetic-item reconstruction);
-  `contracts` (DTOs + `PiEvent` for `isTodoToolEnd`); `@thinkrail/shared/paths` (`WORKSPACE_INTERNAL_DIR`
-  — the app-state prefix filtered out of change sets); **`pi-todos/core`** (the pi-free read/write model — a sanctioned host-side
+  `contracts` (DTOs + `SessionEvent` for `isTodoToolEnd`); `@thinkrail/shared/paths` (`WORKSPACE_INTERNAL_DIR`
+  — the app-state prefix filtered out of change sets); **`@thinkrail/todos/core`** (the engine-independent read/write model — a sanctioned host-side
   value-import of the extension package, the same pattern as `spec` → `pi-spec-graph/core`); `log`.
-- **Forbidden:** `host`; sibling features other than `workspaces` + `git` + `log`; `pi-todos`' extension entry or
+- **Forbidden:** `host`; sibling features other than `workspaces` + `git` + `log`; `@thinkrail/todos`' tool entry or
   `tools/` (pi-coupled); any pi package.

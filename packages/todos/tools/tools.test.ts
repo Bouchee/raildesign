@@ -2,38 +2,46 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type {
-	AgentToolResult,
-	ExtensionAPI,
-	ExtensionToolContext,
-	ToolDefinition,
-} from "@earendil-works/pi-coding-agent";
-import { createReadTool } from "@earendil-works/pi-coding-agent";
+import { RunContext } from "@openai/agents";
+import type { ToolResult } from "@thinkrail/shared/toolOutput";
 import { TODO_STATUSES, TodoStore } from "../core/index.ts";
-import { registerTodoTools } from "./index.ts";
+import { createTodoTools } from "./index.ts";
 
-const tools = new Map<string, ToolDefinition>();
-registerTodoTools({
-	registerTool(tool: ToolDefinition) {
-		tools.set(tool.name, tool);
-	},
-} as unknown as ExtensionAPI);
+const tools = new Map(
+	createTodoTools({
+		cwd: "",
+		assertActive: () => {},
+		markToolFailed: () => {},
+		sessionId: "sess-test",
+	}).map((tool) => [tool.name, tool]),
+);
 
-function run(
+async function run(
 	name: string,
 	params: Record<string, unknown>,
 	cwd: string,
-): Promise<AgentToolResult<unknown>> {
-	const tool = tools.get(name);
-	if (!tool) throw new Error(`missing tool: ${name}`);
-	return tool.execute("call-1", params, undefined, undefined, {
+): Promise<ToolResult<unknown>> {
+	let failed = false;
+	const tool = createTodoTools({
 		cwd,
-		sessionManager: { getSessionId: () => "sess-test" },
-	} as unknown as ExtensionToolContext);
+		assertActive: () => {},
+		markToolFailed: () => {
+			failed = true;
+		},
+		sessionId: "sess-test",
+	}).find((candidate) => candidate.name === name);
+	if (!tool) throw new Error(`missing tool: ${name}`);
+	const output = await tool.invoke(new RunContext({}), JSON.stringify(params));
+	return typeof output === "string"
+		? { content: [{ type: "text", text: output }], details: {}, isError: failed }
+		: output;
 }
 
-function isError(result: AgentToolResult<unknown>): boolean {
-	return typeof result.details === "object" && result.details !== null && "error" in result.details;
+function isError(result: ToolResult<unknown>): boolean {
+	return (
+		result.isError === true ||
+		(typeof result.details === "object" && result.details !== null && "error" in result.details)
+	);
 }
 
 function paramEnum(toolName: string, prop: string): readonly string[] {
@@ -43,7 +51,7 @@ function paramEnum(toolName: string, prop: string): readonly string[] {
 	return schema.properties?.[prop]?.enum ?? [];
 }
 
-function text(result: AgentToolResult<unknown>): string {
+function text(result: ToolResult<unknown>): string {
 	return result.content
 		.filter((block) => block.type === "text")
 		.map((block) => block.text)
@@ -51,7 +59,7 @@ function text(result: AgentToolResult<unknown>): string {
 }
 
 test("todo_list pages a large plan without losing, repeating or changing items", async () => {
-	const cwd = mkdtempSync(join(tmpdir(), "pi-todos-pages-"));
+	const cwd = mkdtempSync(join(tmpdir(), "raildesign-todos-pages-"));
 	try {
 		const store = new TodoStore(cwd, "sess-test");
 		const plan = store.replaceAll({
@@ -84,7 +92,7 @@ test("todo_list pages a large plan without losing, repeating or changing items",
 });
 
 test("a completion preserves oversized summary output without repeating the mutation", async () => {
-	const cwd = mkdtempSync(join(tmpdir(), "pi-todos-output-"));
+	const cwd = mkdtempSync(join(tmpdir(), "raildesign-todos-output-"));
 	let path: string | undefined;
 	try {
 		const store = new TodoStore(cwd, "sess-test");
@@ -99,7 +107,15 @@ test("a completion preserves oversized summary output without repeating the muta
 		if (!path) throw new Error("missing full output");
 		const afterMutation = store.read();
 		expect(readFileSync(path, "utf8")).toContain(summary.trim());
-		const range = await createReadTool(cwd).execute("range", { path, offset: 3000, limit: 2 });
+		const range = {
+			content: [
+				{
+					type: "text" as const,
+					text: readFileSync(path, "utf8").split("\n").slice(2999, 3001).join("\n"),
+				},
+			],
+			details: {},
+		};
 		expect(text(range)).toContain("Previous work 🧪");
 		expect(Buffer.byteLength(text(range))).toBeLessThanOrEqual(50 * 1024);
 		expect(store.read()).toEqual(afterMutation);
@@ -116,7 +132,7 @@ test("a completion preserves oversized summary output without repeating the muta
 });
 
 test("errors keep their model-facing failure status when the message is oversized", async () => {
-	const cwd = mkdtempSync(join(tmpdir(), "pi-todos-errors-"));
+	const cwd = mkdtempSync(join(tmpdir(), "raildesign-todos-errors-"));
 	try {
 		for (const size of [7, 60000]) {
 			const result = await run("todo_update", { id: "x".repeat(size) }, cwd);
@@ -137,7 +153,7 @@ test("errors keep their model-facing failure status when the message is oversize
 });
 
 test("todo pagination keeps the status filter and handles empty or invalid ranges", async () => {
-	const cwd = mkdtempSync(join(tmpdir(), "pi-todos-ranges-"));
+	const cwd = mkdtempSync(join(tmpdir(), "raildesign-todos-ranges-"));
 	try {
 		const store = new TodoStore(cwd, "sess-test");
 		store.replaceAll({
@@ -176,7 +192,7 @@ test("todo pagination keeps the status filter and handles empty or invalid range
 		expect(text(await run("todo_list", { offset: 9999 }, cwd))).toContain("No more plan lines");
 		const invalid = await run("todo_list", { offset: -1 }, cwd);
 		expect(isError(invalid)).toBe(true);
-		expect(text(invalid)).toBe("Error: Use a nonnegative integer offset.");
+		expect(text(invalid)).toBe("Error: Invalid tool arguments");
 	} finally {
 		rmSync(cwd, { recursive: true, force: true });
 	}
@@ -188,7 +204,7 @@ test("todo_list exposes no page-size parameter", () => {
 });
 
 test("a default read of a long plan includes the current task, loose queue and nudge", async () => {
-	const cwd = mkdtempSync(join(tmpdir(), "pi-todos-long-plan-"));
+	const cwd = mkdtempSync(join(tmpdir(), "raildesign-todos-long-plan-"));
 	try {
 		const store = new TodoStore(cwd, "sess-test");
 		store.replaceAll({
@@ -216,7 +232,7 @@ test("a default read of a long plan includes the current task, loose queue and n
 });
 
 test("TODO pages reserve notice lines within Pi's line limit", async () => {
-	const cwd = mkdtempSync(join(tmpdir(), "pi-todos-line-cap-"));
+	const cwd = mkdtempSync(join(tmpdir(), "raildesign-todos-line-cap-"));
 	try {
 		const store = new TodoStore(cwd, "sess-test");
 		store.replaceAll({
@@ -238,7 +254,7 @@ test("TODO pages reserve notice lines within Pi's line limit", async () => {
 });
 
 test("a single enormous plan line still exposes continuation and its file can expire", async () => {
-	const cwd = mkdtempSync(join(tmpdir(), "pi-todos-long-line-"));
+	const cwd = mkdtempSync(join(tmpdir(), "raildesign-todos-long-line-"));
 	let path: string | undefined;
 	try {
 		const store = new TodoStore(cwd, "sess-test");
@@ -253,8 +269,9 @@ test("a single enormous plan line still exposes continuation and its file can ex
 		if (!path) throw new Error("missing full output");
 		expect(readFileSync(path, "utf8")).toContain(title);
 		expect(text(await run("todo_list", { offset: 1 }, cwd))).toContain("Next item");
-		rmSync(path);
-		await expect(createReadTool(cwd).execute("missing", { path })).rejects.toThrow();
+		const expiredPath = path;
+		rmSync(expiredPath);
+		expect(() => readFileSync(expiredPath, "utf8")).toThrow();
 		expect(store.read().todos).toHaveLength(2);
 	} finally {
 		if (path) rmSync(dirname(path), { recursive: true, force: true });
@@ -263,7 +280,7 @@ test("a single enormous plan line still exposes continuation and its file can ex
 });
 
 test("failed output capture reports unavailable without retrying a successful mutation", async () => {
-	const cwd = mkdtempSync(join(tmpdir(), "pi-todos-capture-failure-"));
+	const cwd = mkdtempSync(join(tmpdir(), "raildesign-todos-capture-failure-"));
 	const keys = ["TMPDIR", "TMP", "TEMP"] as const;
 	const original = keys.map((key) => process.env[key]);
 	try {
@@ -311,10 +328,10 @@ test("registers the seven todo tools", () => {
 });
 
 test("todo_promote turns a loose user ask into a group of its own (same id, same title) in one atomic call", async () => {
-	const cwd = mkdtempSync(join(tmpdir(), "pi-todos-tools-"));
+	const cwd = mkdtempSync(join(tmpdir(), "raildesign-todos-tools-"));
 	try {
 		const mine = new TodoStore(cwd, "sess-test").add({ title: "fix auth bug", origin: "user" });
-		const promoted = (await run("todo_promote", { id: mine.id }, cwd)) as AgentToolResult<{
+		const promoted = (await run("todo_promote", { id: mine.id }, cwd)) as ToolResult<{
 			group: { id: string; title: string; todos: unknown[] };
 		}>;
 		expect(isError(promoted)).toBe(false);
@@ -331,7 +348,7 @@ test("todo_promote turns a loose user ask into a group of its own (same id, same
 			"todo_add",
 			{ title: "reproduce the bug", group: "fix auth bug" },
 			cwd,
-		)) as AgentToolResult<{ todo: { id: string } }>;
+		)) as ToolResult<{ todo: { id: string } }>;
 		await run("todo_update", { id: first.details.todo.id, status: "in_progress" }, cwd);
 		const live = new TodoStore(cwd, "sess-test").read();
 		expect(live.groups[0]?.todos).toHaveLength(1);
@@ -342,14 +359,14 @@ test("todo_promote turns a loose user ask into a group of its own (same id, same
 });
 
 test("todo_promote accepts a title override and errors on an unknown or already-grouped id", async () => {
-	const cwd = mkdtempSync(join(tmpdir(), "pi-todos-tools-"));
+	const cwd = mkdtempSync(join(tmpdir(), "raildesign-todos-tools-"));
 	try {
 		const mine = new TodoStore(cwd, "sess-test").add({ title: "raw ask", origin: "user" });
 		const renamed = (await run(
 			"todo_promote",
 			{ id: mine.id, title: "Fix the auth bug" },
 			cwd,
-		)) as AgentToolResult<{ group: { title: string } }>;
+		)) as ToolResult<{ group: { title: string } }>;
 		expect(renamed.details.group.title).toBe("Fix the auth bug");
 
 		expect(isError(await run("todo_promote", { id: "t_nope" }, cwd))).toBe(true);
@@ -358,7 +375,7 @@ test("todo_promote accepts a title override and errors on an unknown or already-
 			"todo_add",
 			{ title: "step", group: "Fix the auth bug" },
 			cwd,
-		)) as AgentToolResult<{ todo: { id: string } }>;
+		)) as ToolResult<{ todo: { id: string } }>;
 		const refused = await run("todo_promote", { id: step.details.todo.id }, cwd);
 		expect(isError(refused)).toBe(true);
 	} finally {
@@ -372,31 +389,27 @@ test("finite-vocabulary param schemas derive their enum from the core tuples", (
 });
 
 test("add → list → update → remove round-trips through the store", async () => {
-	const cwd = mkdtempSync(join(tmpdir(), "pi-todos-tools-"));
+	const cwd = mkdtempSync(join(tmpdir(), "raildesign-todos-tools-"));
 	try {
-		const added = (await run(
-			"todo_add",
-			{ title: "Ship it", group: "Task" },
-			cwd,
-		)) as AgentToolResult<{
+		const added = (await run("todo_add", { title: "Ship it", group: "Task" }, cwd)) as ToolResult<{
 			todo: { id: string; status: string };
 		}>;
 		const id = added.details.todo.id;
 		expect(added.details.todo.status).toBe("pending");
 
-		const listed = (await run("todo_list", {}, cwd)) as AgentToolResult<{
+		const listed = (await run("todo_list", {}, cwd)) as ToolResult<{
 			plan: { groups: { todos: unknown[] }[] };
 		}>;
 		expect(listed.details.plan.groups[0]?.todos).toHaveLength(1);
 
-		const updated = (await run("todo_update", { id, status: "done" }, cwd)) as AgentToolResult<{
+		const updated = (await run("todo_update", { id, status: "done" }, cwd)) as ToolResult<{
 			todo: { status: string };
 		}>;
 		expect(updated.details.todo.status).toBe("done");
 
 		const removed = await run("todo_remove", { id }, cwd);
 		expect(isError(removed)).toBe(false);
-		const listedAfter = (await run("todo_list", {}, cwd)) as AgentToolResult<{
+		const listedAfter = (await run("todo_list", {}, cwd)) as ToolResult<{
 			plan: { todos: unknown[]; groups: unknown[] };
 		}>;
 		expect(listedAfter.details.plan.todos).toHaveLength(0);
@@ -407,7 +420,7 @@ test("add → list → update → remove round-trips through the store", async (
 });
 
 test("todo_update on an unknown id returns an error result", async () => {
-	const cwd = mkdtempSync(join(tmpdir(), "pi-todos-tools-"));
+	const cwd = mkdtempSync(join(tmpdir(), "raildesign-todos-tools-"));
 	try {
 		expect(isError(await run("todo_update", { id: "missing", status: "done" }, cwd))).toBe(true);
 		expect(isError(await run("todo_remove", { id: "missing" }, cwd))).toBe(true);
@@ -417,7 +430,7 @@ test("todo_update on an unknown id returns an error result", async () => {
 });
 
 test("todo_write lays out a groups-only plan (no loose lane for the agent)", async () => {
-	const cwd = mkdtempSync(join(tmpdir(), "pi-todos-tools-"));
+	const cwd = mkdtempSync(join(tmpdir(), "raildesign-todos-tools-"));
 	try {
 		await run("todo_add", { title: "old item", group: "Old" }, cwd);
 		const written = (await run(
@@ -429,7 +442,7 @@ test("todo_write lays out a groups-only plan (no loose lane for the agent)", asy
 				],
 			},
 			cwd,
-		)) as AgentToolResult<{ plan: { todos: unknown[]; groups: { title: string }[] } }>;
+		)) as ToolResult<{ plan: { todos: unknown[]; groups: { title: string }[] } }>;
 		expect(written.details.plan.todos).toHaveLength(0);
 		expect(written.details.plan.groups.map((g) => g.title)).toEqual(["Import", "Export"]);
 		const schema = tools.get("todo_write")?.parameters as { properties?: Record<string, unknown> };
@@ -440,14 +453,14 @@ test("todo_write lays out a groups-only plan (no loose lane for the agent)", asy
 });
 
 test("todo_write reconciles a re-listed plan without resetting progress or nudging", async () => {
-	const cwd = mkdtempSync(join(tmpdir(), "pi-todos-tools-"));
+	const cwd = mkdtempSync(join(tmpdir(), "raildesign-todos-tools-"));
 	try {
 		await run(
 			"todo_write",
 			{ groups: [{ title: "Task", todos: [{ title: "step a" }, { title: "step b" }] }] },
 			cwd,
 		);
-		const listed = (await run("todo_list", {}, cwd)) as AgentToolResult<{
+		const listed = (await run("todo_list", {}, cwd)) as ToolResult<{
 			plan: { groups: { todos: { id: string; title: string }[] }[] };
 		}>;
 		const stepA = listed.details.plan.groups[0]?.todos.find((t) => t.title === "step a");
@@ -465,7 +478,7 @@ test("todo_write reconciles a re-listed plan without resetting progress or nudgi
 				],
 			},
 			cwd,
-		)) as AgentToolResult<{
+		)) as ToolResult<{
 			plan: { groups: { todos: { id: string; title: string; status: string }[] }[] };
 		}>;
 		const reconciled = replan.details.plan.groups[0]?.todos ?? [];
@@ -479,9 +492,9 @@ test("todo_write reconciles a re-listed plan without resetting progress or nudgi
 });
 
 test("todo_add drops a loose item when both group and after are omitted (the shared raw-input queue)", async () => {
-	const cwd = mkdtempSync(join(tmpdir(), "pi-todos-tools-"));
+	const cwd = mkdtempSync(join(tmpdir(), "raildesign-todos-tools-"));
 	try {
-		const loose = (await run("todo_add", { title: "raw note" }, cwd)) as AgentToolResult<{
+		const loose = (await run("todo_add", { title: "raw note" }, cwd)) as ToolResult<{
 			todo: { id: string; origin: string };
 		}>;
 		expect(isError(loose)).toBe(false);
@@ -496,14 +509,14 @@ test("todo_add drops a loose item when both group and after are omitted (the sha
 });
 
 test("todo_add with after inserts mid-group (after wins over group)", async () => {
-	const cwd = mkdtempSync(join(tmpdir(), "pi-todos-tools-"));
+	const cwd = mkdtempSync(join(tmpdir(), "raildesign-todos-tools-"));
 	try {
-		const first = (await run("todo_add", { title: "one", group: "Task" }, cwd)) as AgentToolResult<{
+		const first = (await run("todo_add", { title: "one", group: "Task" }, cwd)) as ToolResult<{
 			todo: { id: string };
 		}>;
 		await run("todo_add", { title: "three", group: "Task" }, cwd);
 		await run("todo_add", { title: "two", after: first.details.todo.id, group: "Elsewhere" }, cwd);
-		const listed = (await run("todo_list", {}, cwd)) as AgentToolResult<{
+		const listed = (await run("todo_list", {}, cwd)) as ToolResult<{
 			plan: { groups: { title: string; todos: { title: string }[] }[] };
 		}>;
 		expect(listed.details.plan.groups.map((g) => g.title)).toEqual(["Task"]);
@@ -518,12 +531,12 @@ test("todo_add with after inserts mid-group (after wins over group)", async () =
 });
 
 test("todo_update reports paused items and suggests the next step after done", async () => {
-	const cwd = mkdtempSync(join(tmpdir(), "pi-todos-tools-"));
+	const cwd = mkdtempSync(join(tmpdir(), "raildesign-todos-tools-"));
 	try {
-		const a = (await run("todo_add", { title: "step a", group: "Task" }, cwd)) as AgentToolResult<{
+		const a = (await run("todo_add", { title: "step a", group: "Task" }, cwd)) as ToolResult<{
 			todo: { id: string };
 		}>;
-		const b = (await run("todo_add", { title: "step b", group: "Task" }, cwd)) as AgentToolResult<{
+		const b = (await run("todo_add", { title: "step b", group: "Task" }, cwd)) as ToolResult<{
 			todo: { id: string };
 		}>;
 		await run("todo_update", { id: a.details.todo.id, status: "in_progress" }, cwd);
@@ -532,7 +545,7 @@ test("todo_update reports paused items and suggests the next step after done", a
 			"todo_update",
 			{ id: b.details.todo.id, status: "in_progress" },
 			cwd,
-		)) as AgentToolResult<{ paused: { id: string }[] }>;
+		)) as ToolResult<{ paused: { id: string }[] }>;
 		expect(flipped.details.paused.map((t) => t.id)).toEqual([a.details.todo.id]);
 		expect(text(flipped)).toContain("paused:");
 
@@ -544,7 +557,7 @@ test("todo_update reports paused items and suggests the next step after done", a
 });
 
 test("todo_list renders groups first, then the loose queue last (a mid-task add queues after the current work)", async () => {
-	const cwd = mkdtempSync(join(tmpdir(), "pi-todos-tools-"));
+	const cwd = mkdtempSync(join(tmpdir(), "raildesign-todos-tools-"));
 	try {
 		await run("todo_add", { title: "agent step", group: "Refactor" }, cwd);
 		new TodoStore(cwd, "sess-test").add({ title: "user ask", origin: "user" });
@@ -562,13 +575,9 @@ test("todo_list renders groups first, then the loose queue last (a mid-task add 
 });
 
 test("todo_list renders group-first with derived status + progress, and nudges when nothing is in progress", async () => {
-	const cwd = mkdtempSync(join(tmpdir(), "pi-todos-tools-"));
+	const cwd = mkdtempSync(join(tmpdir(), "raildesign-todos-tools-"));
 	try {
-		const a = (await run(
-			"todo_add",
-			{ title: "step a", group: "Fix login" },
-			cwd,
-		)) as AgentToolResult<{
+		const a = (await run("todo_add", { title: "step a", group: "Fix login" }, cwd)) as ToolResult<{
 			todo: { id: string };
 		}>;
 		await run("todo_add", { title: "step b", group: "Fix login" }, cwd);
@@ -591,7 +600,7 @@ test("todo_list renders group-first with derived status + progress, and nudges w
 });
 
 test("todo_add refuses an `after` anchor pointing at a loose item (promote, don’t grow siblings)", async () => {
-	const cwd = mkdtempSync(join(tmpdir(), "pi-todos-tools-"));
+	const cwd = mkdtempSync(join(tmpdir(), "raildesign-todos-tools-"));
 	try {
 		const mine = new TodoStore(cwd, "sess-test").add({ title: "user ask", origin: "user" });
 		const rejected = await run("todo_add", { title: "related step", after: mine.id }, cwd);
@@ -612,13 +621,13 @@ test("todo_add refuses an `after` anchor pointing at a loose item (promote, don�
 });
 
 test("done-with-summary stores it and the last done nudges todo_plan_summary; the tool sets the plan note", async () => {
-	const cwd = mkdtempSync(join(tmpdir(), "pi-todos-tools-"));
+	const cwd = mkdtempSync(join(tmpdir(), "raildesign-todos-tools-"));
 	try {
 		const added = (await run(
 			"todo_add",
 			{ title: "Implement handling", group: "Task" },
 			cwd,
-		)) as AgentToolResult<{ todo: { id: string } }>;
+		)) as ToolResult<{ todo: { id: string } }>;
 		const done = await run(
 			"todo_update",
 			{ id: added.details.todo.id, status: "done", summary: "Added throttling. Tests pass." },
@@ -640,13 +649,13 @@ test("done-with-summary stores it and the last done nudges todo_plan_summary; th
 });
 
 test("re-completing a plan that gained new work echoes the surviving summary and asks to extend it", async () => {
-	const cwd = mkdtempSync(join(tmpdir(), "pi-todos-tools-"));
+	const cwd = mkdtempSync(join(tmpdir(), "raildesign-todos-tools-"));
 	try {
 		const first = (await run(
 			"todo_add",
 			{ title: "First step", group: "Task" },
 			cwd,
-		)) as AgentToolResult<{ todo: { id: string } }>;
+		)) as ToolResult<{ todo: { id: string } }>;
 		await run("todo_update", { id: first.details.todo.id, status: "done" }, cwd);
 		await run("todo_plan_summary", { summary: "First step shipped." }, cwd);
 
@@ -655,7 +664,7 @@ test("re-completing a plan that gained new work echoes the surviving summary and
 			"todo_add",
 			{ title: "Second step", group: "Task" },
 			cwd,
-		)) as AgentToolResult<{ todo: { id: string } }>;
+		)) as ToolResult<{ todo: { id: string } }>;
 		const done = await run("todo_update", { id: second.details.todo.id, status: "done" }, cwd);
 		const text = done.content[0]?.type === "text" ? done.content[0].text : "";
 		// The nudge echoes the surviving note and asks to extend it, not rewrite from scratch.
@@ -664,4 +673,24 @@ test("re-completing a plan that gained new work echoes the surviving summary and
 	} finally {
 		rmSync(cwd, { recursive: true, force: true });
 	}
+});
+
+test("SDK todos tools reject a revoked run before reading or writing", async () => {
+	const failures: (string | undefined)[] = [];
+	const tool = createTodoTools({
+		cwd: "/missing-worktree",
+		assertActive() {
+			throw new Error("Run revoked");
+		},
+		markToolFailed(callId) {
+			failures.push(callId);
+		},
+		sessionId: "sess-test",
+	})[0];
+	if (!tool) throw new Error("Missing tool");
+	const output = await tool.invoke(new RunContext({}), JSON.stringify({ pattern: "test" }), {
+		toolCall: { type: "function_call", callId: "todo-failed", name: tool.name, arguments: "{}" },
+	});
+	expect(output).toBe("Error: Run revoked");
+	expect(failures).toEqual(["todo-failed"]);
 });

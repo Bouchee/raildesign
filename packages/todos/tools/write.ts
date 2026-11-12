@@ -1,12 +1,15 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { tool } from "@openai/agents";
 import { Type } from "typebox";
-import { countItems, TODO_STATUSES, type TodoPlan, type WritePlan } from "../core/index.ts";
+import { Value } from "typebox/value";
+import { countItems, TODO_STATUSES, type WritePlan } from "../core/index.ts";
+import type { TodoToolServices } from "./shared.ts";
 import {
 	consistencyNudge,
 	formatPlan,
 	storeFor,
 	stringEnum,
 	textResult,
+	toolError,
 	withNudges,
 } from "./shared.ts";
 
@@ -35,18 +38,20 @@ const parameters = Type.Object({
 	}),
 });
 
-export function registerTodoWrite(pi: ExtensionAPI): void {
-	pi.registerTool<typeof parameters, { plan: TodoPlan } | { error: string }>({
+export function createTodoWrite(services: TodoToolServices) {
+	return tool({
 		name: "todo_write",
-		label: "Todo Write",
 		description:
 			"Lay out or reconcile the plan as these groups — one group per task (a user ask; title = the outcome), each with its ordered steps. This RECONCILES, it does not destructively replace: written steps are matched to existing ones by group title + step title and keep their status/summary/id, so re-running it is safe and lossless (a re-listed in-progress or done step is NOT reset — status advances only via todo_update, and a status you pass here for an existing step is ignored). Unmatched written steps are created; your steps you omit are dropped; loose items and completed (done) items are always preserved. Keep step titles stable across a re-plan — a reworded title reads as a new step. For a single change prefer todo_add/todo_update (cheaper than restating the whole plan).",
-		promptSnippet:
-			"todo_write — lay out or reconcile the plan (groups only; matches steps by title, keeps their progress; prefer todo_add/todo_update for one change).",
-		parameters,
-		async execute(_callId, params, _signal, _onUpdate, ctx) {
+		strict: false,
+		parameters: { ...parameters, required: parameters.required ?? [], additionalProperties: true },
+		errorFunction: (_context, error, details) =>
+			toolError(services, error, details?.toolCall?.callId),
+		async execute(params) {
+			services.assertActive();
+			if (!Value.Check(parameters, params)) throw new Error("Invalid tool arguments");
 			const write: WritePlan = { groups: params.groups };
-			const plan = storeFor(ctx).replaceAll(write);
+			const plan = storeFor(services).replaceAll(write);
 			const count = countItems(plan);
 			const text = count
 				? withNudges(
