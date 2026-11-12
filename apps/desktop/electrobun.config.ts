@@ -16,7 +16,7 @@ export default {
 		exitOnLastWindowClosed: true,
 	},
 	release: {
-		baseUrl: "https://github.com/Bouchee/thinkrail/releases/download/desktop-updates",
+		baseUrl: "https://github.com/Bouchee/raildesign/releases/download/desktop-updates",
 		generatePatch: false,
 	},
 	build: {

@@ -79,7 +79,7 @@ native actions and physical assets. Agent, Git and PTY behavior lives in shared 
 13. **Independent product identity.** Product name is RailDesign; identifier is
     `io.github.bouchee.raildesign`; CLI executable is `raildesign`; default data is `~/.raildesign`.
     Install metadata/cache and icons are independent of official ThinkRail. The fork is
-    `https://github.com/Bouchee/thinkrail`; desktop updates use its
+    `https://github.com/Bouchee/raildesign`; desktop updates use its
     `releases/download/desktop-updates` channel only. Release signing uses fork-maintainer identities.
     Development source changes do not establish installation/update/signing acceptance.
 14. **Local diagnostics.** No JetBrains service configuration, PostHog keys, attribution, consent UI

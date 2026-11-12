@@ -45,7 +45,7 @@ test("a missing selected file shows as an unselectable entry", () => {
 
 test("the English source link pins released versions and falls back to main", () => {
 	expect(englishSourceUrl("0.3.0-nightly.1")).toBe(
-		"https://github.com/Bouchee/thinkrail/blob/v0.3.0-nightly.1/packages/locales/en.json",
+		"https://github.com/Bouchee/raildesign/blob/v0.3.0-nightly.1/packages/locales/en.json",
 	);
 	expect(englishSourceUrl("0.0.0")).toContain("/blob/main/");
 	expect(englishSourceUrl(null)).toContain("/blob/main/");

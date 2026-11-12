@@ -2,7 +2,7 @@
 # RailDesign binary installer — downloads the single-file `raildesign` executable for your platform from
 # the GitHub releases, verifies its checksum, and puts it on your PATH.
 #
-#   curl -fsSL https://raw.githubusercontent.com/Bouchee/thinkrail/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/Bouchee/raildesign/main/install.sh | bash
 #
 # Options (pass after `-s --`):
 #   --channel stable|nightly   (default: stable)
@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-REPO="${THINKRAIL_REPO:-Bouchee/thinkrail}"
+REPO="${THINKRAIL_REPO:-Bouchee/raildesign}"
 CHANNEL="stable"
 VERSION="latest"
 if [ -z "${HOME:-}" ]; then
@@ -31,7 +31,7 @@ usage() {
 RailDesign binary installer.
 
 Usage:
-  curl -fsSL https://raw.githubusercontent.com/Bouchee/thinkrail/main/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/Bouchee/raildesign/main/install.sh | bash
   curl -fsSL ... | bash -s -- --channel nightly --version 0.2.0-nightly.4 --prefix ~/.local
 
 Options:

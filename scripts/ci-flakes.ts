@@ -16,7 +16,7 @@ import {
 const { values } = parseArgs({
 	options: {
 		days: { type: "string", default: "14" },
-		repo: { type: "string", default: "Bouchee/thinkrail" },
+		repo: { type: "string", default: "Bouchee/raildesign" },
 		workflow: { type: "string", default: "ci.yml" },
 		concurrency: { type: "string", default: "8" },
 	},

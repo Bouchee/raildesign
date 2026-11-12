@@ -98,7 +98,7 @@ test("recovery follows the live update state and names the version it acts on", 
 
 test("release notes and copied logs use stable, readable forms", () => {
 	expect(releaseNotesUrl("0.3.0-nightly.4")).toBe(
-		"https://github.com/Bouchee/thinkrail/releases/tag/v0.3.0-nightly.4",
+		"https://github.com/Bouchee/raildesign/releases/tag/v0.3.0-nightly.4",
 	);
 	const at = new Date(2026, 9, 21, 12, 54, 4).getTime();
 	expect(

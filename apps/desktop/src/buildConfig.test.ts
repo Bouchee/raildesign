@@ -47,7 +47,7 @@ test("selects real Bun and preserves the physical runtime resources without reti
 test("development packaging has only the fork update channel and no telemetry upload", async () => {
 	const { default: config } = await import("../electrobun.config");
 	expect(config.release.baseUrl).toBe(
-		"https://github.com/Bouchee/thinkrail/releases/download/desktop-updates",
+		"https://github.com/Bouchee/raildesign/releases/download/desktop-updates",
 	);
 	const source = readFileSync(resolve(desktopDir, "preBuild.ts"), "utf8");
 	expect(source).not.toContain("posthog");

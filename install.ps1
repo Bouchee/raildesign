@@ -2,7 +2,7 @@
 # releases, verifies its checksum, and puts it on your PATH. The native counterpart of install.sh
 # (macOS/Linux/Git Bash); one script serves both cmd and PowerShell (Windows PowerShell 5.1+).
 #
-#   powershell -c "irm https://raw.githubusercontent.com/Bouchee/thinkrail/main/install.ps1 | iex"
+#   powershell -c "irm https://raw.githubusercontent.com/Bouchee/raildesign/main/install.ps1 | iex"
 #
 # Options are env vars (the one syntax cmd and PowerShell share) -- set before running:
 #   THINKRAIL_CHANNEL         stable|nightly   (default: stable)
@@ -11,8 +11,8 @@
 #   THINKRAIL_PREFIX          DIR              (default: %USERPROFILE%\.local; binary lands at <prefix>\bin\raildesign.exe)
 #   THINKRAIL_NO_MODIFY_PATH  1                don't touch the user PATH; just print advice
 #
-#   PowerShell:  $env:THINKRAIL_CHANNEL='nightly'; irm https://raw.githubusercontent.com/Bouchee/thinkrail/main/install.ps1 | iex
-#   cmd:         set "THINKRAIL_CHANNEL=nightly" && powershell -c "irm https://raw.githubusercontent.com/Bouchee/thinkrail/main/install.ps1 | iex"
+#   PowerShell:  $env:THINKRAIL_CHANNEL='nightly'; irm https://raw.githubusercontent.com/Bouchee/raildesign/main/install.ps1 | iex
+#   cmd:         set "THINKRAIL_CHANNEL=nightly" && powershell -c "irm https://raw.githubusercontent.com/Bouchee/raildesign/main/install.ps1 | iex"
 #
 # A saved copy also takes params: .\install.ps1 -Channel nightly -Version 0.2.0-nightly.4 -Prefix D:\tools -NoModifyPath
 #
@@ -184,13 +184,13 @@ function Install-RailDesign {
     $ProgressPreference = 'SilentlyContinue'
 
     if ($env:OS -ne 'Windows_NT') {
-        throw 'This installer is for Windows. On macOS/Linux use: curl -fsSL https://raw.githubusercontent.com/Bouchee/thinkrail/main/install.sh | bash'
+        throw 'This installer is for Windows. On macOS/Linux use: curl -fsSL https://raw.githubusercontent.com/Bouchee/raildesign/main/install.sh | bash'
     }
 
     # Windows PowerShell 5.1 defaults can lack TLS 1.2, which github.com requires. Additive + process-wide.
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-    $repo = if ($env:THINKRAIL_REPO) { $env:THINKRAIL_REPO } else { 'Bouchee/thinkrail' }
+    $repo = if ($env:THINKRAIL_REPO) { $env:THINKRAIL_REPO } else { 'Bouchee/raildesign' }
 
     # cmd's `set X=value && ...` embeds the space before && into the value -- trim every input.
     $channel = $Channel.Trim()

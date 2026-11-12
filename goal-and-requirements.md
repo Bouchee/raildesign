@@ -42,7 +42,7 @@ private browser/server deployment requires stage 5 checks.
 The product is RailDesign, identifier `io.github.bouchee.raildesign`, CLI `raildesign`.
 Fresh application records live under `~/.raildesign`; installers use independent metadata and caches.
 The application never imports pi sessions, credentials or plugins, or official ThinkRail data.
-Fork releases and updates come only from `Bouchee/thinkrail`.
+Fork releases and updates come only from `Bouchee/raildesign`.
 
 JetBrains services, telemetry, attribution and surveys are removed. SDK tracing starts disabled.
 The interface keeps its bundled fonts and themes; font family names are not service integrations.

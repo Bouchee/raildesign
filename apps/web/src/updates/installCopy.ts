@@ -113,7 +113,7 @@ export function installRecovery(t: Translator, state: NativeUpdateState): Instal
 }
 
 export function releaseNotesUrl(version: string): string {
-	return `https://github.com/Bouchee/thinkrail/releases/tag/v${encodeURIComponent(version)}`;
+	return `https://github.com/Bouchee/raildesign/releases/tag/v${encodeURIComponent(version)}`;
 }
 
 function twoDigits(value: number): string {
