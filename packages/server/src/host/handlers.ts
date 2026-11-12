@@ -49,6 +49,7 @@ import {
 	promptSession,
 	readSessionRecord,
 	refreshAvailableModels,
+	reloadSessionResources,
 	removeCustomEndpoint,
 	removeQueuedMessage,
 	removeSession,
@@ -1020,6 +1021,34 @@ const handlers: WsHandlers = {
 	"mcp.readOutput": (params) => mcpReadOutput(params),
 	"mcp.readLog": (params) => mcpReadLog(params),
 	"mcp.testConnection": (params, ctx) => mcpTestConnection(params, ctx.clientKey),
+	"session.reloadResources": async (params) => {
+		const { sessionId } = z.object({ sessionId: z.string().min(1) }).parse(params);
+		const record = readSessionRecord(sessionId);
+		if (!record) throw new Error("Unknown session");
+		const workspace = getWorkspace(record.workspaceId);
+		assertChatOpen(workspace.id);
+		await reloadSessionResources(sessionId, workspace.id, workspace.worktreePath);
+		return { ok: true };
+	},
+	"session.getCommands": (params) => {
+		const { sessionId } = z.object({ sessionId: z.string().min(1) }).parse(params);
+		const record = readSessionRecord(sessionId);
+		if (!record) throw new Error("Unknown session");
+		const workspace = getWorkspace(record.workspaceId);
+		assertChatOpen(workspace.id);
+		if (resolve(workspace.worktreePath) !== record.cwd)
+			throw new Error("Session is unavailable in its workspace");
+		const config = getConfig();
+		return listSkillCommands(
+			record.cwd,
+			admissionContextFor(
+				listProjects().find((project) => project.id === workspace.projectId),
+				workspace.skillOverrides ?? {},
+				config.otherAgentSkills,
+			),
+			{ disabledExtensions: new Set(config.disabledExtensions) },
+		);
+	},
 	"session.getMessages": (p) => {
 		return getSessionMessages(p.sessionId, p.workspaceId, getWorkspace(p.workspaceId).worktreePath);
 	},

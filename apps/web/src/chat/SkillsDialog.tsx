@@ -83,7 +83,6 @@ export interface SkillsWorkspaceContext {
 	workspaceId: string;
 	sessionId: string;
 	streaming: boolean;
-	allowReload: boolean;
 	stale?: boolean;
 	onReloaded?: (syncedTick: number) => void;
 }
@@ -151,7 +150,7 @@ export function SkillsDialog({
 	};
 
 	const reload = async () => {
-		if (busy || !workspace?.allowReload) return;
+		if (busy || !workspace || workspace.streaming) return;
 		setBusy(true);
 		const run = async () => {
 			const { syncedTick } = await reloadSessionResourcesWithSkillBaseline(workspace.workspaceId, {
@@ -282,11 +281,7 @@ export function SkillsDialog({
 					{workspace ? (
 						<IconTooltip
 							label={
-								!workspace.allowReload
-									? t("chat.skills.reloadUnavailable")
-									: workspace.streaming
-										? t("chat.skills.reloadBusy")
-										: t("chat.skills.reloadHint")
+								workspace.streaming ? t("chat.skills.reloadBusy") : t("chat.skills.reloadHint")
 							}
 							wrapTrigger
 						>
@@ -295,7 +290,7 @@ export function SkillsDialog({
 								variant="outline"
 								iconLeft={RefreshCw}
 								data-testid="skills-reload"
-								disabled={busy || workspace.streaming || !workspace.allowReload}
+								disabled={busy || workspace.streaming}
 								onClick={() => void reload()}
 							>
 								{t("chat.skills.reload")}
@@ -304,9 +299,6 @@ export function SkillsDialog({
 					) : null}
 				</div>
 
-				<p data-testid="skills-execution-unavailable" className="text-text-muted tr-text-metadata">
-					{t("chat.skills.reloadUnavailable")}
-				</p>
 				<div className="flex items-center justify-between gap-12">
 					<div className="flex min-w-0 flex-col gap-2">
 						<span className="tr-text-ui text-text-default">
@@ -353,7 +345,7 @@ export function SkillsDialog({
 					</p>
 				) : null}
 
-				{workspace?.stale && workspace.allowReload ? (
+				{workspace?.stale ? (
 					<div
 						data-testid="skills-stale"
 						className="rounded-sm border border-border-default bg-container-elevated-bg px-12 py-8 text-text-muted tr-text-metadata"

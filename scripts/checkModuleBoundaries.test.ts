@@ -10,6 +10,7 @@ const modules = {
 	"packages/artifact-tests": "@thinkrail/artifact-tests",
 	"packages/contracts": "@thinkrail/contracts",
 	"packages/shared": "@thinkrail/shared",
+	"packages/workflow": "@thinkrail/workflow",
 	"packages/pi-background-commands": "pi-background-commands",
 	"packages/visualize": "@thinkrail/visualize",
 	"packages/ask-user-question": "@thinkrail/ask-user-question",

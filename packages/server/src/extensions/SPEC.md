@@ -42,7 +42,7 @@ It does not import extension implementations outside the registry.
 ## Skills and workspace files
 
 Skill resolution starts from the extension's own public specifier.
-Each `skillPackages` manifest declares its roots in `pi.skills`.
+Each `skillPackages` manifest declares a top-level `skills` array.
 Missing Skill roots produce explicit errors.
 Source mode uses these roots directly.
 Staged mode uses `skills/extensions/<name>` and the host uses `skills/host`.

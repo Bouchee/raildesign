@@ -143,6 +143,12 @@ markup, selected state and bounded data behavior; they do not establish native p
 phone popup geometry. Resource-only browser focus/layout, archive/history reads and actual process
 execution need a Stage 3 gate when that product entry exists. `mcp-settings.spec.ts` retains real configuration/approval/connection/error/secret-masking coverage through Settings and the actual management routes. It does not require the Stage 3 resource dock. `skills-switches.spec.ts` and `other-agent-skills.spec.ts` preserve catalog, trust and switch behavior. `subagent-settings.spec.ts` reads real global/workspace persistence and authoritative pushes while verifying disabled execution controls, inheritance, limit validation and geometry. Read-only historical MCP tool cards remain separate.
 
+`templates-compose.spec.ts` checks that admitted Skill commands appear beside prompt templates.
+`skills-switches.spec.ts` verifies that the idle reload control is enabled and no unavailable-execution
+notice remains; `other-agent-skills.spec.ts` retains the catalog and trust checks.
+The Skills portion of `chat-resources-wire.spec.ts` checks model selection, actual idle reload, its success
+notice and the refreshed command picker through the real host routes.
+
 The browser fixtures write complete application-owned JSON transcripts, never append pi JSONL to a
 session JSON file. Optional pending state is explicit fixture data for rendering, not evidence of a
 live run. Renderer tests preserve tool details and stable identities, and keep model execution claims

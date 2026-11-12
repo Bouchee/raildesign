@@ -332,12 +332,15 @@ test.describe("prompt templates in the composer", () => {
 		expect(await input.inputValue()).not.toContain("leftover draft text");
 	});
 
-	test("template completion does not offer unavailable skill commands", async ({ page }) => {
+	test("template completion offers admitted Skills alongside prompt templates", async ({
+		page,
+	}) => {
 		await openWorkspaceChat(page);
 		const input = page.getByTestId("chat-input");
 		await input.fill("/skill:spec-graph");
 		const row = page.locator('[data-testid="slash-command"][data-source="skill"]');
-		await expect(row).toHaveCount(0);
+		await expect(row).toHaveCount(1);
+		await expect(row).toContainText("/skill:spec-graph");
 		await input.fill("/review");
 		await expect(page.locator('[data-testid="slash-command"][data-source="prompt"]')).toHaveCount(
 			1,

@@ -25,6 +25,7 @@ const MODULE_RULES: readonly ModuleRule[] = [
 	{ root: "packages/contracts", allowed: [] },
 	{ root: "packages/shared", allowed: ["packages/contracts"] },
 	{ root: "packages/pi-background-commands", allowed: [] },
+	{ root: "packages/workflow", allowed: [] },
 	{ root: "packages/visualize", allowed: [] },
 	{ root: "packages/ask-user-question", allowed: [] },
 	{
@@ -35,7 +36,7 @@ const MODULE_RULES: readonly ModuleRule[] = [
 			"packages/shared",
 			"packages/spec-graph",
 			"packages/pi-background-commands",
-			"packages/pi-thinkrail-workflow",
+			"packages/workflow",
 			"packages/pi-todos",
 			"packages/extension-api",
 		],

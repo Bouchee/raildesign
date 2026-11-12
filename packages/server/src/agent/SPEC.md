@@ -190,6 +190,19 @@ host startup. This selects physical `host` and registry-extension content roots 
 extension factories; disabled extensions still withhold their Skill assets. Source runs use the
 existing package content roots.
 
+`skillTools` loads applicable ancestor `AGENTS.md` files in parent-to-child order.
+The prompt also requires applicable nested instructions before a directory change.
+Instruction files have a combined 128 KiB limit.
+Symbolic links cannot supply workspace instructions.
+
+`skill_search` uses the current admitted catalog.
+`skill_read` reads a selected Skill body or a resource in that Skill directory.
+Each call checks current trust, enable policy and the run grant.
+This separate read boundary permits approved Skill directories outside the worktree.
+Ordinary workspace reads retain their existing boundary.
+The host expands `/skill:name` from actual admitted content.
+Manual-only Skills require an explicit user command before model access.
+
 Child resource ownership and cancellation helpers use local `ChildHandle`, `DelegationService` and
 `LifecycleEvent` interfaces with application-owned run details. They validate supplied snapshots and
 wait for owned cleanup; they do not construct a child executor. The unused Pi delegation and subagent

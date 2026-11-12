@@ -35,6 +35,7 @@ import type {
 } from "@thinkrail/contracts";
 import { firstPromptOfTexts, normalizeSessionTitle } from "@thinkrail/contracts";
 import { parseToolResultContent } from "@thinkrail/extension-api/server";
+import { WORKFLOW_RULE } from "@thinkrail/workflow";
 import { z } from "zod";
 import {
 	interactiveTools,
@@ -44,7 +45,7 @@ import {
 	workspaceFiles,
 } from "../extensions";
 import { logger } from "../log";
-import { loadConfig, loadWorkspaces } from "../persistence";
+import { loadConfig, loadProjects, loadWorkspaces } from "../persistence";
 import { trashFile } from "../trash";
 import { configureLocalSdkTracing } from "./localTracing";
 import {
@@ -64,6 +65,14 @@ import {
 	type StoredInput,
 	sessionRecordPath,
 } from "./sessionStore";
+import { admissionContextFor } from "./skillAdmission";
+import {
+	createSkillTools,
+	expandSkillCommand,
+	skillCommandName,
+	skillInstructions,
+	workspaceInstructions,
+} from "./skillTools";
 import { webFetch, webSearch } from "./webAccess";
 
 const log = logger("agent");
@@ -740,6 +749,147 @@ function captureStructuredToolResults(tools: Tool[], run: ActiveRun): void {
 	}
 }
 
+function buildSessionAgent(
+	entry: Entry,
+	run: ActiveRun,
+	model: WireModel,
+	sdkModel: Agent["model"] = createConfiguredModel(model, entry.store.record.sessionId),
+): Agent {
+	const skillOptions = {
+		markToolFailed: (callId: string | undefined) => {
+			const call = callId ? run.toolCalls.get(callId) : undefined;
+			if (call) call.failed = true;
+		},
+		manualSkills: entry.store.record.messages.flatMap((message) =>
+			message.role === "user"
+				? [skillCommandName(textOf(message.content))].filter(
+						(name): name is string => name !== undefined,
+					)
+				: [],
+		),
+		cwd: entry.store.record.cwd,
+		admission: () =>
+			admissionContextFor(
+				loadProjects().find((item) => item.id === projectOf(entry.store.record.workspaceId)),
+				loadWorkspaces().find((item) => item.id === entry.store.record.workspaceId)
+					?.skillOverrides ?? {},
+				loadConfig().otherAgentSkills,
+			),
+		assertActive: () => assertActive(entry, run),
+		signal: run.controller.signal,
+	};
+	const projectContext = workspaceInstructions(entry.store.record.cwd);
+	const skillCatalog = skillInstructions(skillOptions, model);
+	const agent = new Agent({
+		name: "RailDesign",
+		instructions: `You are RailDesign, a coding assistant. Work only in the assigned worktree: ${entry.store.record.cwd}. Use read and search to inspect files. Use apply_patch for edits and bash to run project checks. Request approval for commands and edits. A denied operation is not permission to try another route. Report actual checks and remaining limits.\n${projectContext}\n${skillCatalog}\n${WORKFLOW_RULE}`,
+		model: sdkModel,
+		tools: [
+			...createSkillTools(skillOptions),
+			...workspaceTools(
+				{
+					workspaceId: entry.store.record.workspaceId,
+					cwd: entry.store.record.cwd,
+					signal: run.controller.signal,
+					assertActive: () => assertActive(entry, run),
+				},
+				(callId) => {
+					const call = run.toolCalls.get(callId);
+					if (call) call.failed = true;
+				},
+			),
+			...registrySdkTools(
+				{
+					cwd: entry.store.record.cwd,
+					webAccess: {
+						search: async (query, count, signal) => {
+							assertActive(entry, run);
+							const result = await webSearch(query, count, signal ?? run.controller.signal);
+							assertActive(entry, run);
+							return result;
+						},
+						fetch: async (url, signal) => {
+							assertActive(entry, run);
+							const result = await webFetch(url, signal ?? run.controller.signal);
+							assertActive(entry, run);
+							return result;
+						},
+					},
+					workspaceFiles,
+					assertActive: () => assertActive(entry, run),
+					markToolFailed: (callId) => {
+						const call = run.toolCalls.get(callId);
+						if (call) call.failed = true;
+					},
+					toolResponse: (callId) => {
+						const answer = Object.values(entry.store.record.toolResponses).find(
+							(receipt) => receipt.runId === run.id && receipt.toolCallId === callId,
+						);
+						if (!answer) throw new Error("The tool has no saved response");
+						return isSupersededAnswer(answer.response)
+							? { kind: "deferred" }
+							: { kind: "response", value: answer.response };
+					},
+				},
+				run.enabledExtensions,
+			),
+		],
+		// A tool result marked `terminate` ends the run without another model call.
+		toolUseBehavior: (_context, results) =>
+			results.some(
+				(result) =>
+					result.type === "function_output" &&
+					run.structuredResults?.get(result.runItem.rawItem.callId)?.terminate,
+			)
+				? { isFinalOutput: true, isInterrupted: undefined, finalOutput: "" }
+				: { isFinalOutput: false, isInterrupted: undefined },
+		modelSettings: {
+			...responsesClientSettings,
+			maxTokens: modelOutputBudget(model),
+			...(model.reasoning && entry.store.record.thinkingLevel !== "off"
+				? { reasoning: { effort: entry.store.record.thinkingLevel } }
+				: {}),
+		},
+	});
+	agent.on("agent_tool_start", (_context, _tool, details) => {
+		assertActive(entry, run);
+		if (details.toolCall.type !== "function_call") return;
+		const toolCall = details.toolCall;
+		addToolCall(entry, run, toolCall);
+		const previous = entry.store.record.effects[toolCall.callId];
+		if (previous) throw new Error("A recorded tool effect cannot be replayed");
+		entry.store.update((record) => {
+			delete record.runCheckpoint;
+			record.effects[toolCall.callId] = {
+				runId: run.id,
+				name: toolCall.name,
+				arguments: run.toolCalls.get(toolCall.callId)?.arguments ?? {},
+				status: "started",
+			};
+		});
+		run.startedTools.add(toolCall.callId);
+		const call = run.toolCalls.get(toolCall.callId);
+		emit(entry, {
+			type: "tool_execution_start",
+			toolCallId: toolCall.callId,
+			toolName: toolCall.name,
+			args: call?.arguments ?? {},
+		});
+	});
+	agent.on("agent_tool_end", (_context, _tool, result, details) => {
+		if (!run.granted || details.toolCall.type !== "function_call") return;
+		recordToolResult(
+			entry,
+			details.toolCall.callId,
+			details.toolCall.name,
+			result,
+			run.toolCalls.get(details.toolCall.callId)?.failed,
+		);
+	});
+	captureStructuredToolResults(agent.tools, run);
+	return agent;
+}
+
 async function executeRun(
 	entry: Entry,
 	run: ActiveRun,
@@ -757,115 +907,7 @@ async function executeRun(
 			: undefined;
 		if (!model) throw new Error("Configure a Responses-compatible model before sending a message");
 		assertActive(entry, run);
-		const buildAgent = () => {
-			const agent = new Agent({
-				name: "RailDesign",
-				instructions: `You are RailDesign, a coding assistant. Work only in the assigned worktree: ${entry.store.record.cwd}. Use read and search to inspect files. Use apply_patch for edits and bash to run project checks. Request approval for commands and edits. A denied operation is not permission to try another route. Report actual checks and remaining limits.`,
-				model: createConfiguredModel(model, entry.store.record.sessionId),
-				tools: [
-					...workspaceTools(
-						{
-							workspaceId: entry.store.record.workspaceId,
-							cwd: entry.store.record.cwd,
-							signal: run.controller.signal,
-							assertActive: () => assertActive(entry, run),
-						},
-						(callId) => {
-							const call = run.toolCalls.get(callId);
-							if (call) call.failed = true;
-						},
-					),
-					...registrySdkTools(
-						{
-							cwd: entry.store.record.cwd,
-							webAccess: {
-								search: async (query, count, signal) => {
-									assertActive(entry, run);
-									const result = await webSearch(query, count, signal ?? run.controller.signal);
-									assertActive(entry, run);
-									return result;
-								},
-								fetch: async (url, signal) => {
-									assertActive(entry, run);
-									const result = await webFetch(url, signal ?? run.controller.signal);
-									assertActive(entry, run);
-									return result;
-								},
-							},
-							workspaceFiles,
-							assertActive: () => assertActive(entry, run),
-							markToolFailed: (callId) => {
-								const call = run.toolCalls.get(callId);
-								if (call) call.failed = true;
-							},
-							toolResponse: (callId) => {
-								const answer = Object.values(entry.store.record.toolResponses).find(
-									(receipt) => receipt.runId === run.id && receipt.toolCallId === callId,
-								);
-								if (!answer) throw new Error("The tool has no saved response");
-								return isSupersededAnswer(answer.response)
-									? { kind: "deferred" }
-									: { kind: "response", value: answer.response };
-							},
-						},
-						run.enabledExtensions,
-					),
-				],
-				// A tool result marked `terminate` ends the run without another model call.
-				toolUseBehavior: (_context, results) =>
-					results.some(
-						(result) =>
-							result.type === "function_output" &&
-							run.structuredResults?.get(result.runItem.rawItem.callId)?.terminate,
-					)
-						? { isFinalOutput: true, isInterrupted: undefined, finalOutput: "" }
-						: { isFinalOutput: false, isInterrupted: undefined },
-				modelSettings: {
-					...responsesClientSettings,
-					maxTokens: modelOutputBudget(model),
-					...(model.reasoning && entry.store.record.thinkingLevel !== "off"
-						? { reasoning: { effort: entry.store.record.thinkingLevel } }
-						: {}),
-				},
-			});
-			agent.on("agent_tool_start", (_context, _tool, details) => {
-				assertActive(entry, run);
-				if (details.toolCall.type !== "function_call") return;
-				const toolCall = details.toolCall;
-				addToolCall(entry, run, toolCall);
-				const previous = entry.store.record.effects[toolCall.callId];
-				if (previous) throw new Error("A recorded tool effect cannot be replayed");
-				entry.store.update((record) => {
-					delete record.runCheckpoint;
-					record.effects[toolCall.callId] = {
-						runId: run.id,
-						name: toolCall.name,
-						arguments: run.toolCalls.get(toolCall.callId)?.arguments ?? {},
-						status: "started",
-					};
-				});
-				run.startedTools.add(toolCall.callId);
-				const call = run.toolCalls.get(toolCall.callId);
-				emit(entry, {
-					type: "tool_execution_start",
-					toolCallId: toolCall.callId,
-					toolName: toolCall.name,
-					args: call?.arguments ?? {},
-				});
-			});
-			agent.on("agent_tool_end", (_context, _tool, result, details) => {
-				if (!run.granted || details.toolCall.type !== "function_call") return;
-				recordToolResult(
-					entry,
-					details.toolCall.callId,
-					details.toolCall.name,
-					result,
-					run.toolCalls.get(details.toolCall.callId)?.failed,
-				);
-			});
-			captureStructuredToolResults(agent.tools, run);
-			return agent;
-		};
+		const buildAgent = () => buildSessionAgent(entry, run, model);
 		let agent = buildAgent();
 		configureLocalSdkTracing();
 		const runner = new Runner({
@@ -1602,6 +1644,27 @@ export function promptSession(
 		toolCalls: new Map(),
 		startedTools: new Set(),
 	};
+	let modelText: string;
+	entry.active = run;
+	try {
+		modelText = expandSkillCommand(
+			{
+				cwd: entry.store.record.cwd,
+				admission: () =>
+					admissionContextFor(
+						loadProjects().find((item) => item.id === projectOf(entry.store.record.workspaceId)),
+						loadWorkspaces().find((item) => item.id === entry.store.record.workspaceId)
+							?.skillOverrides ?? {},
+						loadConfig().otherAgentSkills,
+					),
+				assertActive: () => assertActive(entry, run),
+				signal: run.controller.signal,
+			},
+			text,
+		);
+	} finally {
+		delete entry.active;
+	}
 	const content: AgentInputItem[] = [
 		{
 			id,
@@ -1617,6 +1680,7 @@ export function promptSession(
 				: text,
 		},
 	];
+	if (modelText !== text) content.unshift({ id: randomUUID(), role: "user", content: modelText });
 	const message: TranscriptMessage = {
 		id,
 		role: "user",
@@ -1655,6 +1719,55 @@ export function promptSession(
 		: executeRun(entry, run, content);
 	return run.done;
 }
+export async function reloadSessionResources(
+	sessionId: string,
+	workspaceId: string,
+	cwd: string,
+): Promise<void> {
+	const record = sessions.get(sessionId)?.store.record ?? readSessionRecord(sessionId);
+	if (!record || record.workspaceId !== workspaceId || record.cwd !== resolve(cwd))
+		throw new Error("Session is unavailable in its workspace");
+	if (
+		record.state.execution === "running" ||
+		record.pendingApproval ||
+		record.pendingToolResponse ||
+		record.runCheckpoint
+	)
+		throw new Error("Resources can only reload in an idle session");
+	if (!(await ensureSessionAttached(sessionId, workspaceId, cwd)))
+		throw new Error("Session is unavailable in its workspace");
+	const entry = mustGet(sessionId);
+	if (entry.active || entry.stopping || entry.summaryController)
+		throw new Error("Resources can only reload in an idle session");
+	const model = entry.store.record.model;
+	if (!model) throw new Error("Select a model before reloading resources");
+	const run: ActiveRun = {
+		id: randomUUID(),
+		enabledExtensions: snapshotSdkExtensions(
+			loadConfig().disabledExtensions,
+			loadConfig().extensionSettings,
+		),
+		controller: new AbortController(),
+		granted: true,
+		done: Promise.resolve(),
+		toolCalls: new Map(),
+		startedTools: new Set(),
+	};
+	entry.active = run;
+	run.done = (async () => {
+		try {
+			assertActive(entry, run);
+			await buildSessionAgent(entry, run, model, model.id);
+			assertActive(entry, run);
+		} finally {
+			run.granted = false;
+			run.controller.abort();
+			if (entry.active === run) delete entry.active;
+		}
+	})();
+	await run.done;
+}
+
 export async function abortSession(sessionId: string): Promise<void> {
 	const entry = mustGet(sessionId);
 	entry.summaryController?.abort();

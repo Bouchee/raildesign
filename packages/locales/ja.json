@@ -296,7 +296,6 @@
 	"chat.skills.reloadBusy": "現在のターンの完了後に利用できます",
 	"chat.skills.reloadFailed": "スキルを再読み込みできませんでした",
 	"chat.skills.reloadHint": "このチャットに適用",
-	"chat.skills.reloadUnavailable": "カタログ設定は保存されます。モデルによるスキル実行とセッションの再読み込みはまだ利用できません。",
 	"chat.skills.reloadedBody": "このチャットは更新されたスキルを使用しています。",
 	"chat.skills.reloadedTitle": "スキルを再読み込みしました",
 	"chat.skills.saving": "スキル設定を保存中…",

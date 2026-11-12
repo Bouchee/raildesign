@@ -48,12 +48,13 @@ export class EventLog {
 		return name ? calls.filter((c) => c.toolName === name) : calls;
 	}
 
+	/** Skills whose body the model read successfully through `skill_read` (a null path is the body). */
 	skillReads(): string[] {
 		const names: string[] = [];
-		for (const call of this.toolCalls("read")) {
-			const path = String(call.args.path ?? call.args.file_path ?? "");
-			const match = path.match(/\/skills\/([^/]+)\/SKILL\.md$/);
-			if (match?.[1] && !names.includes(match[1])) names.push(match[1]);
+		for (const call of this.toolCalls("skill_read")) {
+			const name = call.args.name;
+			if (call.result === undefined || call.isError || call.args.path != null) continue;
+			if (typeof name === "string" && !names.includes(name)) names.push(name);
 		}
 		return names;
 	}

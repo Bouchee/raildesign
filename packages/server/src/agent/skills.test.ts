@@ -199,7 +199,7 @@ test("default content roots retain bundled workflow, TODO, spec and host Skills"
 		expect(admitted).toContain(name);
 });
 
-test("staged launchers select physical Skill paths and retain extension disable policy", () => {
+test("staged launchers select physical host Skills and ignore unregistered extension content", () => {
 	const stage = join(root, "staged-skills");
 	skill(join(stage, "host/staged/SKILL.md"), "staged-host");
 	skill(join(stage, "extensions/web-access/librarian/SKILL.md"), "staged-extension");
@@ -210,10 +210,7 @@ test("staged launchers select physical Skill paths and retain extension disable 
 		env: {},
 	};
 	const inventory = loadSkillInventory(cwd, admissionContextFor(undefined), stagedOptions);
-	expect(inventory.entries.map(({ skill }) => skill.name)).toEqual([
-		"staged-host",
-		"staged-extension",
-	]);
+	expect(inventory.entries.map(({ skill }) => skill.name)).toEqual(["staged-host"]);
 	expect(
 		inventory.entries.every(({ skill }) => skill.filePath.startsWith(realpathSync(stage))),
 	).toBe(true);

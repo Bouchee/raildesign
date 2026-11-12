@@ -363,7 +363,6 @@
 	"chat.skills.reloadBusy": "Доступно после завершения текущего хода",
 	"chat.skills.reloadFailed": "Не удалось перезагрузить навыки",
 	"chat.skills.reloadHint": "Применить к этому чату",
-	"chat.skills.reloadUnavailable": "Настройки каталога сохраняются. Выполнение навыков моделью и перезагрузка сеанса пока недоступны.",
 	"chat.skills.reloadedBody": "В этом чате используются обновлённые навыки.",
 	"chat.skills.reloadedTitle": "Навыки перезагружены",
 	"chat.skills.saving": "Сохранение настроек навыков…",

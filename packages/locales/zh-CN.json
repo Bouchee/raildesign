@@ -316,7 +316,6 @@
 	"chat.skills.reloadBusy": "当前轮次结束后可用",
 	"chat.skills.reloadFailed": "无法重新加载 skill",
 	"chat.skills.reloadHint": "应用到本会话",
-	"chat.skills.reloadUnavailable": "目录设置会保存。模型调用 Skills 和对话资源重载尚未接通。",
 	"chat.skills.reloadedBody": "此会话现在使用更新后的 skill。",
 	"chat.skills.reloadedTitle": "skill 已重新加载",
 	"chat.skills.saving": "正在保存 skill 设置…",

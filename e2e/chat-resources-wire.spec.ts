@@ -48,14 +48,34 @@ test("historical process text cannot expose unavailable resource execution endpo
 		await expect(
 			wire.request("subagent.stopAll", { workspaceId: workspace.id, parentSessionId: parent.id }),
 		).rejects.toThrow(/Unknown method/);
+		await expect(wire.request("session.reloadResources", { sessionId: parent.id })).rejects.toThrow(
+			"Select a model before reloading resources",
+		);
+		const model = (await wire.request("model.list", {}))[0];
+		if (!model) throw new Error("Missing SDK model for the resource reload fixture");
+		expect(await wire.request("session.setModel", { sessionId: parent.id, model })).toEqual({
+			ok: true,
+		});
 		await expect(page.getByTestId("open-skills")).toBeVisible();
 		await page.getByTestId("open-skills").click();
-		await expect(page.getByTestId("skills-execution-unavailable")).toBeVisible();
-		await expect(page.getByTestId("skills-reload")).toBeDisabled();
+		await expect(page.getByTestId("skills-execution-unavailable")).toHaveCount(0);
+		await expect(page.getByTestId("skills-reload")).toBeEnabled();
+		await page.getByTestId("skills-reload").click();
+		await expect(page.getByText("Skills reloaded", { exact: true })).toBeVisible();
+		await expect(page.getByTestId("skills-reload")).toBeEnabled();
 		await page.keyboard.press("Escape");
+		const command = (await wire.request("session.getCommands", { sessionId: parent.id })).find(
+			(entry) => entry.source === "skill",
+		);
+		if (!command) throw new Error("Missing admitted fixture Skill command");
+		await page.getByTestId("chat-input").fill(`/${command.name}`);
+		await expect(
+			page.getByTestId("slash-command").filter({ hasText: `/${command.name}` }),
+		).toBeVisible();
+		await page.getByTestId("chat-input").fill("");
 		await page.getByTestId("open-settings").click();
 		await expect(page.getByTestId("settings-nav-mcp")).toBeVisible();
-		await expect(page.getByTestId("settings-nav-extensions")).toHaveCount(0);
+		await expect(page.getByTestId("settings-nav-extensions")).toBeVisible();
 	} finally {
 		wire.close();
 	}

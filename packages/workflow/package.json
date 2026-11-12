@@ -1,0 +1,26 @@
+{
+	"name": "@thinkrail/workflow",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Workflow instructions and Skills for RailDesign.",
+	"keywords": [
+		"workflow",
+		"skills"
+	],
+	"scripts": {
+		"typecheck": "tsc --noEmit",
+		"test": "bun test"
+	},
+	"devDependencies": {
+		"@types/bun": "catalog:",
+		"typescript": "catalog:"
+	},
+	"skills": [
+		"./skills"
+	],
+	"exports": {
+		".": "./index.ts",
+		"./package.json": "./package.json"
+	}
+}

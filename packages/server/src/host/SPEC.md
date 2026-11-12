@@ -106,11 +106,13 @@ model round. Stop delegates to agent cancellation and completes after owned exec
 Stage-2 queue, steering, compaction and recovery operations call the durable session owner. Stable input
 IDs survive wire replay; queue mutation addresses the input ID. Stop preserves queued input and completes
 after cleanup. Compaction carries an operation ID, and approval replies bind the tool call as well as the
-interaction. Stage-3 model tool execution controls remain unavailable. MCP configuration, validation,
+interaction. Plan review, child and background execution remain assigned to subsequent groups. MCP configuration, validation,
 per-entry approvals, OAuth, status and cleanup remain real
 services through `mcp.*`. `provider.loginReply`/`provider.loginCancel` serve only owned MCP OAuth flows;
 obsolete model-provider login routes remain absent. Skills catalog/trust/enable and child configuration
-routes persist their actual settings. Resource reload is disabled until it can rebuild SDK tools.
+routes persist their actual settings. `session.getCommands` reads the current admitted Skill commands.
+`session.reloadResources` validates an owned idle session and rebuilds its current SDK instruction/tool graph.
+Busy, pending-approval and recovery states reject reload.
 No empty success snapshot, compatibility API, pi runtime, Central, telemetry or survey route remains.
 
 Host injects the own-credential authorization resolver, project policy, addressed OAuth/status publishers

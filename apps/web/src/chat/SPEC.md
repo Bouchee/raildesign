@@ -12,7 +12,7 @@ tags: [chat]
 
 The application owns its message, tool, usage and event types in `sessionProtocol.ts`; browser code does not import engine types. `session.event` carries `{sessionId, runId, seq, event}` with increasing per-session sequence numbers. SDK details and checkpoints remain on the host. The initial transcript snapshot carries its event sequence watermark; events arriving before hydration are buffered and only later events are applied. Stable message IDs join streamed snapshots and final messages. Basic tool approvals use the existing confirmation UI with session, run, interaction and revision ownership; failures keep the pending card visible. A declared tool without an execution result state is pending: its card and routine row use a neutral marker, and execution summaries/bodies begin only after `tool_execution_start`.
 
-Stage 1 preserves Skills catalog and trust management in `ChatView`, while live session resource reload stays disabled until the SDK can really reload context and tools. MCP configuration and OAuth remain reachable in Settings. Stage 1 mounts no advanced resource polling, resource inspector or subagent transcript executor in `ChatView`. Historical tool cards and resource renderers remain usable as pure projections. Queue actions, compaction commands, continuation synchronization, automatic plan summaries and TODO add nudges are absent from active composition. Ordinary prompts send only while idle; Stop remains available during a run. Agent review controls remain disabled until that execution path exists. Protocol-version thresholds alone do not authorize a removed host operation.
+Skills catalog, trust management, manual commands and idle session reload use the current SDK host routes in `ChatView`. Reload clears the stale badge only after host success. MCP configuration and OAuth remain reachable in Settings. Stage 1 mounts no advanced resource polling, resource inspector or subagent transcript executor in `ChatView`. Historical tool cards and resource renderers remain usable as pure projections. Queue actions, compaction commands, continuation synchronization, automatic plan summaries and TODO add nudges are absent from active composition. Ordinary prompts send only while idle; Stop remains available during a run. Agent review controls remain disabled until that execution path exists. Protocol-version thresholds alone do not authorize a removed host operation.
 
 ## Responsibility
 
@@ -1047,10 +1047,10 @@ both message orders. *Rejected:* keeping the modal for non-MCP extensions — ev
   blocked by their parent or trust reason; row text itself does not mutate.
   Project mode reads `project.skills`; workspace mode reads `skills.state` and writes workspace skill
   overrides. Catalog size remains an estimate derived from admitted entries, with manual-only entries
-  omitted from estimated listing cost. Stage 1 states that model Skill execution is pending. It passes
-  `workspace.allowReload=false`, keeps the real reload algorithm for future integration, disables the
-  button with a clear reason, and suppresses the actionable reload badge. It registers no successful
-  reload stub. The same manager remains reachable from New Workspace before a session exists.
+  omitted from estimated listing cost. Workspace mode permits reload while idle and keeps it disabled
+  during a run. The existing baseline helper waits for watcher readiness and the real
+  `session.reloadResources` reply before `markSkillsSynced` clears the badge. The same manager remains
+  reachable from New Workspace before a session exists.
 - **Live session telemetry follows Pi's finalized boundaries.** `SessionStatsBar` renders only the host's
   authoritative `session.getStats` snapshot; the web never derives billed totals or context usage from
   message content. Totals include delegated subagent spend, which the host records into the parent as pi
@@ -1253,7 +1253,7 @@ both message orders. *Rejected:* keeping the modal for non-MCP extensions — ev
   blocks; a hydrated turn has no names and falls back to mime-type labels) —
   it shows exactly what was typed (the raw command) until a re-fetch replaces it with pi's real persisted
   record. **The `/` menu merge**
-  (`ChatView`): pi's `commands` snapshot (`session.getCommands`, frozen at session-create time) minus its
+  (`ChatView`): the admitted Skill `commands` snapshot (`session.getCommands`, refreshed on mount, reconnect and successful reload) minus its
   `source === "prompt"` entries, plus a fresh `template.list { workspaceId }` fetch mapped to
   `SlashCommandInfo` rows (`source: "prompt"`, `sourceInfo` synthesized to match pi's own prompt-template
   convention exactly: `{ path: filePath, source: "local", scope: scope === "global" ? "user" : "project",
@@ -1718,8 +1718,8 @@ Unknown custom messages retain their existing behavior.
   preloads on mount through `components/preloadedLazy` and mounts as the chat resource body;
   it wires `SkillsDialog` + the header Skills trigger, resolving the owning `projectId` from the store and
   retaining per-session staleness from `selectSkillsStale(state, workspaceId, sessionId)` in the dialog
-  context. Active Stage 1 composition disables live reload and its badge; the reusable reload callback
-  still supports `markSkillsSynced` when a real host reload becomes available).
+  context. Live reload calls the owned host route and marks the session's Skill baseline only after
+  success).
   **No `index.ts` barrel** — chat pulls the **highlight client**, so per the code-splitting exception imports stay
   **per-file**; the registry is importable from `chat/toolRegistry` **without** pulling it.
 - **Allowed deps:** `contracts` (pi message/content-block types, **type-only**); the lifecycle-neutral

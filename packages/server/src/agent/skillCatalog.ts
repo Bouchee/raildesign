@@ -221,7 +221,10 @@ export function hintedSkills(entries: readonly TranscriptMessage[]): Set<string>
 	return names;
 }
 
-export function createSkillSearchTool(getSkills: () => readonly Skill[]) {
+export function createSkillSearchTool(
+	getSkills: () => readonly Skill[],
+	markToolFailed?: (callId: string | undefined) => void,
+) {
 	return tool({
 		name: SKILL_SEARCH_TOOL,
 		description:
@@ -230,6 +233,10 @@ export function createSkillSearchTool(getSkills: () => readonly Skill[]) {
 			query: z.string().min(1),
 			limit: z.number().int().min(1).max(20).nullable(),
 		}),
+		errorFunction: (_context, error, details) => {
+			markToolFailed?.(details?.toolCall?.callId);
+			return (error instanceof Error ? error.message : String(error)).slice(0, 4096);
+		},
 		execute({ query, limit }) {
 			const matches = searchSkills(getSkills(), query, limit ?? SEARCH_DEFAULT_LIMIT);
 			return {

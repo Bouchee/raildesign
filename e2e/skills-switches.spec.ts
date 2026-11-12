@@ -22,8 +22,8 @@ test("Skills renders existing controls as explicit switches without making rows 
 
 	const dialog = page.getByTestId("skills-dialog");
 	const groupSwitch = page.getByTestId("group-toggle").first();
-	await expect(dialog.getByTestId("skills-execution-unavailable")).toBeVisible();
-	await expect(dialog.getByTestId("skills-reload")).toBeDisabled();
+	await expect(dialog.getByTestId("skills-execution-unavailable")).toHaveCount(0);
+	await expect(dialog.getByTestId("skills-reload")).toBeEnabled();
 	await expect(groupSwitch).toHaveRole("switch");
 	await expect(groupSwitch).toHaveAttribute("aria-checked", /true|false/);
 	await expect(groupSwitch).toHaveText("");

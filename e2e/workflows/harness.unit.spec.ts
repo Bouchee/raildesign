@@ -24,8 +24,6 @@ import {
 	watchSignals,
 } from "./harness";
 
-const SKILLS = "/repo/packages/pi-thinkrail-workflow/skills";
-
 function toolStart(id: string, name: string, args: Record<string, unknown>): SessionEvent {
 	return { type: "tool_execution_start", toolCallId: id, toolName: name, args } as SessionEvent;
 }
@@ -42,22 +40,31 @@ function turnEnd(): SessionEvent {
 	return { type: "agent_settled", terminal: { stopReason: "stop" } };
 }
 
+function skillRead(id: string, name: string, path: string | null = null): SessionEvent[] {
+	return [toolStart(id, "skill_read", { name, path }), toolEnd(id, "skill_read", "…")];
+}
+
 function routedLog(): EventLog {
 	const log = new EventLog();
-	log.push(toolStart("t1", "read", { path: `${SKILLS}/choosing-a-workflow/SKILL.md` }));
-	log.push(toolEnd("t1", "read", "…"));
-	log.push(toolStart("t2", "read", { path: `${SKILLS}/brainstorming/SKILL.md` }));
-	log.push(toolEnd("t2", "read", "…"));
+	for (const event of [
+		...skillRead("t1", "choosing-a-workflow"),
+		...skillRead("t2", "brainstorming"),
+	])
+		log.push(event);
 	log.push(turnEnd());
 	return log;
 }
 
 test("EventLog: tool calls, skill reads, turn count", () => {
 	const log = routedLog();
-	expect(log.toolCalls("read")).toHaveLength(2);
+	expect(log.toolCalls("skill_read")).toHaveLength(2);
 	expect(log.skillReads()).toEqual(["choosing-a-workflow", "brainstorming"]);
 	expect(log.turnCount()).toBe(1);
-	log.push(toolStart("t3", "read", { path: "/repo/README.md" }));
+	for (const event of skillRead("t3", "importing-a-codebase", "references/notes.md"))
+		log.push(event);
+	log.push(toolStart("t4", "skill_read", { name: "importing-a-codebase", path: null }));
+	log.push({ ...toolEnd("t4", "skill_read", "denied"), isError: true } as SessionEvent);
+	log.push(toolStart("t5", "read", { path: "/repo/.agents/skills/importing-a-codebase/SKILL.md" }));
 	expect(log.skillReads()).toHaveLength(2);
 });
 
@@ -68,8 +75,11 @@ test("signals: skillRead + turnEnd; forbid wins over stop", async () => {
 		[signals.skillRead("brainstorming")],
 		[signals.skillRead("importing-a-codebase")],
 	);
-	log.push(toolStart("a", "read", { path: `${SKILLS}/importing-a-codebase/SKILL.md` }));
-	log.push(toolStart("b", "read", { path: `${SKILLS}/brainstorming/SKILL.md` }));
+	for (const event of [
+		...skillRead("a", "importing-a-codebase"),
+		...skillRead("b", "brainstorming"),
+	])
+		log.push(event);
 	const hit = await watcher.hit;
 	expect(hit.kind).toBe("forbid");
 	watcher.cancel();

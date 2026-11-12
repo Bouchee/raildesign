@@ -28,7 +28,7 @@
 		"bun-pty": "0.5.2",
 		"pi-background-commands": "workspace:*",
 		"pi-spec-graph": "workspace:*",
-		"pi-thinkrail-workflow": "workspace:*",
+		"@thinkrail/workflow": "workspace:*",
 		"pi-todos": "workspace:*",
 		"pino": "10.4.0",
 		"pino-pretty": "13.2.0",

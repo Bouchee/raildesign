@@ -335,7 +335,6 @@
 	"chat.skills.reloadBusy": "Disponible cuando termine el turno actual",
 	"chat.skills.reloadFailed": "No se pudieron recargar las habilidades",
 	"chat.skills.reloadHint": "Aplicar a este chat",
-	"chat.skills.reloadUnavailable": "La configuración del catálogo se guarda. La ejecución de habilidades y la recarga de sesiones aún no están disponibles.",
 	"chat.skills.reloadedBody": "Este chat ahora usa las habilidades actualizadas.",
 	"chat.skills.reloadedTitle": "Habilidades recargadas",
 	"chat.skills.saving": "Guardando los ajustes de habilidades…",

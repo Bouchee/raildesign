@@ -1,16 +1,16 @@
 ---
 name: writing-workflow-skills
-description: "Use when adding a new workflow skill to pi-thinkrail-workflow, changing an existing workflow skill's role, trigger, handoff, or structure, or checking a workflow skill against the workflow system's rules. Not for authoring general-purpose skills outside this package."
+description: "Use when adding a new workflow skill to @thinkrail/workflow, changing an existing workflow skill's role, trigger, handoff, or structure, or checking a workflow skill against the workflow system's rules. Not for authoring general-purpose skills outside this package."
 ---
 
 # Writing Workflow Skills
 
-The authoring checklist for workflow skills in `packages/pi-thinkrail-workflow`. It carries the *what
+The authoring checklist for workflow skills in `packages/workflow`. It carries the *what
 to do*; every *why* — the concept model, the three roles, the meta-rules cited as "(rule N)" below —
 lives once in the workflow-system spec beside this directory, **`skills/SPEC.md`**. Read that spec
 first; where this checklist and that spec disagree, the spec wins.
 
-**Workspace guard.** This checklist edits `packages/pi-thinkrail-workflow` in the thinkrail repo. If
+**Workspace guard.** This checklist edits `packages/workflow` in the thinkrail repo. If
 that package is not in the current workspace (a ThinkRail-managed project, where these skills are a
 read-only staged cache), the family cannot be extended from here: say so in one line and stop — the
 terminal state for foreign workspaces.
@@ -42,7 +42,7 @@ terminal state for foreign workspaces.
       topic for a concept — name the work or the insight, never the artifact or a role. Directory
       name = frontmatter `name`.
 - [ ] Create `skills/<name>/SKILL.md` with frontmatter `name` + `description`. Nothing else changes —
-      `package.json`'s `pi.skills` already points at `./skills`.
+      `package.json`'s `skills` already points at `./skills`.
 - [ ] `description` = triggering conditions only, "Use when …" (plus a "Not for …" negative trigger if
       the boundary is confusable) — never a summary of the steps (rule 5). Skills are reached by
       routing; a self-trigger description is for unmistakable triggers only (rule 4).

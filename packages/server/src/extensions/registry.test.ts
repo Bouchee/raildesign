@@ -61,7 +61,7 @@ describe("resolveExtensionSkillRoots", () => {
 			JSON.stringify({
 				name: "@acme/pi-demo",
 				exports: { ".": "./index.ts", "./package.json": "./package.json" },
-				pi: { skills: ["./skills", "./more-skills"] },
+				skills: ["./skills", "./more-skills"],
 			}),
 		);
 		const bare = join(extensionDir, "node_modules", "no-skills");
@@ -70,7 +70,7 @@ describe("resolveExtensionSkillRoots", () => {
 		return { root, entry };
 	}
 
-	it("resolves pi.skills directories from the extension's own dependency graph", () => {
+	it("resolves skills directories from the extension's own dependency graph", () => {
 		const { root, entry } = fixture();
 		try {
 			const roots = resolveExtensionSkillRoots({
@@ -104,7 +104,7 @@ describe("resolveExtensionSkillRoots", () => {
 					specifier: entry,
 					extension: { name: "demo", skillPackages: ["no-skills"] },
 				}),
-			).toThrow(/no-skills declares no pi\.skills/);
+			).toThrow(/no-skills declares no skills/);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

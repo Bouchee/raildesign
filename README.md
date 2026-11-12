@@ -12,7 +12,8 @@ unknown and require a new user decision. `/compact` summarizes model memory whil
 conversation for display and search. Automatic summaries use the selected verified model's context
 budget; summary failures preserve the previous memory.
 
-The SDK tool graph includes structured questions and visualization. Web search and page reading use
+The SDK tool graph includes structured questions, visualization, approved Skills and workspace instructions.
+Skill search, content reads, manual `/skill:name` commands and idle catalog reload share the current trust and enable policy. Web search and page reading use
 DeepSeek Search and Fetch with a separate host key configured in Extensions settings.
 
 The remaining advanced tools, desktop releases and private-server deployment have separate

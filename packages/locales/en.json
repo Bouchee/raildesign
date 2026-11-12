@@ -329,7 +329,6 @@
 	"chat.skills.reloadBusy": "Available once the current turn finishes",
 	"chat.skills.reloadFailed": "Couldn't reload skills",
 	"chat.skills.reloadHint": "Apply to this chat",
-	"chat.skills.reloadUnavailable": "Catalog settings are saved. Model skill execution and live session reload are not available yet.",
 	"chat.skills.reloadedBody": "This chat now uses the updated skills.",
 	"chat.skills.reloadedTitle": "Skills reloaded",
 	"chat.skills.saving": "Saving skill settings…",

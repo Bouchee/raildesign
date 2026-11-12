@@ -76,7 +76,7 @@ pipeline state is task-spec content; stage transitions are ordinary handoffs.
 
 ```mermaid
 flowchart LR
-  rule([before_agent_start rule]) --> router[root router]
+  rule([host SDK instructions rule]) --> router[root router]
   router --> ps[setting-up-a-project — dispatcher]
   router --> bs[brainstorming]
   router --> ship[shipping-a-pr]
@@ -223,7 +223,7 @@ rejection row ("Off base — ask me directly") is gone: it was an *answer* that 
 the local sessions held 30 agent-authored look-alikes ("Не то — спроси иначе") that hid the real Other
 row. A discuss-first answer is therefore never settled on a guess — the agent explains, then asks again.
 Meta-rule 4's entry model is in effect: at the start of new work the parent module's
-`before_agent_start` rule points workflow-eligible work at `choosing-a-workflow`, which routes to today's
+`host SDK instructions` rule points workflow-eligible work at `choosing-a-workflow`, which routes to today's
 family; already-routed work resumes, and direct work bypasses the router. `writing-workflow-skills` (self-trigger only) and the concept skills (reached by name) sit outside
 the routing table.
 

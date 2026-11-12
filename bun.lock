@@ -225,18 +225,6 @@
         "typebox": "*",
       },
     },
-    "packages/pi-thinkrail-workflow": {
-      "name": "pi-thinkrail-workflow",
-      "version": "0.0.0",
-      "devDependencies": {
-        "@earendil-works/pi-coding-agent": "catalog:",
-        "@types/bun": "catalog:",
-        "typescript": "catalog:",
-      },
-      "peerDependencies": {
-        "@earendil-works/pi-coding-agent": "*",
-      },
-    },
     "packages/pi-todos": {
       "name": "pi-todos",
       "version": "0.0.0",
@@ -297,11 +285,11 @@
         "@thinkrail/extension-api": "workspace:*",
         "@thinkrail/locales": "workspace:*",
         "@thinkrail/shared": "workspace:*",
+        "@thinkrail/workflow": "workspace:*",
         "bun-pty": "0.5.2",
         "openai": "catalog:",
         "pi-background-commands": "workspace:*",
         "pi-spec-graph": "workspace:*",
-        "pi-thinkrail-workflow": "workspace:*",
         "pi-todos": "workspace:*",
         "pino": "10.4.0",
         "pino-pretty": "13.2.0",
@@ -388,6 +376,14 @@
     },
     "packages/website-analytics": {
       "name": "@thinkrail/website-analytics",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+      },
+    },
+    "packages/workflow": {
+      "name": "@thinkrail/workflow",
       "version": "0.0.0",
       "devDependencies": {
         "@types/bun": "catalog:",
@@ -1196,6 +1192,8 @@
     "@thinkrail/website": ["@thinkrail/website@workspace:apps/website"],
 
     "@thinkrail/website-analytics": ["@thinkrail/website-analytics@workspace:packages/website-analytics"],
+
+    "@thinkrail/workflow": ["@thinkrail/workflow@workspace:packages/workflow"],
 
     "@turbo/darwin-64": ["@turbo/darwin-64@2.11.10", "", { "os": "darwin", "cpu": "x64" }, "sha512-By4idRap5+nLnMuRzLB4qkOPRlvNdyY1ne4VJYDyUoUB11H94k7uif9mbe3JT8JSNXs1D68uMcBj6hJ/jMQRvA=="],
 
@@ -2064,8 +2062,6 @@
     "pi-background-commands": ["pi-background-commands@workspace:packages/pi-background-commands"],
 
     "pi-spec-graph": ["pi-spec-graph@workspace:packages/spec-graph"],
-
-    "pi-thinkrail-workflow": ["pi-thinkrail-workflow@workspace:packages/pi-thinkrail-workflow"],
 
     "pi-todos": ["pi-todos@workspace:packages/pi-todos"],
 

@@ -135,7 +135,39 @@ export default function ChatView({
 				.find((w) => w.id === workspaceId)?.projectId,
 	);
 	const [skillsOpen, setSkillsOpen] = useState(false);
+	const [commandsRefreshTick, setCommandsRefreshTick] = useState(0);
 	const skillsStale = useAppStore((s) => selectSkillsStale(s, workspaceId, sessionId));
+	useEffect(() => {
+		if (!sessionExists || status !== "connected") return;
+		let active = true;
+		getTransport()
+			.request("session.getCommands", { sessionId })
+			.then((available) => {
+				const state = useAppStore.getState();
+				if (
+					active &&
+					state.status === "connected" &&
+					state.connectionGeneration === connectionGeneration &&
+					state.sessions[sessionId]
+				)
+					state.setCommands(sessionId, available);
+			})
+			.catch((error: unknown) => {
+				if (active && useAppStore.getState().connectionGeneration === connectionGeneration)
+					toast.error(errorText(error));
+			});
+		return () => {
+			active = false;
+		};
+	}, [
+		sessionId,
+		sessionExists,
+		status,
+		connectionGeneration,
+		syncedConnectionGeneration,
+		commandsRefreshTick,
+	]);
+
 	const workspaceRoot = useAppStore(
 		(s) => selectWorkspaceById(s, workspaceId)?.worktreePath ?? undefined,
 	);
@@ -636,7 +668,10 @@ export default function ChatView({
 						sessionId,
 						streaming: isStreaming,
 						stale: skillsStale,
-						allowReload: false,
+						onReloaded: (tick) => {
+							useAppStore.getState().markSkillsSynced(sessionId, tick);
+							setCommandsRefreshTick((current) => current + 1);
+						},
 					}}
 					open={skillsOpen}
 					onOpenChange={setSkillsOpen}

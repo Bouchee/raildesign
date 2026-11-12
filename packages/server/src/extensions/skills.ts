@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import type { ServerExtensionEntry } from "./registry";
 
 interface SkillPackageManifest {
-	pi?: { skills?: string[] };
+	skills?: string[];
 }
 
 export function resolveExtensionSkillRoots(entry: ServerExtensionEntry): string[] {
@@ -15,10 +15,10 @@ export function resolveExtensionSkillRoots(entry: ServerExtensionEntry): string[
 	return skillPackages.flatMap((specifier) => {
 		const manifestPath = requireFromExtension.resolve(`${specifier}/package.json`);
 		const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as SkillPackageManifest;
-		const skills = manifest.pi?.skills ?? [];
+		const skills = manifest.skills ?? [];
 		if (skills.length === 0) {
 			throw new Error(
-				`${entry.extension.name}: skill package ${specifier} declares no pi.skills directories`,
+				`${entry.extension.name}: skill package ${specifier} declares no skills directories`,
 			);
 		}
 		return skills.map((dir) => resolve(dirname(manifestPath), dir));
