@@ -3,6 +3,7 @@ id: task-verbose-logging
 type: task-spec
 status: draft
 title: Add a --verbose flag to the resize CLI
+parent: acme-resize
 ---
 
 ## Request
@@ -13,12 +14,13 @@ Add a `--verbose` flag that logs each resize step as it happens.
 
 1. Flag name: `--verbose` (long form only).
 2. Scope: per-file progress lines during the resize pipeline.
-3. Log format: plain text lines (human-readable one-line messages per resize step), not JSON.
 
-## Open questions
+## Open questions (round pending)
 
-- None. All open questions resolved.
+- Log format: plain text lines or JSON objects? Ask the user via ask_user_question, then record
+  the answer under Decisions.
 
 ## Next step
 
-Design is settled. Ready to implement when approved — do not start implementing yet.
+Resolve the open question above in ONE ask_user_question round, record the decision in this file,
+and stop — do not start implementing.

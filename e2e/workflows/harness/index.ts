@@ -15,6 +15,13 @@ export {
 	maskFixtureMarkdown,
 	unmaskFixtureMarkdown,
 } from "./presets";
+export {
+	answerResumeQuestion,
+	RESUME_FORMAT_ANSWER,
+	RESUME_TASK_PATH,
+	resumeChecks,
+	seedResumeWorkspace,
+} from "./resume";
 export { appendRunRecord, type RunRecord } from "./runlog";
 export { driveTurn, openSeededSession, type TurnOptions, type WorkflowSession } from "./session";
 export {

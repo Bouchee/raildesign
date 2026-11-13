@@ -10,7 +10,7 @@ tags: [testing, workflow-system]
 
 ## Scope / trigger
 
-The routing and importing live scenarios use the isolated browser host and its current SDK sessions. Deterministic
+The routing, importing and smoke live scenarios use the isolated browser host and its current SDK sessions. Deterministic
 helpers check tool/skill discipline, files, YAML spec metadata, budgets and structured replies. The old
 pi headless scenario runner, credential-copying environment and JSONL transcript presets are retired.
 
@@ -128,6 +128,28 @@ filesystem and Git reads out of polling before validation. Final results still c
 
 ## Wrong / correct
 
+`smoke.live.spec.ts` runs the two original smoke checkpoints sequentially with a fresh SDK session.
+The retained Markdown fixture now has an unresolved task at `.thinkrail/context/TASK-verbose-logging.md`;
+it contains no recorded model conversation. One actual log-format questionnaire receives an explicit
+plain-text answer in the native single- or multi-select result shape. The answer preserves the original
+test-user brief's scope: confirm only the format choice, add no other requirements or decisions
+(including future compatibility contracts), and stop without implementing. Before replying, the initial
+task bytes, tracked seed diff and non-task files must be unchanged. Immediately after session creation,
+the scenario captures the complete ignored-path baseline, including the pending task and the host's
+scratch `.gitignore`. Every checkpoint requires that exact baseline and unchanged scratch-ignore bytes;
+after natural successful settlement, only the task bytes may differ and the exact answer receipt and
+resolved decision are required. No implementation or early write can pass on an assistant claim.
+The scenario disposes the host session, reconnects through a new wire and reattaches the saved record.
+It compares the entire restored transcript, asks for the flag and chosen format without supplying
+either answer, forbids every tool during recall and retains the complete history prefix afterwards.
+Proof attachments retain source identity, both turns, native answer, file bytes and seed-based Git
+effects, including partial evidence on failure. Pure helper regressions reject wrong questionnaires,
+cancelled/missing receipts, unresolved tasks and a different recorded format. This adds acceptance
+coverage over existing Session/RunState lifecycle; it adds no runner or session backend.
+The first live attempt took 125 seconds to reach the questionnaire, including per-call review. Only
+the decision turn therefore uses a 300-second wall budget; recall retains the shared 180-second default.
+The combined test timeout is 540 seconds. SDK turn limits and the shared driver defaults are unchanged.
+
 Use isolated browser/SDK scenarios for production acceptance. Questions use the current
 `session.respondToTool` route with host-provided run/interaction/revision anchors. Do not resurrect
 the old question mailbox, `SessionManager`, pi-auth copying or a fake-success runtime adapter.
@@ -136,6 +158,6 @@ The current Stage 3 live scenario checks manual Skill invocation, workspace inst
 Plan behavior. These checks do not replace complete workflow routing, codebase importing or
 multi-round clarification followed by implementation and restored-conversation recall.
 
-The original Pi implementations remain in Git history. Routing and importing have current SDK cases;
-multi-round clarification/restored-conversation recall still needs equivalent SDK acceptance. Retained
-Markdown workspace fixtures may support those scenarios. No helper reads an old Pi session transcript.
+The original Pi implementations remain in Git history. Routing, importing and clarification with
+restored-conversation recall have current SDK cases; source presence does not establish a live pass.
+No helper reads an old Pi session transcript.

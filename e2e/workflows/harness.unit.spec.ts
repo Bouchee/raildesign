@@ -19,6 +19,7 @@ import { parseFile, serializeFrontmatter } from "@thinkrail/spec-graph/core";
 import type { E2eWire } from "../fixtures/wire";
 import {
 	answerImportQuestions,
+	answerResumeQuestion,
 	checkBudget,
 	checks,
 	DEFAULT_BUDGET,
@@ -33,8 +34,12 @@ import {
 	parsePersonaReply,
 	parseSimReply,
 	pickRecommended,
+	RESUME_FORMAT_ANSWER,
+	RESUME_TASK_PATH,
+	resumeChecks,
 	runChecks,
 	seedImportWorkspace,
+	seedResumeWorkspace,
 	signals,
 	skipAll,
 	unmaskFixtureMarkdown,
@@ -50,6 +55,110 @@ const ADOPTION_QUESTION = {
 		{ label: "docs/adr/", description: "The accepted pure-resize-pipeline decision" },
 	],
 };
+
+const LOG_FORMAT_QUESTION = {
+	header: "Log format",
+	question: "Which log format should --verbose use?",
+	multiSelect: false,
+	options: [
+		{ label: "JSON", description: "Structured objects" },
+		{ label: "Plain text", description: "Human-readable lines" },
+	],
+};
+
+test("resume: the explicit plain-text answer keeps the actual native question and selection shape", () => {
+	const call = {
+		toolCallId: "format",
+		toolName: "ask_user_question",
+		args: { questions: [LOG_FORMAT_QUESTION] },
+	};
+	for (const multiSelect of [false, true]) {
+		const question = { ...LOG_FORMAT_QUESTION, multiSelect };
+		const args = { questions: [question] };
+		const response = answerResumeQuestion({ ...call, args });
+		expect(response).toEqual({
+			cancelled: false,
+			answers: [
+				{
+					questionIndex: 0,
+					question: question.question,
+					kind: multiSelect ? "multi" : "custom",
+					...(multiSelect ? { selected: [] } : {}),
+					answer: RESUME_FORMAT_ANSWER,
+				},
+			],
+		});
+		expect(buildQuestionnaireResponse(response, args).details).toEqual(response);
+	}
+	expect(() => answerResumeQuestion({ ...call, args: {} })).toThrow("one log-format question");
+	expect(() =>
+		answerResumeQuestion({
+			...call,
+			args: { questions: [LOG_FORMAT_QUESTION, LOG_FORMAT_QUESTION] },
+		}),
+	).toThrow("one log-format question");
+	expect(() =>
+		answerResumeQuestion({
+			...call,
+			args: { questions: [{ ...LOG_FORMAT_QUESTION, header: "Scope", question: "Which files?" }] },
+		}),
+	).toThrow("unresolved log-format choice");
+});
+
+test("resume: a changed file or assistant claim cannot replace the answer receipt and resolved decision", () => {
+	const cwd = mkdtempSync(join(tmpdir(), "workflow-resume-"));
+	try {
+		seedResumeWorkspace(cwd);
+		const taskPath = join(cwd, RESUME_TASK_PATH);
+		const pendingTask = readFileSync(taskPath, "utf8");
+		const call = {
+			toolCallId: "format",
+			toolName: "ask_user_question",
+			args: { questions: [LOG_FORMAT_QUESTION] },
+		};
+		const log = new EventLog();
+		log.push(toolStart(call.toolCallId, call.toolName, call.args));
+		log.push(toolEnd(call.toolCallId, call.toolName, { details: answerResumeQuestion(call) }));
+		const decisionCheck = resumeChecks()[2];
+		const receiptCheck = resumeChecks()[1];
+		if (!decisionCheck || !receiptCheck) throw new Error("Missing resume checks");
+		expect(receiptCheck.run({ log, cwd }).pass).toBe(true);
+		expect(decisionCheck.run({ log, cwd }).pass).toBe(false);
+		const decidedTask = pendingTask
+			.replace(
+				"2. Scope: per-file progress lines during the resize pipeline.",
+				"2. Scope: per-file progress lines during the resize pipeline.\n3. Log format: plain text lines.",
+			)
+			.replace(
+				/- Log format: plain text lines or JSON objects\?[\s\S]*?the answer under Decisions\./,
+				"- None. The log-format question is resolved.",
+			);
+		writeFileSync(taskPath, decidedTask);
+		expect(decisionCheck.run({ log, cwd }).pass).toBe(true);
+		writeFileSync(
+			taskPath,
+			decidedTask.replace("3. Log format: plain text lines.", "3. Log format: JSON."),
+		);
+		expect(decisionCheck.run({ log, cwd }).pass).toBe(false);
+		writeFileSync(
+			taskPath,
+			decidedTask.replace(
+				"3. Log format: plain text lines.",
+				"3. Log format: JSON, not plain text.",
+			),
+		);
+		expect(decisionCheck.run({ log, cwd }).pass).toBe(false);
+		const wrongReceipt = new EventLog();
+		wrongReceipt.push(toolStart(call.toolCallId, call.toolName, call.args));
+		wrongReceipt.push(
+			toolEnd(call.toolCallId, call.toolName, { details: { answers: [], cancelled: true } }),
+		);
+		expect(receiptCheck.run({ log: wrongReceipt, cwd }).pass).toBe(false);
+		expect(receiptCheck.run({ log: new EventLog(), cwd }).pass).toBe(false);
+	} finally {
+		rmSync(cwd, { recursive: true, force: true });
+	}
+});
 
 function importedFixture(cwd: string) {
 	seedImportWorkspace(cwd, true);
