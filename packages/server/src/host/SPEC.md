@@ -84,6 +84,28 @@ without retaining its answer; its replay reports that the answer is unavailable,
 Method diagnostics log only known method names or fixed `unknown method`, never raw parameters or
 unregistered names. Handler errors return a typed failure and a coded error where supplied.
 
+## Outbound backpressure
+
+Each JSON socket has a 256 MiB outbound buffer limit; `CreateServerOptions.outboundBufferLimitBytes`
+overrides it for focused transport tests. Replies larger than Bun's default 16 MiB buffer remain
+deliverable, including replies queued behind them. The inbound frame limit is independent.
+
+All JSON replies and pushes use `socketSend.sendOrQuarantine`, including subscribed fan-out,
+owner-addressed MCP/search output and terminal writes. A buffered send remains live. A dropped frame
+quarantines that socket with one local `WS_SLOW_CONSUMER` warning and prevents further sends. The host
+closes only after its existing buffer drains, keeping the disconnected-client replay reap from starting
+early. A socket still stuck after 30 seconds is terminated. Other sockets keep receiving their own
+frames. The dedicated speech socket retains its separate binary relay.
+
+`HeldSnapshots` retains only the newest unsent full assistant partial or tool-result snapshot per
+session/stream on a backpressured socket. Drain and the periodic reconciler flush it even if its producer
+emits no more events. Same-session non-snapshot events, normalized state and interaction frames flush
+that session's held snapshots first; their original SDK `runId` and monotonic `seq` remain intact.
+Fan-out still checks channel subscriptions, protocol floors and projectless-chat visibility. Session
+deletion, socket teardown and quarantine discard held snapshots. Terminal output resumes only after
+snapshot flushing no longer waits on the socket buffer.
+Held storage has one frame per pending stream key and no separate byte budget.
+
 ## SDK session wiring
 
 The host injects workspace-to-project and session/event/interaction publishers into the single agent

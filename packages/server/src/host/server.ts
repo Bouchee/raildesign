@@ -139,6 +139,7 @@ import { serveUserFonts } from "./fontRoutes";
 import { setFsNudgePublisher } from "./fsNudge";
 import { applyGitCeiling } from "./gitCeiling";
 import { handleRequest, requestMethodDiagnostic, workspaceCreationHandoff } from "./handlers";
+import { HeldSnapshots, terminalsMayResume } from "./heldSnapshots";
 import { provisionInitialTerminal } from "./initialTerminal";
 import { reloadLiveSessions } from "./mcp";
 import {
@@ -157,11 +158,8 @@ import {
 	refreshOpenProjectReviews,
 	stampSessionActivity,
 } from "./settledLifecycle";
-import {
-	BACKPRESSURE_RECONCILE_MS,
-	drainedClientKeys,
-	terminalDeliveryForSendStatus,
-} from "./terminalSend";
+import { type SlowConsumerError, sendOrQuarantine, settleSlowConsumer } from "./socketSend";
+import { BACKPRESSURE_RECONCILE_MS, drainedClientKeys } from "./terminalSend";
 import { titleToolHost } from "./titleTool";
 import { workspaceToolsHost } from "./workspaceTools";
 
@@ -176,6 +174,7 @@ export interface CreateServerOptions {
 		check(): Promise<HostUpdateNotice | null>;
 		run(): Promise<void>;
 	};
+	outboundBufferLimitBytes?: number;
 }
 
 export interface RunningServer {
@@ -190,12 +189,17 @@ interface SocketData {
 	/** Present only on a `/speech` socket, which bypasses the JSON request wire entirely. */
 	speech?: SpeechRelay;
 	speechSocket?: true;
+	slowSince?: number;
+	held?: HeldSnapshots;
 }
 
 const CLIENT_REPLAY_RETENTION_MS = 60_000;
+const WS_OUTBOUND_BUFFER_LIMIT_BYTES = 256 * 1024 * 1024;
 const RECENT_FOLDER_CHECK_BUDGET_MS = 250;
 
 const log = logger("host");
+const warnSlowConsumer = (message: string, error: SlowConsumerError): void =>
+	log.warn(message, error);
 
 const isRequestId = (id: unknown): id is string => typeof id === "string";
 
@@ -282,6 +286,7 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 		projectPath,
 		appVersion,
 		hostUpdate,
+		outboundBufferLimitBytes = WS_OUTBOUND_BUFFER_LIMIT_BYTES,
 	} = options;
 
 	setSessionProjectResolver((workspaceId) => {
@@ -408,6 +413,7 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 			},
 			websocket: {
 				maxPayloadLength: WS_MAX_FRAME_BYTES,
+				backpressureLimit: outboundBufferLimitBytes,
 				open(ws) {
 					if (shuttingDown) {
 						ws.close();
@@ -419,6 +425,12 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 					}
 					const replaced = sockets.get(ws.data.clientKey);
 					sockets.set(ws.data.clientKey, ws);
+					ws.data.held = new HeldSnapshots({
+						quarantined: () => ws.data.slowSince !== undefined,
+						getBufferedAmount: () => ws.getBufferedAmount(),
+						send: (frame) =>
+							sendOrQuarantine(ws, frame, `${WS_CHANNELS.sessionEvent} push`, warnSlowConsumer),
+					});
 					if (replaced && replaced !== ws) replaced.close();
 					terminalBackpressured.delete(ws.data.clientKey);
 					const pendingReap = reapTimers.get(ws.data.clientKey);
@@ -477,14 +489,13 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 						...(hostUpdateNotice ? { hostUpdate: hostUpdateNotice } : {}),
 					};
 
-					const welcomeStatus = ws.send(
+					const welcomeDelivery = sendOrQuarantine(
+						ws,
 						JSON.stringify({ channel: WS_CHANNELS.serverWelcome, data: welcome }),
+						`${WS_CHANNELS.serverWelcome} push`,
+						warnSlowConsumer,
 					);
-					const welcomeDelivery = terminalDeliveryForSendStatus(welcomeStatus);
-					if (welcomeDelivery === "unavailable") {
-						ws.close();
-						return;
-					}
+					if (welcomeDelivery === "dropped") return;
 					if (welcomeDelivery === "backpressured") {
 						terminalBackpressured.add(ws.data.clientKey);
 					}
@@ -565,7 +576,7 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 							},
 							methodDiagnostic,
 						);
-						if (ws.send(response) === 0) ws.close();
+						sendOrQuarantine(ws, response, `${methodDiagnostic} reply`, warnSlowConsumer);
 					} catch (err) {
 						const error = err instanceof Error ? err.message : String(err);
 						if (err instanceof RequestReplayOverflowError && err.load) {
@@ -578,12 +589,14 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 							error,
 							...(code ? { errorCode: code } : {}),
 						});
-						if (ws.send(reply) === 0) ws.close();
+						sendOrQuarantine(ws, reply, `${methodDiagnostic} reply`, warnSlowConsumer);
 					}
 				},
 				drain(ws) {
 					if (ws.data.speechSocket) return;
+					if (settleSlowConsumer(ws) !== "healthy") return;
 					if (sockets.get(ws.data.clientKey) !== ws) return;
+					if (!terminalsMayResume(ws.data.held?.drain())) return;
 					terminalBackpressured.delete(ws.data.clientKey);
 					resumeClientTerminals(ws.data.clientKey);
 				},
@@ -592,6 +605,7 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 						ws.data.speech?.close();
 						return;
 					}
+					ws.data.held?.clear();
 					const { clientKey } = ws.data;
 					if (stopping) return;
 					if (sockets.get(clientKey) === ws) {
@@ -610,6 +624,10 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 	}
 
 	const backpressureReconciler = setInterval(() => {
+		for (const socket of sockets.values()) {
+			if (settleSlowConsumer(socket) === "healthy") socket.data.held?.drain();
+			else socket.data.held?.clear();
+		}
 		const drained = drainedClientKeys(terminalBackpressured, (clientKey) =>
 			sockets.get(clientKey)?.getBufferedAmount(),
 		);
@@ -622,13 +640,54 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 		}
 	}, BACKPRESSURE_RECONCILE_MS);
 
+	type PushSocket = Bun.ServerWebSocket<SocketData>;
+	const fanOut = (
+		channel: string,
+		admits: (socket: PushSocket) => boolean,
+		deliver: (socket: PushSocket) => void,
+	): void => {
+		for (const socket of sockets.values()) {
+			if (socket.isSubscribed(channel) && admits(socket)) deliver(socket);
+		}
+	};
+
+	const pushTo =
+		(channel: string, frame: string, afterSession?: string) =>
+		(socket: PushSocket): void => {
+			if (afterSession !== undefined && socket.data.held?.barrier(afterSession) === false) return;
+			sendOrQuarantine(socket, frame, `${channel} push`, warnSlowConsumer);
+		};
+
+	const admitsScope = (scope: {
+		workspaceId?: string;
+		projectId?: string;
+		belowProtocol?: number;
+	}): ((socket: PushSocket) => boolean) => {
+		const aboutChats =
+			(scope.workspaceId !== undefined && isChatWorkspaceId(scope.workspaceId)) ||
+			(scope.projectId !== undefined && isChatsContainerId(scope.projectId));
+		const floor = scope.belowProtocol ?? 0;
+		return ({ data: { protocolVersion } }) =>
+			protocolVersion >= floor && (!aboutChats || seesChats(protocolVersion));
+	};
+
+	const publishScoped = (
+		channel: string,
+		data: unknown,
+		scope: { workspaceId?: string; projectId?: string; belowProtocol?: number } = {},
+		afterSession?: string,
+	) => {
+		fanOut(
+			channel,
+			admitsScope(scope),
+			pushTo(channel, JSON.stringify({ channel, data }), afterSession),
+		);
+	};
+
 	const publishHostUpdate = (notice: HostUpdateNotice): void => {
 		if (!hostUpdateActive) return;
 		hostUpdateNotice = notice;
-		server.publish(
-			WS_CHANNELS.hostUpdateAvailable,
-			JSON.stringify({ channel: WS_CHANNELS.hostUpdateAvailable, data: notice }),
-		);
+		publishScoped(WS_CHANNELS.hostUpdateAvailable, notice);
 	};
 
 	const clearHostUpdateTimer = (): void => {
@@ -691,53 +750,26 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 		if (terminalBackpressured.has(clientKey)) return "unavailable";
 		const ws = sockets.get(clientKey);
 		if (!ws) return "unavailable";
-		try {
-			const delivery = terminalDeliveryForSendStatus(ws.send(JSON.stringify({ channel, data })));
-			if (delivery !== "delivered") terminalBackpressured.add(clientKey);
-			return delivery;
-		} catch {
-			terminalBackpressured.add(clientKey);
-			ws.close();
-			return "unavailable";
-		}
+		const delivery = sendOrQuarantine(
+			ws,
+			JSON.stringify({ channel, data }),
+			`${channel} push`,
+			warnSlowConsumer,
+		);
+		if (delivery !== "delivered") terminalBackpressured.add(clientKey);
+		return delivery === "dropped" ? "unavailable" : delivery;
 	});
 
 	setSearchTextPublisher((clientKey, batch) => {
 		const ws = sockets.get(clientKey);
 		if (!ws || ws.data.protocolVersion < TEXT_SEARCH_PROTOCOL_VERSION) return;
-		try {
-			ws.send(JSON.stringify({ channel: WS_CHANNELS.searchTextResults, data: batch }));
-		} catch {
-			ws.close();
-		}
+		sendOrQuarantine(
+			ws,
+			JSON.stringify({ channel: WS_CHANNELS.searchTextResults, data: batch }),
+			`${WS_CHANNELS.searchTextResults} push`,
+			warnSlowConsumer,
+		);
 	});
-
-	/**
-	 * A push about a chat without a project, or its container, reaches only sockets that know the
-	 * kind; everything else broadcasts. One sender for every id-carrying channel.
-	 */
-	const publishScoped = (
-		channel: string,
-		data: unknown,
-		scope: { workspaceId?: string; projectId?: string; belowProtocol?: number },
-	) => {
-		const frame = JSON.stringify({ channel, data });
-		const aboutChats =
-			(scope.workspaceId !== undefined && isChatWorkspaceId(scope.workspaceId)) ||
-			(scope.projectId !== undefined && isChatsContainerId(scope.projectId));
-		const floor = scope.belowProtocol ?? 0;
-		if (floor === 0 && !aboutChats) {
-			server.publish(channel, frame);
-			return;
-		}
-		for (const socket of sockets.values()) {
-			if (socket.data.protocolVersion < floor) continue;
-			if (aboutChats && !seesChats(socket.data.protocolVersion)) continue;
-			try {
-				socket.send(frame);
-			} catch {}
-		}
-	};
 
 	setProjectPublisher((project) => {
 		publishScoped(WS_CHANNELS.projectUpdated, project, { projectId: project.id });
@@ -760,8 +792,7 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 			event.kind === "changed"
 				? WS_CHANNELS.workspaceCreationChanged
 				: WS_CHANNELS.workspaceCreationRemoved;
-		const data = event.kind === "changed" ? event.creation : event.removed;
-		server.publish(channel, JSON.stringify({ channel, data }));
+		publishScoped(channel, event.kind === "changed" ? event.creation : event.removed);
 	});
 
 	const publishWorkspaceEvent = (event: WorkspaceLifecycleEvent) => {
@@ -802,18 +833,12 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 		if (changedRoot) hostSearch().invalidateRoot(changedRoot);
 	};
 
-	const nudge = (channel: WsChannel) => () =>
-		server.publish(channel, JSON.stringify({ channel, data: {} }));
+	const nudge = (channel: WsChannel) => () => publishScoped(channel, {});
 	const stopLocalesWatch = watchLocalLocales({ onChange: nudge(WS_CHANNELS.localesChanged) });
 	const stopThemesWatch = watchUserThemes({ onChange: nudge(WS_CHANNELS.themesChanged) });
 	const stopFontsWatch = watchUserFonts({ onChange: nudge(WS_CHANNELS.fontsChanged) });
 	const stopMcpWatch = watchUserMcpConfig();
-	setSpeechPublisher((status) =>
-		server.publish(
-			WS_CHANNELS.speechChanged,
-			JSON.stringify({ channel: WS_CHANNELS.speechChanged, data: status }),
-		),
-	);
+	setSpeechPublisher((status) => publishScoped(WS_CHANNELS.speechChanged, status));
 	void initSpeech().catch((err) => log.warn("voice input state could not be read", err));
 	setWatchPublisher(publishFsChanged);
 	setIgnoredPathsResolver((worktreePath, paths) =>
@@ -833,22 +858,9 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 		publishFsChanged({ workspaceId, paths: [], truncated: false, skillChange: "none" });
 	});
 
-	setReviewPublisher((payload) => {
-		server.publish(
-			WS_CHANNELS.reviewChanged,
-			JSON.stringify({
-				channel: WS_CHANNELS.reviewChanged,
-				data: payload,
-			}),
-		);
-	});
+	setReviewPublisher((payload) => publishScoped(WS_CHANNELS.reviewChanged, payload));
 
-	setSettingsPublisher((config) => {
-		server.publish(
-			WS_CHANNELS.settingsChanged,
-			JSON.stringify({ channel: WS_CHANNELS.settingsChanged, data: config }),
-		);
-	});
+	setSettingsPublisher((config) => publishScoped(WS_CHANNELS.settingsChanged, config));
 
 	setSessionCreatedPublisher((payload: SessionCreatedPayload) => {
 		publishScoped(WS_CHANNELS.sessionCreated, payload, { workspaceId: payload.workspaceId });
@@ -856,10 +868,16 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 
 	setSessionStatePublisher((record: SessionStateRecord) => {
 		stampSessionActivity(record);
-		publishScoped(WS_CHANNELS.sessionState, record, { workspaceId: record.workspaceId });
+		publishScoped(
+			WS_CHANNELS.sessionState,
+			record,
+			{ workspaceId: record.workspaceId },
+			record.sessionId,
+		);
 	});
 
 	setSessionDeletedPublisher((payload: SessionDeletedPayload) => {
+		for (const socket of sockets.values()) socket.data.held?.forgetSession(payload.sessionId);
 		publishScoped(WS_CHANNELS.sessionDeleted, payload, { workspaceId: payload.workspaceId });
 	});
 
@@ -889,26 +907,32 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 		void turnTracker
 			.observe(payload.sessionId, payload.event)
 			.catch((error) => log.warn("turn snapshot failed", error));
-		publishScoped(WS_CHANNELS.sessionEvent, payload, { workspaceId });
+		const frame = JSON.stringify({ channel: WS_CHANNELS.sessionEvent, data: payload });
+		fanOut(WS_CHANNELS.sessionEvent, admitsScope({ workspaceId }), (socket) => {
+			socket.data.held?.deliver(payload, frame);
+		});
 	});
-	setContinuationPublisher((continuation) => {
-		server.publish(
-			WS_CHANNELS.chatContinuation,
-			JSON.stringify({ channel: WS_CHANNELS.chatContinuation, data: continuation }),
-		);
-	});
+	setContinuationPublisher((continuation) =>
+		publishScoped(WS_CHANNELS.chatContinuation, continuation),
+	);
 	setReviewFailedPublisher((failure) =>
 		publishScoped(WS_CHANNELS.reviewFailed, failure, { workspaceId: failure.workspaceId }),
 	);
 
 	setExtUiPublisher((request) => {
 		const workspaceId = getSessionWorkspaceId(request.sessionId);
-		if (workspaceId) publishScoped(WS_CHANNELS.sessionExtensionUi, request, { workspaceId });
+		if (workspaceId)
+			publishScoped(WS_CHANNELS.sessionExtensionUi, request, { workspaceId }, request.sessionId);
 	});
 	setMcpLoginPublisher((push, ownerClientKey) => {
-		sockets
-			.get(ownerClientKey)
-			?.send(JSON.stringify({ channel: WS_CHANNELS.providerLogin, data: push }));
+		const ws = sockets.get(ownerClientKey);
+		if (ws)
+			sendOrQuarantine(
+				ws,
+				JSON.stringify({ channel: WS_CHANNELS.providerLogin, data: push }),
+				`${WS_CHANNELS.providerLogin} push`,
+				warnSlowConsumer,
+			);
 	});
 	setMcpStatusPublisher((snapshot) => {
 		publishScoped(WS_CHANNELS.mcpStatus, snapshot, { workspaceId: snapshot.workspaceId });

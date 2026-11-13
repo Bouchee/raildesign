@@ -15,6 +15,14 @@ The application owns message, tool, usage and event types in `sessionProtocol.ts
 
 ## Responsibility
 
+`session.event` full assistant partials and `tool_execution_update.partialResult` are replaceable
+snapshots. A backpressured connection may receive only the newest unsent snapshot per assistant stream
+or tool call, carrying its original `{sessionId,runId,seq}`. Consumers render the full snapshot rather
+than accumulating nested deltas or requiring every content-boundary event. Other events remain
+ordered and are not replaced. A held snapshot precedes later non-snapshot events, `session.state` and
+`session.interaction` for that session. Session deletion and connection teardown discard held snapshots.
+A future delta-only representation or consumer requiring every event must revisit this contract.
+
 `webAccess.status` returns `{ configured }` for the separate DeepSeek web-tool key.
 `webAccess.configure` accepts a new key and returns the same status shape.
 The host never returns a stored key through these methods or application settings broadcasts.

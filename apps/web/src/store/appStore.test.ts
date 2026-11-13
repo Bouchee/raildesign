@@ -1,6 +1,7 @@
 import { beforeEach, expect, test } from "bun:test";
 import {
 	type AppConfig,
+	type AssistantMessage,
 	DEFAULT_CONFIG,
 	type ExtUiRequest,
 	type HostUpdateNotice,
@@ -1404,6 +1405,50 @@ test("a message_update with no prior message_start still builds the turn (mid-st
 
 	store.handleSessionEvent(assistantText("partial reply"), "a");
 	expect(rt("a").turns.filter((t) => t.kind === "assistant")).toHaveLength(1);
+});
+
+test("a coalesced SDK partial keeps its full text and final correction across sequence gaps", () => {
+	const store = useAppStore.getState();
+	store.openChatSession("ws1", "held", null, "medium");
+	const final: AssistantMessage = {
+		id: "held-answer",
+		role: "assistant",
+		content: [{ type: "text", text: "whole reply" }],
+		timestamp: 0,
+		api: "fixture",
+		provider: "fixture",
+		model: "fixture",
+		stopReason: "stop",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+	};
+	const partial: AssistantMessage = { ...final, content: [{ type: "text", text: "whole re" }] };
+	const update: SessionEventPayload = {
+		sessionId: "held",
+		runId: "run",
+		seq: 10,
+		event: {
+			type: "message_update",
+			message: partial,
+			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "re", partial },
+		},
+	};
+	store.handleSessionEvents([update]);
+	expect(rt("held").turns).toMatchObject([
+		{ kind: "assistant", message: partial, streaming: true },
+	]);
+	store.handleSessionEvents([
+		{ sessionId: "held", runId: "run", seq: 20, event: { type: "message_end", message: final } },
+		update,
+	]);
+	expect(rt("held").turns).toMatchObject([{ kind: "assistant", message: final, streaming: false }]);
+	expect(rt("held").lastEventSeq).toBe(20);
 });
 
 test("a durable session title event renames an open chat without moving attention", () => {
