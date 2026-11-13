@@ -128,7 +128,9 @@ records keeps its resolved spelling (architecture Decision 22).
 ## Repository cloning
 
 `inspectCloneDestination` returns the validated absolute destination for the UI preview without reserving
-it; clone repeats that check before claiming the folder. `cloneProject` accepts a repository URL, host parent path, one folder name and optional positive integer
+it; clone repeats that check before claiming the folder. Windows device names are rejected through
+`isWindowsDeviceName` from contracts, including superscript ¹²³ suffixes and spaces before an extension.
+`cloneProject` accepts a repository URL, host parent path, one folder name and optional positive integer
 history depth. HTTP(S), SSH, Git, SCP-style SSH and local `file:` URLs are accepted; remote helpers,
 embedded passwords, HTTP userinfo, query strings, fragments and backslashes are rejected. Backslashes
 are ambiguous between the web URL parser and Git, so validation never accepts one spelling while Git

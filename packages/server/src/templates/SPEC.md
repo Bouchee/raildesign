@@ -15,11 +15,11 @@ configuration, credentials or prompt files. The host resolves the optional proje
 
 ## Public surface
 
-`TemplateDirs`, `templateDirs`, `isValidTemplateName`, `listTemplates`, `getTemplate`, `saveTemplate`, `deleteTemplate`.
+`TemplateDirs`, `templateDirs`, `listTemplates`, `getTemplate`, `saveTemplate`, `deleteTemplate`.
 
 ## Signatures
 
-`templateDirs(cwd?, directory=dataDir())`, `isValidTemplateName(name)`, `listTemplates(dirs)`,
+`templateDirs(cwd?, directory=dataDir())`, `listTemplates(dirs)`,
 `getTemplate(dirs,name,scope?)`, `saveTemplate(dirs,scope,name,content)` and
 `deleteTemplate(dirs,scope,name)` operate on explicit directory ownership.
 
@@ -37,7 +37,11 @@ files; direct reads validate the full file. Files are limited to 1 MiB before re
 
 ## Validation and errors
 
-- Empty/dot-leading names, separators, NUL and colon reject before path access.
+- `isValidTemplateName` from `@thinkrail/contracts` is shared with the web editor. Empty/dot-leading
+  names, separators, NUL, colon and Windows reserved device names reject before path access on every OS.
+  Device names include `CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9` and superscript ¹²³
+  variants, any case, alone or followed by spaces or an extension. Lists omit these names too; ordinary
+  interior dots, spaces and Unicode remain valid.
 - Missing files, non-regular files and symlinked entries are unavailable; writes refuse to follow them.
 - A symlinked project config directory or prompts directory makes project reads empty and writes fail.
   The user-owned global directory may be a symlink.

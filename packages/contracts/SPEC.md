@@ -15,6 +15,10 @@ The application owns message, tool, usage and event types in `sessionProtocol.ts
 
 ## Responsibility
 
+`isValidTemplateName` is the shared prompt-template filename guard for the host and web editor.
+`isWindowsDeviceName` recognizes Win32 reserved device names, including superscript ¹²³ suffixes and
+spaces before an extension; template and clone-destination validation reject them on every host OS.
+
 `session.event` full assistant partials and `tool_execution_update.partialResult` are replaceable
 snapshots. A backpressured connection may receive only the newest unsent snapshot per assistant stream
 or tool call, carrying its original `{sessionId,runId,seq}`. Consumers render the full snapshot rather

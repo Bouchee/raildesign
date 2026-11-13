@@ -12,19 +12,18 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import type { Template, TemplateInfo, TemplateScope } from "@thinkrail/contracts";
+import {
+	isValidTemplateName,
+	type Template,
+	type TemplateInfo,
+	type TemplateScope,
+} from "@thinkrail/contracts";
 import { parse as parseYaml } from "yaml";
 import { dataDir, isRecord } from "../persistence";
 
 export interface TemplateDirs {
 	globalDir: string;
 	projectDir?: string;
-}
-
-export function isValidTemplateName(name: string): boolean {
-	if (name.length === 0) return false;
-	if (name.startsWith(".")) return false;
-	return !name.includes("/") && !name.includes("\\") && !name.includes("\0") && !name.includes(":");
 }
 
 export function templateDirs(cwd?: string, directory: string = dataDir()): TemplateDirs {

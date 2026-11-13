@@ -22,6 +22,8 @@ import {
 	isPlanReviewResult,
 	isQuestionPanelHeight,
 	isRetriedAttempt,
+	isValidTemplateName,
+	isWindowsDeviceName,
 	normalizeFontSettings,
 	QUESTION_PANEL_HEIGHT_PERCENT,
 	REQUEST_IMAGE_BASE64_BUDGET,
@@ -470,4 +472,57 @@ describe("font settings", () => {
 		expect(isFontWeightOffset(15)).toBe(false);
 		expect(isFontWeightOffset(140)).toBe(false);
 	});
+});
+
+describe("template names", () => {
+	const deviceNames = [
+		"CON",
+		"con",
+		"CON.notes",
+		"con .notes",
+		"NUL ",
+		"nul.tar.gz",
+		"PRN",
+		"AUX",
+		"COM1",
+		"com9",
+		"LPT1",
+		"lpt9",
+		"COM¹",
+		"lpt²",
+		"Lpt³.txt",
+	];
+
+	for (const name of deviceNames) {
+		test(`${JSON.stringify(name)} is a Windows device name and not a template name`, () => {
+			expect(isWindowsDeviceName(name)).toBe(true);
+			expect(isValidTemplateName(name)).toBe(false);
+		});
+	}
+
+	for (const name of ["../x", "a/b", "a\\b", ".hidden", "", "a:b", ":b", "a:", "a\0b"]) {
+		test(`rejects ${JSON.stringify(name)}`, () => {
+			expect(isValidTemplateName(name)).toBe(false);
+		});
+	}
+
+	for (const name of [
+		"greet",
+		"My_Template-2",
+		"a",
+		"foo.bar",
+		"my template",
+		"COM0",
+		"COM10",
+		"LPT10",
+		"conductor",
+		"nulled",
+		"report.con",
+		"con-notes",
+	]) {
+		test(`accepts ${JSON.stringify(name)}`, () => {
+			expect(isWindowsDeviceName(name)).toBe(false);
+			expect(isValidTemplateName(name)).toBe(true);
+		});
+	}
 });
