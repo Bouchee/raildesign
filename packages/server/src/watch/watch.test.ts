@@ -353,8 +353,9 @@ test("a linked worktree's transient git lock does not nudge repo metadata", asyn
 
 	const nudges: string[] = [];
 	setRepoMetaPublisher((id) => nudges.push(id));
-	void ensureWatch("ws1");
-	await sleep(100);
+	await ensureWatch("ws1");
+	await sleep(550);
+	nudges.length = 0;
 
 	writeFileSync(join(metaDir, "index.lock"), "x\n");
 	rmSync(join(metaDir, "index.lock"));
