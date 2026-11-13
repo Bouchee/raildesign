@@ -5,7 +5,7 @@ import type {
 	SessionEventPayload,
 	TodoPlan,
 } from "@thinkrail/contracts";
-import { WS_CHANNELS } from "@thinkrail/contracts";
+import { TODO_NUDGE_PREFIX, WS_CHANNELS } from "@thinkrail/contracts";
 import { t as translate } from "@thinkrail/locales/react";
 import { useCallback, useEffect, useInsertionEffect, useRef, useState } from "react";
 import { tupleKey } from "../lib";
@@ -241,6 +241,14 @@ export function useChatTodos(workspaceId: string, sessionId: string): ChatTodos 
 				: prev,
 		);
 		broadcastWrite(requestIdentity);
+		await getTransport()
+			.request("session.nudge", {
+				workspaceId,
+				sessionId,
+				messageId: `todo-nudge-${todo.id}`,
+				text: `${TODO_NUDGE_PREFIX}A TODO was added to the list: "${title}". Read the TODO list with todo_list and work any pending items, marking each done with todo_update as you finish.`,
+			})
+			.catch((error) => console.warn("TODO notification could not start:", errorText(error)));
 	};
 
 	const reloadPlan = async (): Promise<boolean> => {

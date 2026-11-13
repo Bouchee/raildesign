@@ -380,3 +380,25 @@ Cleanup waits for all outcomes before reopening completion gates, including fail
 Function factories use `errorFunction: null` so SDK validation and executor failures reach the existing public `invoke` boundary with the original call identity. That boundary stores bounded structured error content and marks executed effects failed; malformed arguments rejected before executor admission have an error transcript result and no effect receipt. It rethrows after Stop or grant revocation. Successful text that resembles an error stays successful; structured `isError` results remain errors. MCP keeps its own redacted, bounded error projection.
 
 Factory service contracts carry current grants and owned application services, without a second failure callback. `sdkSessionManager.test.ts` covers invalid Skill and workspace arguments, malformed Todo/Spec JSON, nonzero commands, successful error-shaped text, and Stop during executing tools.
+
+## Retained workspace actions and host notifications
+
+Top-level SDK sessions expose `start_workspace` and `workspace_status` through host-injected application
+services. Child definitions cannot acquire them. Creating an independent workspace uses the current
+run signal; a captured tool checks its grant before admission and after asynchronous work. The new
+workspace runs independently once its kickoff is accepted. `continue_in_workspace` is available only
+in a standalone chat and applies only a host-requested continuation, through the same grant and signal.
+The host also checks the actual run input ID against its operation; a stale queued request cannot
+fulfill a newer continuation after restart or change its target project.
+
+Host continuation cards and manual TODO notifications use the existing durable internal follow-up
+queue. Their stable IDs are recorded in SDK model history once; they do not create user transcript
+messages or visible queue rows. A nudge never bypasses a pending question/approval, and running work
+receives it after normal settlement. An idle nudge starts one SDK run. Identical retries join the saved
+input; conflicting content for its ID is rejected. Stop discards internal notifications before settlement
+while retaining user-authored queue entries. Visible custom cards remain in the transcript.
+Clearing the visible input queue withdraws only user-authored inputs, preserving host notifications.
+
+MCP resource listing, template listing and reads share current MCP connections, trust checks and exact
+configuration fingerprints. They use public SDK resource APIs and the existing output store; they do
+not start another transport owner. Stale grants or removed access prevent subsequent resource calls.

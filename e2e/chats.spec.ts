@@ -116,6 +116,27 @@ test("a double click starts one chat, and a topbar Delete confirmation closes wh
 	expect(frames.filter((frame) => frame.method === "chat.delete")).toHaveLength(0);
 });
 
+test("a standalone chat can choose a repository for continuation and cancel without starting it", async ({
+	page,
+}) => {
+	const frames: ClientFrame[] = [];
+	await observeClientFrames(page, frames);
+	await openFixtureProject(page);
+	await page.getByTestId("add-chat").click();
+	await expect(page.getByTestId("scope-context")).toHaveAttribute("data-context", "chat");
+	const chat = page.getByTestId("chat-item");
+	await chat.getByTestId("chat-menu").click();
+	await page.getByTestId("chat-continue").click();
+	const dialog = page.getByTestId("continue-chat-dialog");
+	await expect(dialog).toBeVisible();
+	await expect(dialog.getByTestId("continue-chat-project")).toContainText("sample-project");
+	await expect(dialog.getByTestId("continue-chat-confirm")).toBeEnabled();
+	await page.keyboard.press("Escape");
+	await expect(dialog).toBeHidden();
+	expect(frames.filter((frame) => frame.method === "chat.continue")).toHaveLength(0);
+	expect(storedChats().chats).toHaveLength(1);
+});
+
 test("a Create dialog opened before any repository takes one another window opens when a repository target is chosen", async ({
 	page,
 }) => {

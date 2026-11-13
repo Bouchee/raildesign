@@ -127,7 +127,7 @@ export type TemplateReadLocation =
 	| { projectId: string; workspaceId?: never }
 	| { workspaceId?: never; projectId?: never };
 
-export const PROTOCOL_VERSION = 118;
+export const PROTOCOL_VERSION = 119;
 export const DURABLE_SESSION_PROTOCOL_VERSION = 116;
 export const SDK_SESSION_PROTOCOL_VERSION = 115;
 export const QUESTION_PANEL_PROTOCOL_VERSION = 114;
@@ -1191,7 +1191,13 @@ export interface WsMethodMap {
 		result: { acknowledged: boolean; record: SessionStateRecord };
 	};
 	"session.nudge": {
-		params: { workspaceId: string; sessionId: string; text: string; images?: ImageContent[] };
+		params: {
+			workspaceId: string;
+			sessionId: string;
+			text: string;
+			messageId: string;
+			images?: ImageContent[];
+		};
 		result: { disposition: "needs_input" | "queued" | "prompted" };
 	};
 	"session.getMessages": {

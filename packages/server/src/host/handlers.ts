@@ -46,6 +46,7 @@ import {
 	markWorkspaceRead,
 	markWorkspaceUnread,
 	notifyExtUi,
+	nudgeSession,
 	probeCustomEndpoint,
 	projectTrustSummary,
 	promptSession,
@@ -76,7 +77,6 @@ import {
 
 import { suggestPrDescription } from "../assist";
 import { getProviderStatus } from "../auth";
-
 import { providerFromRemoteUrl } from "../branch-review";
 import { forgetWorkspaceChanges, revertChange, undoChange } from "../changes";
 import { selectDirectory } from "../dialog";
@@ -224,6 +224,7 @@ import {
 	recoverChatSession,
 	seesChats,
 } from "./chats";
+import { continuationStatus, startContinuation } from "./continuations";
 import { nudgeBaseRefWorkspaces } from "./fsNudge";
 import { buildHistoryScope } from "./historyScope";
 import { provisionInitialTerminal } from "./initialTerminal";
@@ -653,6 +654,16 @@ const handlers: WsHandlers = {
 		return { ok: true } as const;
 	},
 	"chat.inspect": (params) => inspectChat(params.workspaceId),
+	"chat.continue": (p) => {
+		const input = z
+			.object({ workspaceId: z.string().min(1), projectId: z.string().min(1) })
+			.parse(p);
+		return startContinuation(input.workspaceId, input.projectId);
+	},
+	"chat.continuationStatus": (p) => {
+		const input = z.object({ operationId: z.string().min(1) }).parse(p);
+		return continuationStatus(input.operationId);
+	},
 	"workspace.openIn": async (p) => {
 		await openEditor(p.editor, getWorkspace(p.id).worktreePath);
 		return { ok: true } as const;
@@ -943,6 +954,16 @@ const handlers: WsHandlers = {
 		const input = sessionInputSchema.parse(p);
 		await followUpSession(input.sessionId, input.text, input.images, input.messageId);
 		return { ok: true };
+	},
+	"session.nudge": async (p) => {
+		const input = sessionInputSchema
+			.required({ messageId: true })
+			.extend({ workspaceId: z.string().min(1) })
+			.parse(p);
+		if (readSessionRecord(input.sessionId)?.workspaceId !== input.workspaceId)
+			throw new Error("This notification belongs to another workspace");
+		await attachInteractionSession(input.sessionId);
+		return nudgeSession(input.sessionId, input.text, input.messageId, input.images);
 	},
 	"session.clearQueue": (p) => clearSessionQueue(p.sessionId, p.requireTextOnly),
 	"session.removeQueued": (p) => {

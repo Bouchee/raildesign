@@ -20,6 +20,11 @@ host key configured in Extensions settings. Skill search, content reads, manual 
 and idle catalog reload share current trust and enable policy. The Extensions settings page manages bundled SDK
 extensions and their declared settings; Pi package installation and Pi built-in switches are retired.
 
+Agents can start independent workspace tasks and inspect their status. A chat without a project can
+continue in a repository workspace with a summary and a link back to its source. Adding a TODO by hand
+notifies its agent through the session queue and respects pending questions and approvals. Configured
+MCP servers also expose resource lists, resource templates and resource reads through the SDK tools.
+
 Desktop releases and private-server deployment have separate acceptance stages. This source checkout
 does not establish a released installer or cross-platform acceptance.
 

@@ -1149,8 +1149,9 @@ session's state.
 `session.stateList` is an authoritative all-workspace snapshot of every top-level live or disk session and
 fails rather than returning an incomplete scan. `session.state` pushes a full record after the causative Pi
 event. `session.acknowledgeCompletion` compare-and-sets one exact completion id; needs-input is never
-acknowledgeable. `session.nudge` atomically no-ops for needs-input, queues during running work, and prompts
-an idle session. These coordinated methods start at `SESSION_STATE_PROTOCOL_VERSION`; older hosts simply
+acknowledgeable. `session.nudge` requires the owned workspace/session and stable `messageId`, accepts only
+internal control text, atomically no-ops for needs-input, queues during running work, and prompts
+an idle session. Repeated input IDs cannot admit the notification twice. These coordinated methods start at `SESSION_STATE_PROTOCOL_VERSION`; older hosts simply
 provide no cross-workspace state.
 
 `workspace.markUnread` / `workspace.markRead` (`{ id }`, v86, **`WORKSPACE_READ_STATE_PROTOCOL_VERSION`**)

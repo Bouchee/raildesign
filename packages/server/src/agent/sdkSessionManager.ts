@@ -15,6 +15,8 @@ import {
 import type {
 	AgentSettlement,
 	AssistantMessage,
+	ChatHandoffDetails,
+	ContinueInWorkspaceRequestDetails,
 	DelegationRunDetails,
 	ExtUiRequest,
 	ExtUiResponse,
@@ -44,6 +46,7 @@ import type {
 } from "@thinkrail/contracts";
 import {
 	firstPromptOfTexts,
+	isControlMessage,
 	normalizeSessionTitle,
 	SUBAGENT_COMPLETION_CUSTOM_TYPE,
 } from "@thinkrail/contracts";
@@ -115,6 +118,7 @@ import {
 	workspaceInstructions,
 } from "./skillTools";
 import { webFetch, webSearch } from "./webAccess";
+import { createWorkspaceActions } from "./workspaceActions";
 
 const log = logger("agent");
 interface ActiveRun {
@@ -2319,6 +2323,15 @@ async function buildSessionAgent(
 	const repository =
 		loadWorkspaces().find((item) => item.id === entry.store.record.workspaceId)?.kind !== "chat";
 	const applicationTools = [
+		...(childDefinition
+			? []
+			: createWorkspaceActions({
+					sessionId: entry.store.record.sessionId,
+					inputId: run.inputId,
+					standalone: !repository,
+					signal: run.controller.signal,
+					assertActive: () => assertActive(entry, run),
+				})),
 		...(await childTools(entry, run)),
 		...backgroundTools(entry, run),
 		...titleTools(entry, run),
@@ -2753,9 +2766,10 @@ async function executeRun(
 	}
 }
 
-function userItem(input: Pick<StoredInput, "id" | "text" | "images">): AgentInputItem {
+function userItem(
+	input: Pick<StoredInput, "id" | "text" | "images">,
+): Extract<AgentInputItem, { role: "user" }> {
 	return {
-		type: "message",
 		id: input.id,
 		role: "user",
 		content: input.images?.length
@@ -2894,6 +2908,7 @@ function enqueue(
 	text: string,
 	images?: readonly ImageContent[],
 	messageId: string = randomUUID(),
+	internal = false,
 ): void {
 	const entry = mustGet(sessionId);
 	if (
@@ -2907,6 +2922,7 @@ function enqueue(
 	if (!/^[A-Za-z0-9_-]{1,200}$/.test(messageId)) throw new Error("Invalid input ID");
 	if (images?.length && !entry.store.record.model?.input?.includes("image"))
 		throw new Error("The selected model does not accept images");
+	const internalItem = userItem({ id: messageId, text, images });
 	const existing = entry.store.record.queue.find((input) => input.id === messageId);
 	if (existing) {
 		if (
@@ -2923,6 +2939,17 @@ function enqueue(
 			previous.role !== "user" ||
 			JSON.stringify(previous.content) !==
 				JSON.stringify(images?.length ? [{ type: "text", text }, ...images] : text)
+		)
+			throw new Error("Conflicting input ID");
+		return;
+	}
+	if (internal && Object.hasOwn(entry.store.record.inputItems, messageId)) {
+		const admitted = entry.store.record.inputItems[messageId];
+		if (
+			!admitted ||
+			!("role" in admitted) ||
+			admitted.role !== "user" ||
+			!isDeepStrictEqual(admitted, internalItem)
 		)
 			throw new Error("Conflicting input ID");
 		return;
@@ -2945,7 +2972,13 @@ function enqueue(
 			...(images?.length ? { images: structuredClone([...images]) } : {}),
 			kind,
 			state: "pending",
+			...(internal ? { internal: true } : {}),
 		});
+		if (internal)
+			record.inputItems = {
+				...record.inputItems,
+				[messageId]: internalItem,
+			};
 	});
 	if (kind === "steering") stageSteering(entry);
 	if (pendingToolResponse && entry.active) {
@@ -2971,6 +3004,80 @@ export function followUpSession(
 ): void {
 	enqueue(sessionId, "followUp", text, images, messageId);
 }
+export function nudgeSession(
+	sessionId: string,
+	text: string,
+	messageId: string,
+	images?: readonly ImageContent[],
+): { disposition: "needs_input" | "queued" | "prompted" } {
+	const entry = mustGet(sessionId);
+	if (!isControlMessage(text)) throw new Error("Nudges must be internal control messages");
+	if (visibleState(entry).needsInput) return { disposition: "needs_input" };
+	if (entry.stopping) throw new Error("Session is stopping");
+	const disposition = entry.active ? "queued" : "prompted";
+	enqueue(sessionId, "followUp", text, images, messageId, true);
+	return { disposition };
+}
+export function sendHostMessageToSession(
+	sessionId: string,
+	customType: string,
+	text: string,
+	details: ChatHandoffDetails | ContinueInWorkspaceRequestDetails,
+): Promise<void> {
+	const entry = mustGet(sessionId);
+	if (
+		entry.stopping ||
+		closingSessions.has(sessionId) ||
+		deletingSessions.has(sessionId) ||
+		closingWorkspaces.has(entry.store.record.workspaceId)
+	)
+		throw new Error("Session is closing");
+	if (!text.trim() || !/^[A-Za-z0-9_-]{1,150}$/.test(details.operationId))
+		throw new Error("Invalid host notification");
+	const id = `host-${details.operationId}`;
+	const previous = entry.store.record.messages.find((item) => item.id === id);
+	if (previous) {
+		if (
+			previous.role !== "custom" ||
+			previous.customType !== customType ||
+			!isDeepStrictEqual(previous.content, [{ type: "text", text }]) ||
+			!isDeepStrictEqual(previous.details, details)
+		)
+			throw new Error("Conflicting host notification");
+		return Promise.resolve();
+	}
+	const message: TranscriptMessage = {
+		id,
+		role: "custom",
+		customType,
+		content: [{ type: "text", text }],
+		details,
+		display: true,
+		timestamp: Date.now(),
+	};
+	entry.store.update((record) => {
+		record.messages.push(message);
+		record.queue.push({
+			id: `host-input-${details.operationId}`,
+			kind: "followUp",
+			state: "pending",
+			text,
+			internal: true,
+		});
+	});
+	emit(entry, { type: "message_end", message });
+	if (!entry.active && !visibleState(entry).needsInput)
+		void drainQueue(entry).catch((error) => log.warn("Host notification could not start", error));
+	return Promise.resolve();
+}
+export function isHostMessagePending(
+	sessionId: string,
+	details: ContinueInWorkspaceRequestDetails,
+): boolean {
+	return mustGet(sessionId).store.record.queue.some(
+		(input) => input.id === `host-input-${details.operationId}`,
+	);
+}
 export function clearSessionQueue(sessionId: string, requireTextOnly = false): SessionQueueContent {
 	const entry = mustGet(sessionId);
 	const content = getQueuedMessageContent(sessionId);
@@ -2979,7 +3086,7 @@ export function clearSessionQueue(sessionId: string, requireTextOnly = false): S
 	if (entry.store.record.queue.some((input) => input.state === "staged"))
 		throw new Error("Staged input cannot be withdrawn before settlement");
 	entry.store.update((record) => {
-		record.queue = [];
+		record.queue = record.queue.filter((input) => input.internal);
 	});
 	return content;
 }
@@ -3279,21 +3386,7 @@ export function promptSession(
 	} finally {
 		delete entry.active;
 	}
-	const content: AgentInputItem[] = [
-		{
-			id,
-			role: "user",
-			content: images?.length
-				? [
-						{ type: "input_text", text },
-						...images.map((image) => ({
-							type: "input_image" as const,
-							image: `data:${image.mimeType};base64,${image.data}`,
-						})),
-					]
-				: text,
-		},
-	];
+	const content: AgentInputItem[] = [userItem({ id, text, images })];
 	if (modelText !== text) content.unshift({ id: randomUUID(), role: "user", content: modelText });
 	const message: TranscriptMessage = {
 		id,
@@ -3363,8 +3456,13 @@ export async function abortSession(
 	reason: "user" | "interrupted" = "user",
 ): Promise<void> {
 	const entry = mustGet(sessionId);
-	entry.summaryController?.abort();
 	const run = entry.active;
+	if (run) run.granted = false;
+	if (entry.store.record.queue.some((input) => input.internal))
+		entry.store.update((record) => {
+			record.queue = record.queue.filter((input) => !input.internal);
+		});
+	entry.summaryController?.abort();
 	if (!run) {
 		entry.stopping = true;
 		rejectPendingFixes(entry);
@@ -3377,7 +3475,6 @@ export async function abortSession(
 		return;
 	}
 	entry.stopping = true;
-	run.granted = false;
 	rejectPendingFixes(entry);
 	run.controller.abort();
 	run.approval?.reject(new Error("Run cancelled"));

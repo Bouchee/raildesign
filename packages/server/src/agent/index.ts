@@ -15,3 +15,12 @@ export { admissionContextFor } from "./skillAdmission";
 export { isProjectSkillPath, mayHoldProjectSkills } from "./skillSources";
 export { listProjectAliasSkillNames, listSkillCatalog, listSkillCommands } from "./skills";
 export { getWebAccessStatus, setWebAccessKey, webFetch, webSearch } from "./webAccess";
+export {
+	type ContinueToolHost,
+	type StartedWorkspace,
+	type StartWorkspaceParams,
+	setContinueToolHost,
+	setWorkspaceToolsHost,
+	type WorkspaceStatusParams,
+	type WorkspaceToolsHost,
+} from "./workspaceActions";

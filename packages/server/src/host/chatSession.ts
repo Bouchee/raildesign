@@ -1,7 +1,17 @@
 import type { Workspace } from "@thinkrail/contracts";
-import { type CreateSessionResult, createSession } from "../agent";
+import {
+	type CreateSessionResult,
+	createSession,
+	deleteSession,
+	getSessionState,
+	isSessionStreaming,
+	readSessionRecord,
+} from "../agent";
+import { logger } from "../log";
 import { ensureWorkspaceScratchDir } from "../workspaces";
 import { type NewChatModelRequest, noteNewChat, resolveNewChatModel } from "./newChatModel";
+
+const log = logger("host");
 
 export interface ChatStartOptions {
 	readonly pick?: boolean;
@@ -28,7 +38,26 @@ export async function startChatSession(
 		assertClaimed();
 		throw error;
 	}
-	assertClaimed();
+	try {
+		assertClaimed();
+	} catch (error) {
+		try {
+			const record = readSessionRecord(created.sessionId);
+			if (
+				record?.messages.length === 0 &&
+				record.queue.length === 0 &&
+				!isSessionStreaming(created.sessionId) &&
+				getSessionState(created.sessionId).execution === "idle"
+			)
+				await deleteSession(created.sessionId, workspace.id, workspace.worktreePath);
+		} catch (cleanupError) {
+			log.warn(
+				"could not remove an unused chat after its creation claim was revoked",
+				cleanupError,
+			);
+		}
+		throw error;
+	}
 	noteNewChat(pick ? requested : {}, defaults, created);
 	return created;
 }

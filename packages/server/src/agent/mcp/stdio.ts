@@ -1,7 +1,11 @@
 import { StringDecoder } from "node:string_decoder";
 import { Client, InMemoryResponseCacheStore } from "@modelcontextprotocol/client";
 import type { StdioServerParameters } from "@modelcontextprotocol/client/stdio";
-import { invalidateServerToolsCache, type MCPServer } from "@openai/agents";
+import {
+	invalidateServerToolsCache,
+	type MCPServer,
+	type MCPServerWithResources,
+} from "@openai/agents";
 import { z } from "zod";
 import { isRecord } from "./config";
 import { appendMcpLog } from "./log";
@@ -11,7 +15,7 @@ const metaSchema = z.record(z.string(), z.json());
 const STDERR_LIMIT = 64 * 1024;
 
 /** Public SDK interface over the official client, whose public stdio transport exposes stderr. */
-export class LoggedStdioMcpServer implements MCPServer {
+export class LoggedStdioMcpServer implements MCPServerWithResources {
 	readonly name: string;
 	cacheToolsList = false;
 	readonly errorFunction = null;
@@ -132,6 +136,62 @@ export class LoggedStdioMcpServer implements MCPServer {
 				});
 		}
 		return result.content;
+	}
+	async listResources(
+		params?: Parameters<MCPServerWithResources["listResources"]>[0],
+	): ReturnType<MCPServerWithResources["listResources"]> {
+		if (!this.client.getServerCapabilities()?.resources) return { resources: [] };
+		const { resources, nextCursor, ...rest } = await this.client.request(
+			{ method: "resources/list", ...(params ? { params } : {}) },
+			{ timeout: this.timeout, signal: this.signal },
+		);
+		return {
+			...rest,
+			resources: resources.map(({ title, description, mimeType, size, annotations, ...item }) => ({
+				...item,
+				...(title !== undefined ? { title } : {}),
+				...(description !== undefined ? { description } : {}),
+				...(mimeType !== undefined ? { mimeType } : {}),
+				...(size !== undefined ? { size } : {}),
+				...(annotations !== undefined ? { annotations } : {}),
+			})),
+			...(nextCursor !== undefined ? { nextCursor } : {}),
+		};
+	}
+	async listResourceTemplates(
+		params?: Parameters<MCPServerWithResources["listResourceTemplates"]>[0],
+	): ReturnType<MCPServerWithResources["listResourceTemplates"]> {
+		if (!this.client.getServerCapabilities()?.resources) return { resourceTemplates: [] };
+		const { resourceTemplates, nextCursor, ...rest } = await this.client.request(
+			{ method: "resources/templates/list", ...(params ? { params } : {}) },
+			{ timeout: this.timeout, signal: this.signal },
+		);
+		return {
+			...rest,
+			resourceTemplates: resourceTemplates.map(
+				({ title, description, mimeType, annotations, ...item }) => ({
+					...item,
+					...(title !== undefined ? { title } : {}),
+					...(description !== undefined ? { description } : {}),
+					...(mimeType !== undefined ? { mimeType } : {}),
+					...(annotations !== undefined ? { annotations } : {}),
+				}),
+			),
+			...(nextCursor !== undefined ? { nextCursor } : {}),
+		};
+	}
+	async readResource(uri: string): ReturnType<MCPServerWithResources["readResource"]> {
+		const result = await this.client.readResource(
+			{ uri },
+			{ timeout: this.timeout, signal: this.signal, cacheMode: "refresh" },
+		);
+		return {
+			...result,
+			contents: result.contents.map(({ mimeType, ...content }) => ({
+				...content,
+				...(mimeType !== undefined ? { mimeType } : {}),
+			})),
+		};
 	}
 	async invalidateToolsCache(): Promise<void> {
 		this.cache.evict("tools/list");

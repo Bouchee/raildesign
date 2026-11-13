@@ -106,7 +106,7 @@ deployment adds another host adapter for this same suite, never copied feature s
 therefore proven through every composition root.
 
 Stage 1's live acceptance checks the actual selected-worktree edit, bounded test command, real Diff,
-approval/reload and Stop behavior. MCP configuration, SDK management connections and OAuth, Skills catalog/trust CRUD, and preserved subagent configuration are Stage 1 surfaces. Compaction/continuation belongs to Stage 2; model-visible Skills/MCP tools, Plan automation, background commands and child execution belong to Stage 3. Their retired execution assertions do not
+approval/reload and Stop behavior. MCP configuration, SDK management connections and OAuth, Skills catalog/trust CRUD, and preserved subagent configuration are Stage 1 surfaces. Session recovery and compaction belong to Stage 2; model-visible Skills/MCP tools, Plan automation, workspace handoff, background commands and child execution belong to Stage 3. Their retired execution assertions do not
 become successful empty responses or alternate old-provider paths. Historical cards, template
 composition and valid workspace/editor/Git/PTY rendering remain current browser checks.
 
@@ -132,6 +132,18 @@ credentials or remote repositories are used.
 `mcp-approval.live.spec.ts` is the focused provider-backed MCP consent and execution gate. It uses
 isolated SDK fixture configuration; offline connection, error and approval tests do not substitute for it.
 MCP tool-card browser fixtures validate owned output reads and Settings actions without executing a model.
+
+Retained workspace behavior uses three focused SDK live probes: `workspace-tools.live.spec.ts` checks a
+separate persisted worktree and SDK chat, status and navigation; `chats-continue.live.spec.ts` checks the
+source summary, destination handoff, persisted link and refresh; `todos-plan.live.spec.ts` checks that a
+manual task wakes the owning agent, reads the plan and completes the task without displaying an internal
+control message. `chats.spec.ts` checks the repository picker and cancellation without a model call.
+`continuation-state.spec.ts` mounts saved cards, restores completed links through the actual status
+handler, and checks lost-operation Retry sends the source workspace and target project; only that retry
+reply is held by the test, so the no-agent suite cannot start a model.
+The resource probe in `mcp-approval.live.spec.ts` calls the three resource tools against the same owned
+stdio fixture, then checks the stored result and browser state after refresh. Transport and access
+removal regressions use local stdio and HTTP servers in the unit suite.
 
 ## Chat resource controls
 

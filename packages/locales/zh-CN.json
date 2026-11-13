@@ -784,6 +784,7 @@
 	"panels.changeRowActions.menuLabel": "{{path}} 的可用操作",
 	"panels.changeRowActions.openAsTab": "作为标签页打开",
 	"panels.changeRowActions.review": "评审",
+	"panels.chats.continueInWorkspace": "在工作区中继续…",
 	"panels.cloneProject.authHint": "使用主机已配置的 Git 凭据和 SSH 密钥。请勿在 URL 中包含密码或令牌。",
 	"panels.cloneProject.cancelFailed": "无法请求取消，请再次点击取消。",
 	"panels.cloneProject.cancelled": "已取消克隆。可以修改信息后重试。",

@@ -36,6 +36,7 @@ import { errorText, getTransport, respondToTool } from "@/transport";
 import { ACTIVITY_BREADCRUMB_HEIGHT, ActivityBreadcrumbTrail } from "./activityBreadcrumbs";
 import { type ChatActions, ChatActionsContext } from "./ChatActions";
 import type { ChatMessageOrder } from "./chatPreferences";
+import { refreshContinuation, requestContinuation } from "./continuations";
 import { type PendingExtUi, PendingExtUiContext, PendingExtUiPrompt } from "./ExtUiPrompt";
 import { FoldGeometryProvider } from "./foldState";
 import {
@@ -643,6 +644,21 @@ const ChatTranscript = forwardRef<
 		(operationId: string): ChatContinuation | undefined => continuations[operationId],
 		[continuations],
 	);
+	const welcomeGeneration = useAppStore((s) => s.welcomeGeneration);
+	const cardOperations = useMemo(
+		() =>
+			runtime.turns.flatMap((turn) =>
+				turn.kind === "continuationRequest" ? [turn.details.operationId] : [],
+			),
+		[runtime.turns],
+	);
+	useEffect(() => {
+		if (welcomeGeneration === 0) return;
+		const known = useAppStore.getState().chatContinuations;
+		for (const operationId of cardOperations) {
+			if (!known[operationId]) refreshContinuation(operationId, { workspaceId, sessionId });
+		}
+	}, [cardOperations, welcomeGeneration, workspaceId, sessionId]);
 	const chatActions = useMemo<ChatActions>(
 		() => ({
 			cancelAutomaticReveal,
@@ -658,6 +674,11 @@ const ChatTranscript = forwardRef<
 			openProviderSettings,
 			findModel,
 			continuationOf,
+			retryContinuation: (details) => {
+				void requestContinuation(workspaceId, details.projectId).catch((error: unknown) =>
+					toast.error(errorText(error), t("panels.chats.continueFailed")),
+				);
+			},
 			openHandoffSource: (details) => {
 				const container = selectChatsContainer(useAppStore.getState());
 				if (!container) return;

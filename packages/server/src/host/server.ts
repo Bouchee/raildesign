@@ -42,6 +42,7 @@ import {
 	mayHoldProjectSkills,
 	resolveProviderAuthorization,
 	setAgentTitleHost,
+	setContinueToolHost,
 	setExtUiPublisher,
 	setMcpAuthorizationResolver,
 	setMcpLoginPublisher,
@@ -58,6 +59,7 @@ import {
 	setSessionResourcesPublisher,
 	setSessionStatePublisher,
 	settleSessionsForShutdown,
+	setWorkspaceToolsHost,
 	watchUserMcpConfig,
 } from "../agent";
 import { forgetOpenBranchReview } from "../branch-review";
@@ -126,6 +128,12 @@ import {
 	type WorkspaceLifecycleEvent,
 } from "../workspaces";
 import { seesChats } from "./chats";
+import {
+	clearContinuations,
+	continueToolHost,
+	observeContinuation,
+	setContinuationPublisher,
+} from "./continuations";
 import { BLOB_PREFIX, FILES_PREFIX, serveBlob, serveWorktreeFile } from "./fileRoutes";
 import { serveUserFonts } from "./fontRoutes";
 import { setFsNudgePublisher } from "./fsNudge";
@@ -155,6 +163,7 @@ import {
 	terminalDeliveryForSendStatus,
 } from "./terminalSend";
 import { titleToolHost } from "./titleTool";
+import { workspaceToolsHost } from "./workspaceTools";
 
 export interface CreateServerOptions {
 	port?: number;
@@ -284,6 +293,8 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 	});
 	setSessionResourceCleanup(closeSessionMcpConnections);
 	setAgentTitleHost(titleToolHost);
+	setWorkspaceToolsHost(workspaceToolsHost);
+	setContinueToolHost(continueToolHost);
 	installRequestReviewSeam();
 	setMcpProjectResolver((workspaceId) => {
 		try {
@@ -870,6 +881,7 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 		}),
 	);
 	setSessionPublisher((payload, workspaceId) => {
+		observeContinuation(payload.sessionId, payload.event);
 		if (isTodoToolEnd(payload.event))
 			void maybeAttachChangeArtifacts(workspaceId, payload.sessionId)
 				.then(() => maybeAutoReReview(workspaceId, payload.sessionId))
@@ -878,6 +890,12 @@ async function createOwnedServer(options: CreateServerOptions): Promise<RunningS
 			.observe(payload.sessionId, payload.event)
 			.catch((error) => log.warn("turn snapshot failed", error));
 		publishScoped(WS_CHANNELS.sessionEvent, payload, { workspaceId });
+	});
+	setContinuationPublisher((continuation) => {
+		server.publish(
+			WS_CHANNELS.chatContinuation,
+			JSON.stringify({ channel: WS_CHANNELS.chatContinuation, data: continuation }),
+		);
 	});
 	setReviewFailedPublisher((failure) =>
 		publishScoped(WS_CHANNELS.reviewFailed, failure, { workspaceId: failure.workspaceId }),
@@ -982,6 +1000,10 @@ function restoreSeamDefaults(): void {
 	setSkillPathClassifier(null);
 	setSessionResourceCleanup(undefined);
 	setAgentTitleHost(undefined);
+	setWorkspaceToolsHost(undefined);
+	setContinueToolHost(undefined);
+	setContinuationPublisher(null);
+	clearContinuations();
 	setRequestReviewHandler(undefined);
 	setResolveCommentHandler(undefined);
 	setReviewFailedPublisher(() => {});

@@ -1602,10 +1602,10 @@ both message orders. *Rejected:* keeping the modal for non-MCP extensions — ev
   presentational atoms the Review panel (`panels/ReviewPanel`) reuses so both "work items in
   sections" surfaces read identically.
   **The add-nudge respects that waiting state.** A user add always stores the item (loose, at the end).
-  On protocol v73+, `session.nudge` makes the host-authoritative blocker/execution decision atomically:
-  needs-input no-ops, running queues, and idle prompts. Independently shipped clients retain the prior
-  glance-based prompt/follow-up plus hydration fallback only for older hosts; the compatibility path skips
-  an awaiting question rather than waking the agent past its blocker.
+  `session.nudge` makes the host-authoritative blocker/execution decision atomically: needs-input
+  no-ops, running work queues a follow-up, and idle work prompts. The TODO ID supplies a stable input ID
+  for retry deduplication. Internal notification text never becomes a user transcript or visible queue
+  entry. A failed notification leaves the saved TODO intact; no client-side execution fallback exists.
 
 ## Chat Resources
 

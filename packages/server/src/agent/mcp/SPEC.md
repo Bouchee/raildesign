@@ -85,3 +85,17 @@ Complete results stay in the owned output store.
 No keys or raw stderr enter browser results. Remote call errors are redacted and bounded by the same
 UTF-8 byte budget. Search invocation wraps public SDK validation so revoked bindings and invalid
 arguments both mark the original call as failed, even when SDK error callbacks omit call details.
+
+`list_mcp_resources`, `list_mcp_resource_templates` and `read_mcp_resource` are ordinary SDK
+FunctionTools over those same admitted connections. The public `MCPServerWithResources` interface
+provides HTTP resource calls; the owned stdio adapter implements it through the existing official
+client. No private SDK transport or second connection is used. Resources are read-only and do not
+request write consent. Run grants, server visibility, current trust and full fingerprints still apply
+before and after every request. Aborting a resource request closes its owned connection because the
+pinned SDK resource methods do not accept a per-request signal.
+
+With a server, listings return one page and its cursor. Without a server they aggregate up to 64 pages
+per visible connected server and report bounded per-server failures. A cursor requires a server.
+Hidden servers and MCP App UI resources are excluded. Deferred resource tools use the same ordinary
+`tool_search` exposure and persisted search receipts as other MCP tools. Read results retain text and
+binary content in the owned complete-output store; the model/browser projection remains bounded.

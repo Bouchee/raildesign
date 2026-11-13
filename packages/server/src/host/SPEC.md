@@ -173,6 +173,23 @@ kickoff prompts, creation cancellation/error reporting and bounded status/final-
 Its default dependencies use current application/SDK services and its focused tests inject those same
 capabilities. A projectless chat must select an open repository; the Chats container is excluded.
 
+`continuations` binds each Continue gesture to its source chat and target open repository. Concurrent
+gestures for the same target join; another target is refused until settlement. A durable custom host
+message asks the source SDK agent for a bounded summary, queued after running work. Only the bound
+source session's grant-bound `continue_in_workspace` call may create the target workspace and its SDK
+chat. Its host-owned run input ID must match the bound request's operation ID; an older queued request
+cannot fulfill a new gesture after restart. The existing creation owner receives cancellation; source, target and grant are rechecked across
+awaits. Parallel calls join one apply. A failed attempt can reuse its surviving workspace on Retry.
+The target receives a custom handoff message rather than a fabricated user turn. The source's
+`continuedTo` link preserves successful status across restart; unfinished operations become unknown
+and require a fresh user gesture. Stop or a settled source without a summary fails the operation.
+The host broadcasts phases, clears held operations during teardown, and retains no Pi execution path.
+The durable link is committed before target input admission, so a delivery failure reports a created
+destination rather than inviting a duplicate creation. A pre-link cancellation removes a newly created
+unused session; it preserves an already-published workspace that another client may have edited and
+reports that Retry reuses it. The shared chat-start helper performs the same unused-session cleanup
+when a creation claim is revoked, without replacing the original failure if cleanup fails.
+
 `requestReview` retains host-stamped verdict parsing, normalized finding/reading-order paths, stripping
 of model-supplied host-only flags, item-title lookup across all plan collections, and result text that
 respects blocked approvals and the automatic-fix budget. Host startup installs the review/resolve tool

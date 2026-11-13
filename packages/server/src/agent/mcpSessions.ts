@@ -13,7 +13,14 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { dirname, join, sep } from "node:path";
-import { type FunctionTool, mcpToFunctionTool, type Tool, tool } from "@openai/agents";
+import {
+	type FunctionTool,
+	type MCPResource,
+	type MCPResourceTemplate,
+	mcpToFunctionTool,
+	type Tool,
+	tool,
+} from "@openai/agents";
 import type {
 	McpListResult,
 	McpReadOutputResult,
@@ -505,12 +512,14 @@ export async function readMcpToolOutput(
 	}
 }
 
-function mcpToolError(error: unknown): string {
-	const text = redactMcpText(error instanceof Error ? error.message : String(error));
+function boundedMcpText(text: string): string {
 	return new TextDecoder("utf-8", { ignoreBOM: true }).decode(
 		Buffer.from(text, "utf8").subarray(0, MCP_SUMMARY_BYTES),
 		{ stream: true },
 	);
+}
+function mcpToolError(error: unknown): string {
+	return boundedMcpText(redactMcpText(error instanceof Error ? error.message : String(error)));
 }
 
 export interface SessionMcpToolOptions {
@@ -520,6 +529,224 @@ export interface SessionMcpToolOptions {
 	signal: AbortSignal;
 	assertActive: () => void;
 	markToolFailed: (toolCallId: string) => void;
+}
+
+interface ResourceServer {
+	name: string;
+	connection: McpConnection;
+	assertCurrent: () => McpServerConfig;
+}
+
+type ListedResource = MCPResource | MCPResourceTemplate;
+function visibleResource(item: ListedResource): boolean {
+	const uri = "uri" in item ? item.uri : item.uriTemplate;
+	return (
+		!String(uri).startsWith("ui://") && !/;\s*profile\s*=\s*"?mcp-app"?/i.test(item.mimeType ?? "")
+	);
+}
+function listedResource(server: string, item: ListedResource) {
+	const { _meta, icons, ...resource } = item;
+	return { ...resource, server };
+}
+
+function createResourceTools(
+	servers: ResourceServer[],
+	options: SessionMcpToolOptions,
+	exposed: Set<string>,
+) {
+	if (!servers.length) return [];
+	const assertCurrent = () => {
+		options.assertActive();
+		options.signal.throwIfAborted();
+		for (const server of servers) server.assertCurrent();
+	};
+	const find = (name: string) => {
+		const server = servers.find((entry) => entry.name === name);
+		if (!server) throw new Error(`MCP server "${name}" is not available for resources`);
+		server.assertCurrent();
+		return server;
+	};
+	const request = async <T>(
+		server: ResourceServer,
+		signal: AbortSignal,
+		call: () => Promise<T>,
+	) => {
+		server.assertCurrent();
+		signal.throwIfAborted();
+		let closing: Promise<void> | undefined;
+		const abort = () => {
+			closing = server.connection.close();
+			void closing.catch(() => {});
+		};
+		signal.addEventListener("abort", abort, { once: true });
+		try {
+			const result = await call();
+			signal.throwIfAborted();
+			server.assertCurrent();
+			return result;
+		} finally {
+			signal.removeEventListener("abort", abort);
+			await closing;
+		}
+	};
+	const list = async (
+		{ server, cursor }: { server: string | null; cursor: string | null },
+		templates: boolean,
+		signal: AbortSignal,
+	) => {
+		if (cursor && !server) throw new Error("cursor requires a server");
+		const key = templates ? "resourceTemplates" : "resources";
+		const page = (entry: ResourceServer, next: string | null) =>
+			request(entry, signal, async () => {
+				const params = next ? { cursor: next } : undefined;
+				if (templates) {
+					const { resourceTemplates, nextCursor } =
+						await entry.connection.server.listResourceTemplates(params);
+					return { items: resourceTemplates, nextCursor };
+				}
+				const { resources, nextCursor } = await entry.connection.server.listResources(params);
+				return { items: resources, nextCursor };
+			});
+		if (server) {
+			const result = await page(find(server), cursor);
+			return {
+				server,
+				[key]: result.items.filter(visibleResource).map((item) => listedResource(server, item)),
+				...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
+			};
+		}
+		const ordered = [...servers].sort((a, b) => a.name.localeCompare(b.name));
+		const results = await Promise.allSettled(
+			ordered.map(async (entry) => {
+				const items: ListedResource[] = [];
+				const cursors = new Set<string>();
+				let next: string | null = null;
+				for (let index = 0; index < 64; index++) {
+					const result = await page(entry, next);
+					items.push(...result.items.filter(visibleResource));
+					if (result.nextCursor === undefined)
+						return items.map((item) => listedResource(entry.name, item));
+					if (cursors.has(result.nextCursor)) throw new Error("Repeated MCP resource cursor");
+					cursors.add(result.nextCursor);
+					next = result.nextCursor;
+				}
+				throw new Error("MCP resource listing exceeded 64 pages");
+			}),
+		);
+		assertCurrent();
+		signal.throwIfAborted();
+		const items = results.flatMap((result) => (result.status === "fulfilled" ? result.value : []));
+		const errors = results.flatMap((result, index) =>
+			result.status === "rejected"
+				? [{ server: ordered[index]?.name ?? "", error: mcpToolError(result.reason) }]
+				: [],
+		);
+		return { [key]: items, ...(errors.length ? { errors } : {}) };
+	};
+	const parameters = z.object({
+		server: z.string().trim().min(1).nullable(),
+		cursor: z.string().min(1).nullable(),
+	});
+	const tools: Extract<Tool, { type: "function" }>[] = [
+		tool({
+			name: "list_mcp_resources",
+			description:
+				"List resources from approved MCP servers. Use server and cursor for one page; null server lists every server. Prefer these resources over web search when applicable.",
+			parameters,
+			errorFunction: null,
+			execute: (params, _context, details) =>
+				list(
+					params,
+					false,
+					details?.signal ? AbortSignal.any([options.signal, details.signal]) : options.signal,
+				),
+		}),
+		tool({
+			name: "list_mcp_resource_templates",
+			description:
+				"List parameterized URI templates from approved MCP servers. Use server and cursor for one page; null server lists every server.",
+			parameters,
+			errorFunction: null,
+			execute: (params, _context, details) =>
+				list(
+					params,
+					true,
+					details?.signal ? AbortSignal.any([options.signal, details.signal]) : options.signal,
+				),
+		}),
+		tool({
+			name: "read_mcp_resource",
+			description:
+				"Read a resource URI from the named approved MCP server. Use a listed URI or expand a listed resource template.",
+			parameters: z.object({ server: z.string().trim().min(1), uri: z.string().trim().min(1) }),
+			errorFunction: null,
+			async execute({ server, uri }, _context, details) {
+				if (uri.startsWith("ui://"))
+					throw new Error("MCP App UI resources are not model resources");
+				const entry = find(server);
+				const signal = details?.signal
+					? AbortSignal.any([options.signal, details.signal])
+					: options.signal;
+				const result = await request(entry, signal, () =>
+					entry.connection.server.readResource(uri),
+				);
+				return { server, uri, contents: result.contents.map(({ _meta, ...content }) => content) };
+			},
+		}),
+	];
+	for (const toolDefinition of tools) {
+		const candidate: FunctionTool<unknown, typeof toolDefinition.parameters, unknown> =
+			toolDefinition;
+		candidate.isEnabled = async () => {
+			assertCurrent();
+			return (
+				servers.some((server) => server.assertCurrent().exposure === "direct") ||
+				exposed.has(candidate.name)
+			);
+		};
+		const invoke = candidate.invoke;
+		candidate.invoke = async (context, input, details) => {
+			const callId = details?.toolCall?.callId;
+			try {
+				assertCurrent();
+				if (!callId) throw new Error("MCP calls require a tool call identity");
+				const payload = await invoke(context, input, details);
+				assertCurrent();
+				details?.signal?.throwIfAborted();
+				const json = JSON.stringify(payload);
+				storeMcpToolOutput(options.sessionId, callId, json);
+				const contents =
+					isRecord(payload) && Array.isArray(payload.contents) ? payload.contents : undefined;
+				const text = contents
+					? contents
+							.map((content) =>
+								isRecord(content)
+									? `${content.uri}\n${typeof content.text === "string" ? content.text : `[Binary ${content.mimeType ?? "resource"}; complete content is in the saved MCP output.]`}`
+									: "",
+							)
+							.join("\n")
+					: json;
+				return {
+					content: [{ type: "text", text: boundedMcpText(text) }],
+					details: {
+						server: isRecord(payload) && typeof payload.server === "string" ? payload.server : "",
+						tool: candidate.name,
+						thinkrail: summarizeMcpResult(candidate.name, payload, false),
+						fullOutput: true,
+						truncated: Buffer.byteLength(text) > MCP_SUMMARY_BYTES,
+					},
+					isError: false,
+				};
+			} catch (error) {
+				if (callId) options.markToolFailed(callId);
+				options.assertActive();
+				options.signal.throwIfAborted();
+				details?.signal?.throwIfAborted();
+				return { content: [{ type: "text", text: mcpToolError(error) }], isError: true };
+			}
+		};
+	}
+	return tools;
 }
 
 export function sessionMcpApproval(
@@ -561,14 +788,34 @@ export async function sessionMcpTools(options: SessionMcpToolOptions): Promise<T
 	options.signal.throwIfAborted();
 	state.tools.clear();
 	const tools: Tool[] = [];
+	const resourceServers: ResourceServer[] = [];
 	for (const [serverName, connection] of state.connections) {
 		if (connection.entry.config.enabled === false || connection.status().state !== "connected")
 			continue;
 		const definitions = await connection.connect();
 		const invokeResult = connection.server.callToolResult?.bind(connection.server);
 		if (!invokeResult) throw new Error("The MCP connection cannot return complete tool results");
+		const config = connection.entry.config;
+		const fingerprint = fingerprintMcpEntry(serverName, config);
+		const assertCurrent = () => {
+			options.assertActive();
+			options.signal.throwIfAborted();
+			const current = loadHostMcpConfig(
+				files(state.workspaceId, state.cwd, state.disabledInChat),
+			).servers.find((entry) => entry.name === serverName)?.config;
+			if (
+				tracked.get(options.sessionId) !== state ||
+				state.connections.get(serverName) !== connection ||
+				!current ||
+				current.enabled === false ||
+				fingerprintMcpEntry(serverName, current) !== fingerprint
+			)
+				throw new Error("MCP trust or configuration changed before this call");
+			return current;
+		};
+		if (config.exposure !== "hidden")
+			resourceServers.push({ name: serverName, connection, assertCurrent });
 		for (const definition of definitions) {
-			const config = connection.entry.config;
 			const exposure = config.toolExposure?.[definition.name] ?? config.exposure ?? "deferred";
 			if (exposure === "hidden") continue;
 			const name = `${mcpNamespace(serverName)}__${definition.name}`;
@@ -576,23 +823,7 @@ export async function sessionMcpTools(options: SessionMcpToolOptions): Promise<T
 				throw new Error(
 					"MCP tool names must be unique valid function names of at most 64 characters",
 				);
-			const fingerprint = fingerprintMcpEntry(serverName, config);
-			const assertCurrent = () => {
-				options.assertActive();
-				options.signal.throwIfAborted();
-				const current = loadHostMcpConfig(
-					files(state.workspaceId, state.cwd, state.disabledInChat),
-				).servers.find((entry) => entry.name === serverName)?.config;
-				if (
-					tracked.get(options.sessionId) !== state ||
-					state.connections.get(serverName) !== connection ||
-					!current ||
-					current.enabled === false ||
-					fingerprintMcpEntry(serverName, current) !== fingerprint
-				)
-					throw new Error("MCP trust or configuration changed before this call");
-				return current;
-			};
+
 			const call: McpConsentCall = {
 				server: serverName,
 				tool: name,
@@ -683,6 +914,8 @@ export async function sessionMcpTools(options: SessionMcpToolOptions): Promise<T
 			tools.push(functionTool);
 		}
 	}
+	const resourceTools = createResourceTools(resourceServers, options, state.exposed);
+	tools.push(...resourceTools);
 	const saved = readSessionRecord(options.sessionId);
 	for (const decision of Object.values(saved?.decisions ?? {})) {
 		if (!decision.value || decision.selection !== MCP_CONFIRM_CHAT || !decision.policyFingerprint)
@@ -703,7 +936,11 @@ export async function sessionMcpTools(options: SessionMcpToolOptions): Promise<T
 		}
 		if (!Array.isArray(matches)) continue;
 		for (const match of matches)
-			if (isRecord(match) && typeof match.name === "string" && state.tools.has(match.name))
+			if (
+				isRecord(match) &&
+				typeof match.name === "string" &&
+				tools.some((tool) => tool.name === match.name)
+			)
 				state.exposed.add(match.name);
 	}
 	if (tools.length) {
@@ -720,7 +957,16 @@ export async function sessionMcpTools(options: SessionMcpToolOptions): Promise<T
 				options.assertActive();
 				options.signal.throwIfAborted();
 				const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-				const matches = [...state.tools.values()]
+				const matches = [
+					...state.tools.values(),
+					...resourceTools.map((tool) => ({
+						name: tool.name,
+						description: tool.description,
+						assertCurrent() {
+							for (const server of resourceServers) server.assertCurrent();
+						},
+					})),
+				]
 					.filter((binding) => {
 						binding.assertCurrent();
 						const text = `${binding.name} ${binding.description}`.toLowerCase();

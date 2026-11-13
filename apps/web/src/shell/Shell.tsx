@@ -8,6 +8,7 @@ import type { MessageKey } from "@thinkrail/locales";
 import { useT } from "@thinkrail/locales/react";
 import { IconButton } from "@thinkrail/ui/button";
 import { useEffect, useState } from "react";
+import { useContinuations } from "../chat/continuations";
 import { openFindInFiles } from "../findInFiles";
 import {
 	applyFontPreference,
@@ -81,6 +82,7 @@ export function Shell() {
 	const t = useT();
 	useLocalLayoutState();
 	useAttentionNotifications();
+	useContinuations();
 	const status = useAppStore((s) => s.status);
 	const StatusDot = status === "connected" ? RiCircleFill : Circle;
 	const activeWorkspaceId = useAppStore((s) => s.activeWorkspaceId);

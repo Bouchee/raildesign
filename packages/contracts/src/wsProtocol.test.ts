@@ -633,7 +633,7 @@ test("ask_user_question discuss answers are pinned to v105, after background wor
 });
 
 test("v118 retires Pi package management and old account RPCs without retiring MCP login", () => {
-	expect(PROTOCOL_VERSION).toBe(118);
+	expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(118);
 	const methods = Object.values(WS_METHODS);
 	expect(methods.some((method) => method.startsWith("packages."))).toBe(false);
 	for (const method of [
@@ -647,4 +647,9 @@ test("v118 retires Pi package management and old account RPCs without retiring M
 	expect(methods).toContain("provider.loginReply");
 	expect(methods).toContain("provider.loginCancel");
 	expect(Object.values(WS_CHANNELS)).not.toContain("packages.changed");
+});
+
+test("v119 restores host-authoritative TODO notifications with stable input IDs", () => {
+	expect(PROTOCOL_VERSION).toBe(119);
+	expect(WS_METHODS.sessionNudge).toBe("session.nudge");
 });

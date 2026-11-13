@@ -20,11 +20,14 @@ import {
 	ScriptedModel,
 } from "@openai/agents/testing";
 import type { ExtUiRequest, ExtUiResponse, SessionEventPayload } from "@thinkrail/contracts";
+import { TODO_NUDGE_PREFIX } from "@thinkrail/contracts";
+import { TodoStore } from "@thinkrail/todos/core";
 import { loadConfig, saveConfig, saveWorkspaces } from "../persistence";
 import { setTrashImplementationForTests } from "../trash";
 import { configureAgentModelFactory, saveCustomEndpoint } from "./modelConfiguration";
 import {
 	abortSession,
+	clearSessionQueue,
 	compactSession,
 	createSession,
 	deleteSession,
@@ -34,6 +37,7 @@ import {
 	getSessionState,
 	getSessionStats,
 	liveSessionIdsOf,
+	nudgeSession,
 	promptSession,
 	queuedMessages,
 	removeQueuedMessage,
@@ -52,6 +56,7 @@ import {
 import { applyWorkspacePatch, type ToolGrant } from "./sdkTools";
 import { readSessionRecord, sessionRecordPath } from "./sessionStore";
 import { setWebAccessKey } from "./webAccess";
+import { setContinueToolHost, setWorkspaceToolsHost } from "./workspaceActions";
 
 let root: string;
 let worktree: string;
@@ -86,6 +91,8 @@ afterEach(() => {
 	webFetchMock?.mockRestore();
 	webFetchMock = undefined;
 	setSessionResourceCleanup(undefined);
+	setWorkspaceToolsHost(undefined);
+	setContinueToolHost(undefined);
 	disposeAllSessions();
 	setTrashImplementationForTests(undefined);
 	configureAgentModelFactory();
@@ -728,6 +735,245 @@ function latch() {
 	});
 	return { promise, release };
 }
+
+async function settled(sessionId: string): Promise<void> {
+	for (let attempt = 0; attempt < 100; attempt++) {
+		if (getSessionState(sessionId).execution === "idle") return;
+		await Bun.sleep(10);
+	}
+	throw new Error("SDK test run did not settle");
+}
+
+test("an idle TODO nudge executes the SDK tools once and survives retry after reattachment", async () => {
+	const { sessionId } = await createSession({ cwd: worktree, workspaceId: "workspace" });
+	const todos = new TodoStore(worktree, sessionId);
+	const todo = todos.add({ title: "manual task", origin: "user" });
+	const model = new ScriptedModel([
+		modelResponse([functionCall("todo_list", {}, { callId: "list-added" })]),
+		modelResponse([
+			functionCall("todo_update", { id: todo.id, status: "done" }, { callId: "complete-added" }),
+		]),
+		done(),
+	]);
+	configureAgentModelFactory(() => model);
+	const text = `${TODO_NUDGE_PREFIX}Read and complete the manual task.`;
+	const messageId = `todo-nudge-${todo.id}`;
+	expect(nudgeSession(sessionId, text, messageId)).toEqual({ disposition: "prompted" });
+	nudgeSession(sessionId, text, messageId);
+	await settled(sessionId);
+	expect(todos.get(todo.id)?.status).toBe("done");
+	expect(readSessionRecord(sessionId)).toMatchObject({
+		state: { completion: { outcome: "succeeded" } },
+	});
+	expect(
+		readSessionRecord(sessionId)?.history.filter((item) => item.id === messageId),
+	).toHaveLength(1);
+	expect(readSessionRecord(sessionId)?.messages.some((item) => item.id === messageId)).toBe(false);
+	expect(queuedMessages(sessionId)).toEqual({ steering: [], followUp: [] });
+	await removeSession(sessionId);
+	await getSessionMessages(sessionId, "workspace", worktree);
+	nudgeSession(sessionId, text, messageId);
+	expect(model.calls).toHaveLength(3);
+	expect(() => nudgeSession(sessionId, `${text} conflicting`, messageId)).toThrow("Conflicting");
+	model.assertComplete();
+});
+
+test("a running TODO nudge is a follow-up after normal settlement and never steering", async () => {
+	const ready = latch();
+	const finish = latch();
+	const model = new ScriptedModel([
+		modelResponder(async () => {
+			ready.release();
+			await finish.promise;
+			return [functionCall("todo_list", {}, { callId: "original-list" })];
+		}),
+		done(),
+		done(),
+	]);
+	configureAgentModelFactory(() => model);
+	const { sessionId } = await createSession({ cwd: worktree, workspaceId: "workspace" });
+	const run = promptSession(sessionId, "original");
+	await ready.promise;
+	const text = `${TODO_NUDGE_PREFIX}Read the updated list.`;
+	expect(nudgeSession(sessionId, text, "todo-nudge-queued")).toEqual({ disposition: "queued" });
+	nudgeSession(sessionId, text, "todo-nudge-queued");
+	followUpSession(sessionId, "withdraw this user input", undefined, "withdrawable");
+	expect(clearSessionQueue(sessionId).followUp).toEqual([
+		expect.objectContaining({ id: "withdrawable" }),
+	]);
+	expect(readSessionRecord(sessionId)?.queue).toEqual([
+		expect.objectContaining({ id: "todo-nudge-queued", kind: "followUp", internal: true }),
+	]);
+	expect(queuedMessages(sessionId)).toEqual({ steering: [], followUp: [] });
+	finish.release();
+	await run;
+	expect(model.calls).toHaveLength(3);
+	const middle = model.calls[1]?.request.input;
+	const last = model.calls[2]?.request.input;
+	if (!Array.isArray(middle) || !Array.isArray(last)) throw new Error("Missing model history");
+	expect(middle.some((item) => item.id === "todo-nudge-queued")).toBe(false);
+	expect(last.filter((item) => item.id === "todo-nudge-queued")).toHaveLength(1);
+	model.assertComplete();
+});
+
+test("TODO nudges cannot bypass a pending approval", async () => {
+	const model = new ScriptedModel([command("block-nudge", "printf forbidden > forbidden.txt")]);
+	configureAgentModelFactory(() => model);
+	const ready = latch();
+	setExtUiPublisher((request) => {
+		if (request.kind === "confirm") ready.release();
+	});
+	const { sessionId } = await createSession({ cwd: worktree, workspaceId: "workspace" });
+	const run = promptSession(sessionId, "wait for approval");
+	await ready.promise;
+	const request = getSessionState(sessionId).needsInput;
+	expect(nudgeSession(sessionId, `${TODO_NUDGE_PREFIX}New item`, "todo-nudge-blocked")).toEqual({
+		disposition: "needs_input",
+	});
+	expect(getSessionState(sessionId).needsInput).toEqual(request);
+	expect(readSessionRecord(sessionId)?.queue).toEqual([]);
+	await abortSession(sessionId);
+	await run;
+	expect(model.calls).toHaveLength(1);
+	expect(existsSync(join(worktree, "forbidden.txt"))).toBe(false);
+});
+
+test("Stop discards stale internal TODO follow-ups and keeps their durable retry identity", async () => {
+	const ready = latch();
+	const finish = latch();
+	const model = new ScriptedModel([
+		modelResponder(async () => {
+			ready.release();
+			await finish.promise;
+			return [assistantMessage("late")];
+		}),
+	]);
+	configureAgentModelFactory(() => model);
+	const { sessionId } = await createSession({ cwd: worktree, workspaceId: "workspace" });
+	const run = promptSession(sessionId, "original");
+	await ready.promise;
+	const text = `${TODO_NUDGE_PREFIX}Do not revive after Stop.`;
+	nudgeSession(sessionId, text, "todo-nudge-stop");
+	followUpSession(sessionId, "user follow-up", undefined, "user-kept");
+	const stopping = abortSession(sessionId);
+	finish.release();
+	await stopping;
+	await run;
+	expect(readSessionRecord(sessionId)?.queue.map((item) => item.id)).toEqual(["user-kept"]);
+	nudgeSession(sessionId, text, "todo-nudge-stop");
+	expect(model.calls).toHaveLength(1);
+});
+
+test("SDK workspace actions reach the host services with run identity and structured results", async () => {
+	const starts: string[] = [];
+	setWorkspaceToolsHost({
+		start: async (sessionId, params, signal) => {
+			signal.throwIfAborted();
+			starts.push(sessionId);
+			expect(params).toEqual({ prompt: "independent task", project: "project" });
+			return {
+				workspaceId: "side-workspace",
+				projectId: "project",
+				sessionId: "side-chat",
+				name: "Side",
+				branch: "side",
+				baseBranch: "main",
+				model: null,
+				effort: "off",
+			};
+		},
+		status: async (sessionId, params) => {
+			expect(starts).toEqual([sessionId]);
+			expect(params).toEqual({ workspaces: ["side-workspace"] });
+			return "Side: completed";
+		},
+	});
+	const model = new ScriptedModel([
+		modelResponse([
+			functionCall(
+				"start_workspace",
+				{
+					prompt: "independent task",
+					project: "project",
+					base_branch: null,
+					model: null,
+					effort: null,
+					attachments: null,
+				},
+				{ callId: "start-side" },
+			),
+		]),
+		modelResponse([
+			functionCall(
+				"workspace_status",
+				{ workspaces: ["side-workspace"], project: null },
+				{ callId: "side-status" },
+			),
+		]),
+		done(),
+	]);
+	configureAgentModelFactory(() => model);
+	const { sessionId } = await createSession({ cwd: worktree, workspaceId: "workspace" });
+	await promptSession(sessionId, "Start another workspace and check it");
+	expect(starts).toEqual([sessionId]);
+	expect(
+		readSessionRecord(sessionId)?.messages.find(
+			(item) => item.role === "toolResult" && item.toolCallId === "start-side",
+		),
+	).toMatchObject({
+		isError: false,
+		details: { workspaceId: "side-workspace", sessionId: "side-chat" },
+	});
+	model.assertComplete();
+});
+
+test("Stop during workspace admission aborts the host signal and rejects the late tool result", async () => {
+	const ready = latch();
+	const finish = latch();
+	let receivedSignal: AbortSignal | undefined;
+	setWorkspaceToolsHost({
+		start: async (_sessionId, _params, signal) => {
+			receivedSignal = signal;
+			ready.release();
+			await finish.promise;
+			signal.throwIfAborted();
+			throw new Error("Unexpected admission after Stop");
+		},
+		status: async () => "unused",
+	});
+	const model = new ScriptedModel([
+		modelResponse([
+			functionCall(
+				"start_workspace",
+				{
+					prompt: "side",
+					project: null,
+					base_branch: null,
+					model: null,
+					effort: null,
+					attachments: null,
+				},
+				{ callId: "stopped-side" },
+			),
+		]),
+	]);
+	configureAgentModelFactory(() => model);
+	const { sessionId } = await createSession({ cwd: worktree, workspaceId: "workspace" });
+	const run = promptSession(sessionId, "Start workspace");
+	await ready.promise;
+	const stopped = abortSession(sessionId);
+	expect(receivedSignal?.aborted).toBe(true);
+	finish.release();
+	await stopped;
+	await run;
+	expect(getSessionState(sessionId).completion?.outcome).toBe("cancelled");
+	expect(model.calls).toHaveLength(1);
+	expect(
+		readSessionRecord(sessionId)?.messages.find(
+			(item) => item.role === "toolResult" && item.toolCallId === "stopped-side",
+		),
+	).toMatchObject({ isError: true });
+});
 test("steering reaches the next model boundary once and remains separate from follow-ups", async () => {
 	const frames: SessionEventPayload[] = [];
 	setSessionPublisher((frame) => frames.push(frame));
@@ -955,6 +1201,15 @@ test("durable questions restore with their original identity and apply each vali
 	await waiting.promise;
 	const original = readSessionRecord(sessionId)?.pendingToolResponse;
 	if (!original) throw new Error("Missing pending question");
+	expect(
+		nudgeSession(
+			sessionId,
+			`${TODO_NUDGE_PREFIX}Keep the question blocked.`,
+			"todo-question-blocked",
+		),
+	).toEqual({ disposition: "needs_input" });
+	expect(readSessionRecord(sessionId)?.pendingToolResponse).toEqual(original);
+	expect(readSessionRecord(sessionId)?.queue).toEqual([]);
 	await removeSession(sessionId);
 	await running;
 	saveConfig({

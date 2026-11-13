@@ -14,7 +14,9 @@ The responsive composition root: top-level app chrome, active-project/workspace 
 
 ## Boundary
 
-Stage 1 does not mount continuation reconciliation or automatic plan-summary generation. Those services have no host execution endpoint; ordinary workspace, editor, Diff, terminal and chat composition remains mounted.
+`Shell` mounts continuation reconciliation once. The SDK-backed host owns summary requests, workspace
+creation and handoff status; only the initiating client follows a completed continuation. Automatic
+plan-summary generation remains unmounted.
 
 - **Owns:** `Shell` as the one composition root; topbar and persistent location context; active-project/workspace routing; single Settings, analytics-consent, survey-invitation, survey-window, attention-notification permission-preface, and Toaster mounts plus the keyboard-opened Create workspace dialog, the `Mod+K` / double-Shift search palette host and the `Mod+Shift+F` Find in Files host (and the once-mounted attention-notification observer from [[submodule-web-notifications]]); theme application and global shortcuts; the command catalog the palette runs ([[submodule-web-commands]], [[submodule-web-search]]); the injected Layout, Keyboard and optional application Update settings sections; and integration of the workbench engine with store, persistence, panels, transport-backed domain state, and error boundaries.
 - **Public surface:** `Shell`.

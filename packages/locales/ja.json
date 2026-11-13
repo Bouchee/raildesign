@@ -745,6 +745,7 @@
 	"panels.changeRowActions.menuLabel": "{{path}} の操作",
 	"panels.changeRowActions.openAsTab": "タブで開く",
 	"panels.changeRowActions.review": "レビュー",
+	"panels.chats.continueInWorkspace": "ワークスペースで続ける…",
 	"panels.cloneProject.authHint": "ホストに設定済みの Git 認証情報と SSH キーを使用します。URL にパスワードやトークンを含めないでください。",
 	"panels.cloneProject.cancelFailed": "キャンセルを要求できませんでした。もう一度キャンセルしてください。",
 	"panels.cloneProject.cancelled": "クローンをキャンセルしました。内容を変更して再試行できます。",

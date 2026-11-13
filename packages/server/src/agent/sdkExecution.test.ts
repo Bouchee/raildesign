@@ -31,6 +31,7 @@ import {
 	removeSession,
 	resolveExtUi,
 	runSessionChild,
+	sendHostMessageToSession,
 	sessionResourceHistory,
 	sessionResources,
 	setExtUiPublisher,
@@ -454,6 +455,59 @@ test("background child completion survives normal parent completion and wakes it
 	expect((await sessionResources("workspace", created.sessionId)).subagents[0]?.status).toBe(
 		"completed",
 	);
+	parent.assertComplete();
+	child.assertComplete();
+});
+
+test("host notifications wait behind an idle parent's owned child approval", async () => {
+	const parent = new ScriptedModel([
+		agentCall(true),
+		done("waiting"),
+		done("notification received"),
+		done("child received"),
+	]);
+	const child = new ScriptedModel([
+		call("bash", { command: "printf approved > approved.txt", timeoutMs: 10000 }, "held-child"),
+		done("child finished"),
+	]);
+	const created = await createSession({ cwd, workspaceId: "workspace" });
+	configureAgentModelFactory((_model, id) => (id === created.sessionId ? parent : child));
+	let approval: ExtUiRequest | undefined;
+	setExtUiPublisher((request) => {
+		if (request.kind === "confirm") approval = request;
+	});
+	await promptSession(created.sessionId, "Delegate background work");
+	await until(() => approval !== undefined);
+	expect(getSessionState(created.sessionId).execution).toBe("idle");
+	expect(getSessionState(created.sessionId).needsInput?.kind).toBe("dialog");
+	await sendHostMessageToSession(
+		created.sessionId,
+		"continue-in-workspace-request",
+		"Host continuation request",
+		{ operationId: "held-notification", projectId: "project", projectName: "Project" },
+	);
+	expect(parent.calls).toHaveLength(2);
+	expect(readSessionRecord(created.sessionId)?.queue).toEqual([
+		expect.objectContaining({
+			id: "host-input-held-notification",
+			internal: true,
+			state: "pending",
+		}),
+	]);
+	if (!approval) throw new Error("Missing child approval");
+	approve(approval);
+	await until(
+		() => parent.calls.length === 4 && getSessionState(created.sessionId).execution === "idle",
+	);
+	expect(readFileSync(join(cwd, "approved.txt"), "utf8")).toBe("approved");
+	expect(
+		readSessionRecord(created.sessionId)?.history.filter(
+			(item) => item.id === "host-input-held-notification",
+		),
+	).toHaveLength(1);
+	expect(
+		readSessionRecord(created.sessionId)?.messages.filter((item) => item.role === "user"),
+	).toHaveLength(1);
 	parent.assertComplete();
 	child.assertComplete();
 });

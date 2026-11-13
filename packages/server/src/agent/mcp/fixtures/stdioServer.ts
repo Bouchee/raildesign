@@ -13,6 +13,7 @@ if (process.env.MCP_FIXTURE_DESCENDANT_PID_FILE) {
 	writeFileSync(process.env.MCP_FIXTURE_DESCENDANT_PID_FILE, String(child.pid));
 }
 const initializeDelayMs = Number(process.env.MCP_FIXTURE_INITIALIZE_DELAY_MS ?? 0);
+const resourcesEnabled = process.env.MCP_FIXTURE_RESOURCES === "1";
 if (process.env.MCP_FIXTURE_STUBBORN === "1") {
 	process.on("SIGTERM", () => {});
 	setInterval(() => {}, 1000);
@@ -96,13 +97,14 @@ lines.on("line", (line) => {
 		case "initialize": {
 			const result = {
 				protocolVersion: message.params?.protocolVersion ?? "2025-06-18",
-				capabilities: { tools: {} },
+				capabilities: { tools: {}, ...(resourcesEnabled ? { resources: {} } : {}) },
 				serverInfo: { name: "fixture", version: "1.0.0" },
 			};
 			setTimeout(() => reply(message.id, result), initializeDelayMs);
 			return;
 		}
 		case "tools/list":
+			if (process.env.MCP_FIXTURE_NO_TOOLS === "1") return reply(message.id, { tools: [] });
 			if (process.env.MCP_FIXTURE_PAGINATE === "1")
 				return reply(
 					message.id,
@@ -120,6 +122,64 @@ lines.on("line", (line) => {
 			}
 			const args = (message.params?.arguments ?? {}) as { text?: string };
 			return reply(message.id, callResult(String(message.params?.name), args.text ?? ""));
+		}
+		case "resources/list":
+			return reply(message.id, {
+				resources: resourcesEnabled
+					? message.params?.cursor === "second"
+						? [{ uri: "fixture://notes/b", name: "Note B", mimeType: "text/plain" }]
+						: [
+								{
+									uri: "fixture://notes/a",
+									name: "Note A",
+									mimeType: "text/plain",
+									_meta: { fixture: "private metadata" },
+									icons: [{ src: "https://fixture.invalid/icon.png" }],
+								},
+								{ uri: "ui://fixture", name: "App UI" },
+								{ uri: "fixture://app", name: "App HTML", mimeType: "text/html; profile=mcp-app" },
+							]
+					: [],
+				...(resourcesEnabled && message.params?.cursor !== "second"
+					? { nextCursor: "second" }
+					: {}),
+			});
+		case "resources/templates/list":
+			return reply(message.id, {
+				resourceTemplates: resourcesEnabled
+					? [
+							{ uriTemplate: "fixture://notes/{id}", name: "Note", mimeType: "text/plain" },
+							{ uriTemplate: "ui://{view}", name: "App UI" },
+						]
+					: [],
+			});
+		case "resources/read": {
+			const uri = String(message.params?.uri);
+			if (process.env.MCP_FIXTURE_RESOURCE_CALLS_FILE)
+				appendFileSync(process.env.MCP_FIXTURE_RESOURCE_CALLS_FILE, `${uri}\n`);
+			if (uri.endsWith("/error")) {
+				process.stdout.write(
+					`${JSON.stringify({ jsonrpc: "2.0", id: message.id, error: { code: -32000, message: `token=fixture-secret ${"汉字🧪 error ".repeat(20000)}` } })}\n`,
+				);
+				return;
+			}
+			const content =
+				uri === "fixture://blob"
+					? {
+							uri,
+							mimeType: "application/octet-stream",
+							blob: Buffer.from("fixture binary").toString("base64"),
+						}
+					: {
+							uri,
+							mimeType: "text/plain",
+							text: uri.endsWith("/big") ? "汉字🧪".repeat(20000) : "MCP resource fixture note",
+							_meta: { fixture: "private metadata" },
+						};
+			const delay = Number(process.env.MCP_FIXTURE_RESOURCE_DELAY_MS ?? 0);
+			if (delay) setTimeout(() => reply(message.id, { contents: [content] }), delay);
+			else reply(message.id, { contents: [content] });
+			return;
 		}
 		default:
 			return reply(message.id, {});

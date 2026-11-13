@@ -1,5 +1,9 @@
 import { resolve } from "node:path";
-import { type MCPServer, MCPServerStreamableHttp } from "@openai/agents";
+import {
+	type MCPServer,
+	MCPServerStreamableHttp,
+	type MCPServerWithResources,
+} from "@openai/agents";
 import type { McpServerStatus } from "@thinkrail/contracts";
 import { modelKeyEnvironmentNames } from "../modelConfiguration";
 import { toolEnvironment } from "../sdkTools";
@@ -37,7 +41,7 @@ export function mcpChildEnvironment(explicit: Record<string, string> = {}): Reco
 }
 
 export interface McpConnection {
-	readonly server: MCPServer;
+	readonly server: MCPServerWithResources;
 	readonly entry: McpServerEntry;
 	status(): McpServerStatus;
 	connect(): ReturnType<MCPServer["listTools"]>;
@@ -87,7 +91,7 @@ export async function createMcpConnection(options: {
 	};
 	const config = entry.config;
 	const timeout = (config.timeout ?? 30) * 1000;
-	let server: MCPServer;
+	let server: MCPServerWithResources;
 	if ("command" in config) {
 		server = new LoggedStdioMcpServer({
 			name: entry.name,
@@ -127,6 +131,7 @@ export async function createMcpConnection(options: {
 			authProvider: provider,
 			fetch: provider.fetch,
 			timeout,
+			clientSessionTimeoutSeconds: timeout / 1000,
 			logger,
 			errorFunction: null,
 		});

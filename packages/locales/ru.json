@@ -884,6 +884,7 @@
 	"panels.changeRowActions.menuLabel": "Действия для {{path}}",
 	"panels.changeRowActions.openAsTab": "Открыть во вкладке",
 	"panels.changeRowActions.review": "Проверить",
+	"panels.chats.continueInWorkspace": "Продолжить в рабочей области…",
 	"panels.cloneProject.authHint": "Используются учётные данные Git и ключи SSH, настроенные на хосте. Не указывайте в URL пароли или токены.",
 	"panels.cloneProject.cancelFailed": "Не удалось запросить отмену. Нажмите «Отмена» ещё раз.",
 	"panels.cloneProject.cancelled": "Клонирование отменено. Измените параметры и попробуйте снова.",

@@ -877,6 +877,7 @@
 	"panels.chats.continueConfirm": "Continue",
 	"panels.chats.continueDescription": "The chat's agent writes a short summary; a new workspace in the project you pick receives it as its first message, together with a link back. The files of this chat are not copied.",
 	"panels.chats.continueFailed": "Could not continue the chat in a workspace",
+	"panels.chats.continueInWorkspace": "Continue in workspace…",
 	"panels.chats.continueNoProjects": "Open a project first — a workspace needs a repository.",
 	"panels.chats.continueProject": "Project",
 	"panels.chats.continueTitle": "Continue “{{name}}” in a workspace",
