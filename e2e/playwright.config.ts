@@ -42,7 +42,7 @@ export default defineConfig({
 	testDir: ".",
 	// The headless workflow-test suite has its own config (e2e/playwright.workflows.config.ts) — no browser,
 	// no webServer; `bun run test:workflow-helpers`. Never picked up by the browser suites.
-	testIgnore: "workflows/**",
+	testIgnore: "workflows/harness.unit.spec.ts",
 	...(liveMode ? { grep: /@agent/ } : { grepInvert: /@agent/ }),
 	// One worker owns one stateful host; the shard runner deals tests to lanes through test lists.
 	workers: 1,

@@ -85,6 +85,7 @@ export class E2eWire {
 				}
 				const response = readResponse(parsed, id);
 				if (!response) return;
+				this.socket.send(JSON.stringify({ ack: [id] }));
 				cleanup();
 				if (response.ok) resolve(response.result as WsResult<M>);
 				else

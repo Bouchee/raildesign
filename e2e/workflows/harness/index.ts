@@ -1,6 +1,6 @@
 export { type Check, type CheckContext, type CheckResult, checks, runChecks } from "./checks";
 export { type DialogRung, parsePersonaReply, pickRecommended, skipAll } from "./dialog";
-export { type CapturedToolCall, captureEvents, EventLog } from "./events";
+export { type CapturedToolCall, EventLog } from "./events";
 export { type JudgeItem, type JudgeResult, judgeTranscript, parseJudgeReply } from "./judge";
 export {
 	applyArtifactPreset,
@@ -10,6 +10,7 @@ export {
 	unmaskFixtureMarkdown,
 } from "./presets";
 export { appendRunRecord, type RunRecord } from "./runlog";
+export { driveTurn, openSeededSession, type TurnOptions, type WorkflowSession } from "./session";
 export {
 	type Signal,
 	type SignalHit,

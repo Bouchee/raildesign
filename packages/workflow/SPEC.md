@@ -17,6 +17,10 @@ The host adds the rule to SDK instructions and discovers the declared Skill root
 
 The rule routes new onboarding, PR lifecycle work and product changes to `choosing-a-workflow`.
 Work that changes no behavior can proceed directly.
+Direct questions about source files and fully specified local mechanical edits inspect the relevant
+files without Spec or Todo tools when no Spec, TODO/Plan, or documented architecture/contract work is
+involved. This condition applies to both kinds of direct work; governing-document reads, existing
+loose-item promotion and applicable Plan obligations still follow their owning rules.
 Existing work resumes its selected workflow.
 If its Skill body leaves the context, the agent reads that Skill again before the next step.
 

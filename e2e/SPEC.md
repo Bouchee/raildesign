@@ -18,6 +18,11 @@ explicit, authenticated, on-demand runs.
 
 ## Execution model
 
+`E2eWire` acknowledges every consumed success or error response with the existing `{ack:[id]}`
+protocol receipt. Long observation loops must release those host replay entries. The no-agent workflow
+browser regression consumes 600 successful reads and 600 failed reads on one connection, exceeding
+the replay capacity on either path without invoking a model.
+
 Synthetic `session.event` replays allocate sequence numbers in the same order as their emitted steps. Sequence numbers increase across successive replays of one session; each session has its own counter. Start events precede deltas and the matching final message retains its stable ID. Sampling assertions retain their geometry and minimum-observation thresholds rather than compensating for replay events discarded by the client's sequence watermark.
 
 Dialog containment retries the complete bounds/text/overflow measurement for at most two seconds after resize. This lets the dictation overlay's resize observer run its scheduled animation frame; containment tolerances and all geometric assertions remain unchanged. Persistent overflow still fails.
@@ -109,6 +114,12 @@ Stage 1's live acceptance checks the actual selected-worktree edit, bounded test
 approval/reload and Stop behavior. MCP configuration, SDK management connections and OAuth, Skills catalog/trust CRUD, and preserved subagent configuration are Stage 1 surfaces. Session recovery and compaction belong to Stage 2; model-visible Skills/MCP tools, Plan automation, workspace handoff, background commands and child execution belong to Stage 3. Their retired execution assertions do not
 become successful empty responses or alternate old-provider paths. Historical cards, template
 composition and valid workspace/editor/Git/PTY rendering remain current browser checks.
+
+`workflows/routing.live.spec.ts` checks the ten preserved routing branches through real SDK sessions:
+workflow selection and successful Skill-read order, direct work, setup dispatch and a declined offer.
+It uses the same isolated browser host, current wire interactions and deterministic budgets; final
+message snapshots and git differences decide success. The pure workflow-helper suite remains excluded
+from browser discovery. The workflow module owns the shared seeding/turn-driver contract.
 
 Stage 2's focused live gate is `raildesign-stage2.live.spec.ts`,
 `raildesign-session-restart.live.spec.ts` and `compaction.live.spec.ts`. It checks queue and interaction

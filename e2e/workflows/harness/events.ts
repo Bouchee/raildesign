@@ -1,5 +1,4 @@
-import type { SessionEvent } from "@thinkrail/contracts";
-import { setSessionPublisher } from "@thinkrail/server/agent";
+import type { SessionEvent, TranscriptMessage } from "@thinkrail/contracts";
 
 export interface CapturedToolCall {
 	toolCallId: string;
@@ -14,6 +13,33 @@ type Listener = () => void;
 export class EventLog {
 	readonly events: SessionEvent[] = [];
 	private readonly listeners = new Set<Listener>();
+
+	static fromMessages(messages: TranscriptMessage[]): EventLog {
+		const log = new EventLog();
+		for (const message of messages) {
+			log.push({ type: "message_end", message });
+			if (message.role === "assistant") {
+				for (const block of message.content) {
+					if (block.type !== "toolCall") continue;
+					log.push({
+						type: "tool_execution_start",
+						toolCallId: block.id,
+						toolName: block.name,
+						args: block.arguments,
+					});
+				}
+			} else if (message.role === "toolResult") {
+				log.push({
+					type: "tool_execution_end",
+					toolCallId: message.toolCallId,
+					toolName: message.toolName,
+					result: { content: message.content, details: message.details },
+					isError: message.isError,
+				});
+			}
+		}
+		return log;
+	}
 
 	push(event: SessionEvent): void {
 		this.events.push(event);
@@ -146,24 +172,4 @@ function renderResult(result: unknown): string {
 
 function truncate(text: string, max: number): string {
 	return text.length > max ? `${text.slice(0, max)}…` : text;
-}
-
-const logs = new Map<string, EventLog>();
-
-setSessionPublisher((payload) => {
-	let log = logs.get(payload.sessionId);
-	if (!log) {
-		log = new EventLog();
-		logs.set(payload.sessionId, log);
-	}
-	log.push(payload.event);
-});
-
-export function captureEvents(sessionId: string): EventLog {
-	let log = logs.get(sessionId);
-	if (!log) {
-		log = new EventLog();
-		logs.set(sessionId, log);
-	}
-	return log;
 }
