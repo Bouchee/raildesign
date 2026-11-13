@@ -82,7 +82,7 @@ binary Success Conditions instead of metrics). Reject vague goals inline: "'Bett
 
 - `spec_create` once, `path: "goal-and-requirements.md"`, a slug `id`, `type: "goal-and-requirements"`,
   `title`, `status: "draft"`; replace the scaffold with the chosen template + the sections settled so far.
-- `edit` to add each confirmed section in template order.
+- `apply_patch` to add each confirmed section in template order.
 - `spec_update` `status: draft → active` once the user approves the reviewed draft.
 
 ## Next

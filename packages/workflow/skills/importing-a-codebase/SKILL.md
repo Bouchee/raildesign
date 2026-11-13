@@ -67,8 +67,9 @@ Two kinds of question belong in the round whenever the files leave them open —
 - **Known limitations** — one multiSelect of the gaps you saw (unhandled cases, TODOs, missing tests,
   slow paths) for the user to confirm; confirmed ones are recorded in the owning spec.
 
-If adoption candidates exist, add one question to the same round: a multiSelect listing them (grouped
-when many — an `adr/` set is one option) — which should become spec-graph nodes? A contradiction
+If adoption candidates exist, add one `ask_user_question` question to the same round with
+`multiSelect: true`. List each candidate as an independently selectable option (when many ADRs exist,
+group that `adr/` set as one option) — which should become spec-graph nodes? A contradiction
 between a candidate and the code found by now goes into the round too (confirm the correction).
 Skipped or declined → adopt none; candidates stay input, noted at hand-off.
 
@@ -79,7 +80,7 @@ A skipped/declined question is not a blocker: record the assumption inline in th
 
 ## 4. Draft the graph, top-down
 
-Save with the spec tools as you go (`spec_create` per node, `edit` for prose). Order:
+Save with the spec tools as you go (`spec_create` per node, `apply_patch` for prose). Order:
 
 1. **`goal-and-requirements.md`** (`type: goal-and-requirements`) — what the product is and why, in the
    goal-doc shape `writing-specs` sets; capabilities are what the code already does. This is the graph

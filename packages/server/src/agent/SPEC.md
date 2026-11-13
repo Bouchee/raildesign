@@ -12,6 +12,11 @@ tags: [agents-sdk]
 
 Own RailDesign sessions, application transcript projection and one active OpenAI Agents SDK Runner per session. The SDK owns the model loop and tool dispatch. The host owns identity, workspace grants, durable records, interaction ownership and completion. There is one execution path for every launcher.
 
+Root runs use the SDK's public `maxTurns: 50` bound so complete ordinary workflows can exceed the
+initial twenty-round implementation limit. Child runs retain their definition's explicit bound or
+default to twenty; foreground child and compaction bounds remain unchanged. Exhaustion stays a
+native length failure, never an automatic outer continuation or successful completion.
+
 ## Boundary
 
 The public `index.ts` exposes session create/read/prompt/abort/delete, session publishers, model configuration, one-shot SDK calls and the retained MCP/Skills configuration services. Sibling modules use this barrel only. SDK objects, credentials and checkpoints never enter browser contracts. Sessions use fresh application JSON records under `<dataDir>/sessions`; old pi records, settings, providers and extensions are not read or imported.
@@ -21,6 +26,12 @@ Each `session.event` envelope carries session ID, run ID and monotonically incre
 Tool failure status comes from invalid call JSON, SDK error callbacks, command exit results and explicit approval rejection, never from text returned by repository files or tools. The run's per-call metadata carries this status into both live and saved tool results.
 
 Each run creates a new AbortController and workspace-bound tools. Stop revokes the grant before aborting the model and subprocess group. Tools revalidate grant and an existing workspace record before effects. Read/search/edit paths use the filesystem resolver, including real paths, symlinks, new-file ancestors and `.git` checks. Commands reuse `runBounded` in the assigned worktree with time/output bounds. The tools capture configured model-key environment references at run creation and exclude those names, plus common secret names, from child environments. Edits check original text, apply the SDK diff and replace atomically. This is host-account execution, not an operating-system sandbox.
+
+The ordinary `apply_patch` FunctionTool describes its SDK 0.21.0 headerless V4A format in the
+model-visible parameter schema: existing-file sections use `@@` followed by remove/add/context lines;
+new-file lines all start with `+`. Executable examples accompany the format. `original` is the entire
+exact file text, or null only for creation. These descriptions do not change SDK parsing, grants,
+approval or atomic replacement.
 
 Approvals use SDK `needsApproval` and application dialog cards. Questions use the same resumable SDK
 interruption boundary with the retained portable questionnaire schema/result formatter and question

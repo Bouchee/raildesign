@@ -83,7 +83,7 @@ Manage:
 - `spec_delete` — remove a spec.
 - `spec_validate` — report dangling links, duplicate ids, and parent cycles.
 
-Prose is written and edited with the normal `write`/`edit` tools; the spec tools own frontmatter and
+Prose is written and edited with `apply_patch`; the spec tools own frontmatter and
 structure.
 
 ## Working with specs
@@ -95,5 +95,5 @@ structure.
 2. **Align.** Reconcile the change with the decisions and contracts the specs record; surface
    contradictions before diverging.
 3. **Update.** When the change alters a boundary, contract, or decision, update the spec — frontmatter
-   (including `status`) with `spec_update`, prose with `edit` — and add `spec_create` for a new module.
+   (including `status`) with `spec_update`, prose with `apply_patch` — and add `spec_create` for a new module.
 4. **Check.** Run `spec_validate` after structural changes.

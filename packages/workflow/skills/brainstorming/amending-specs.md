@@ -14,7 +14,7 @@ of approvals: do it yourself, and let the user see the result in the Changes rev
      or known limitation — and a new spec for a genuinely new module;
    - for a bug classified silent or wrong, the spec that should have stated the intended behavior.
 2. **Amend top-down** — goal → architecture → modules — without asking the user to approve the list
-   or the edits. `spec_create` for a new spec, `spec_update` for frontmatter, `edit` for prose. Write
+   or the edits. `spec_create` for a new spec, `spec_update` for frontmatter, `apply_patch` for prose. Write
    the decisions and the *why* the code cannot show, once, in the spec that owns them; link the rest
    by `id`. Unconfirmed assumptions are marked unconfirmed where they stand.
 3. **Check against reality.** Each amended spec matches what was built, not what was planned; the

@@ -173,8 +173,20 @@ export function workspaceTools(grant: ToolGrant) {
 				"Create or update one file with a V4A diff. Supply exact original file text, or null for a new file. Requires user approval.",
 			parameters: z.object({
 				path: z.string().min(1),
-				diff: z.string().min(1).max(524288),
-				original: z.string().max(262144).nullable(),
+				diff: z
+					.string()
+					.min(1)
+					.max(524288)
+					.describe(
+						"Headerless V4A diff, not full replacement text. For an existing file, start each section with @@ and prefix every following line with '-' (remove), '+' (add), or a space (context). Example: @@\n-before\n+after\n. For a new file, prefix every line with '+', e.g. +first line\n+second line\n. Omit file headers and numbered unified-diff headers.",
+					),
+				original: z
+					.string()
+					.max(262144)
+					.nullable()
+					.describe(
+						"Exact entire original UTF-8 file content from read, including whitespace and trailing newlines. Use null only when creating a new file.",
+					),
 			}),
 			needsApproval: true,
 			execute(input) {

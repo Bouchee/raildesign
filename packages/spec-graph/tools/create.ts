@@ -44,7 +44,7 @@ export function createSpecCreate(services: SpecToolServices) {
 	return tool({
 		name: "spec_create",
 		description:
-			"Create a new spec file with scaffolded frontmatter (id, type, title, an optional status, and any links) and a heading-only body stub chosen by type. Fails if the file already exists, the id is already in use, or the path is not an indexable root-relative .md path. Edit prose afterward with the write/edit tools.",
+			"Create a new spec file with scaffolded frontmatter (id, type, title, an optional status, and any links) and a heading-only body stub chosen by type. Fails if the file already exists, the id is already in use, or the path is not an indexable root-relative .md path. Edit prose afterward with apply_patch.",
 		needsApproval: true,
 		strict: false,
 		parameters: { ...parameters, required: parameters.required ?? [], additionalProperties: true },

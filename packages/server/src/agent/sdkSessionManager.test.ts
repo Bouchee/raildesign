@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Usage } from "@openai/agents";
+import { applyDiff, Usage } from "@openai/agents";
 import {
 	assistantMessage,
 	functionCall,
@@ -53,7 +53,7 @@ import {
 	steerSession,
 	updateQueuedMessage,
 } from "./sdkSessionManager";
-import { applyWorkspacePatch, type ToolGrant } from "./sdkTools";
+import { applyWorkspacePatch, type ToolGrant, workspaceTools } from "./sdkTools";
 import { readSessionRecord, sessionRecordPath } from "./sessionStore";
 import { setWebAccessKey } from "./webAccess";
 import { setContinueToolHost, setWorkspaceToolsHost } from "./workspaceActions";
@@ -123,6 +123,26 @@ function offlineWeb(reply: (request: Request) => Response | Promise<Response>) {
 	);
 	return webFetchMock;
 }
+
+test("a root SDK run completes more than twenty sequential tool rounds", async () => {
+	writeFileSync(join(worktree, "fixture.txt"), "fixture bytes");
+	const model = new ScriptedModel([
+		...Array.from({ length: 21 }, (_, index) =>
+			modelResponse([functionCall("read", { path: "fixture.txt" }, { callId: `read-${index}` })]),
+		),
+		done(),
+	]);
+	configureAgentModelFactory(() => model);
+	const { sessionId } = await createSession({ cwd: worktree, workspaceId: "workspace" });
+	await promptSession(sessionId, "Read the fixture in twenty-one sequential rounds, then finish.");
+	expect(model.calls).toHaveLength(22);
+	expect(getSessionState(sessionId).completion?.outcome).toBe("succeeded");
+	expect(
+		readSessionRecord(sessionId)?.messages.filter(
+			(message) => message.role === "toolResult" && message.toolName === "read" && !message.isError,
+		),
+	).toHaveLength(21);
+});
 
 test("SDK web tools keep renderer metadata in restored transcripts and readable text in model history", async () => {
 	setWebAccessKey("offline-platform-key");
@@ -613,6 +633,25 @@ test.skipIf(process.platform === "win32")(
 		expect(getSessionState(created.sessionId).completion?.outcome).toBe("cancelled");
 	},
 );
+
+test("patch exposes executable SDK diff examples and exact-original guidance to the model", () => {
+	const patch = workspaceTools({
+		workspaceId: "workspace",
+		cwd: worktree,
+		signal: new AbortController().signal,
+		assertActive() {},
+	}).find((entry) => entry.name === "apply_patch");
+	const schema = patch?.parameters as { properties?: Record<string, { description?: string }> };
+	const description = schema.properties?.diff?.description ?? "";
+	const existingExample = description.match(/@@\n-before\n\+after\n/)?.[0];
+	const createExample = description.match(/\+first line\n\+second line\n/)?.[0];
+	expect(existingExample).toBeDefined();
+	expect(createExample).toBeDefined();
+	expect(applyDiff("before\n", existingExample ?? "")).toBe("after\n");
+	expect(applyDiff("", createExample ?? "", "create")).toBe("first line\nsecond line");
+	expect(schema.properties?.original?.description).toMatch(/exact entire.*original/i);
+	expect(schema.properties?.original?.description).toMatch(/null only.*new file/i);
+});
 
 test("patch validates original text, symlinks, new ancestors, .git and revoked grants", () => {
 	const outside = join(root, "outside");

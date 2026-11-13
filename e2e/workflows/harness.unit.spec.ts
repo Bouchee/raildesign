@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
@@ -15,14 +15,17 @@ import type {
 	TranscriptMessage,
 	WsResult,
 } from "@thinkrail/contracts";
+import { parseFile, serializeFrontmatter } from "@thinkrail/spec-graph/core";
 import type { E2eWire } from "../fixtures/wire";
 import {
+	answerImportQuestions,
 	checkBudget,
 	checks,
 	DEFAULT_BUDGET,
 	driveTurn,
 	EventLog,
 	FIXTURE_MD_SUFFIX,
+	importChecks,
 	includeInFixtureSnapshot,
 	maskFixtureMarkdown,
 	parseJudgeReply,
@@ -31,11 +34,396 @@ import {
 	parseSimReply,
 	pickRecommended,
 	runChecks,
+	seedImportWorkspace,
 	signals,
 	skipAll,
 	unmaskFixtureMarkdown,
 	watchSignals,
 } from "./harness";
+
+const ADOPTION_QUESTION = {
+	header: "Adoption",
+	question: "Which existing documents should become graph nodes?",
+	multiSelect: true,
+	options: [
+		{ label: "docs/architecture.md", description: "Current architecture" },
+		{ label: "docs/adr/", description: "The accepted pure-resize-pipeline decision" },
+	],
+};
+
+function importedFixture(cwd: string) {
+	seedImportWorkspace(cwd, true);
+	const nodes = [
+		{ id: "goal", type: "goal-and-requirements", path: "goal-and-requirements.md" },
+		{
+			id: "architecture",
+			type: "architecture-design",
+			path: "docs/architecture.md",
+			parent: "goal",
+		},
+		{ id: "cli", type: "module-design", path: "src/cli/SPEC.md", parent: "architecture" },
+		{ id: "resize", type: "module-design", path: "src/resize/SPEC.md", parent: "architecture" },
+		{
+			id: "pure-resize",
+			type: "architecture-design",
+			path: "docs/adr/0001-pure-resize-pipeline.md",
+			parent: "architecture",
+		},
+	];
+	for (const node of nodes) {
+		const path = join(cwd, node.path);
+		const body = existsSync(path)
+			? readFileSync(path, "utf8")
+			: "## Responsibility\n\nA bounded module.\n\n## Boundary\n\nKeep the public interface.\n";
+		writeFileSync(
+			path,
+			serializeFrontmatter({
+				id: node.id,
+				type: node.type,
+				title: node.id,
+				status: "draft",
+				...(node.parent ? { parent: node.parent } : {}),
+			}) + body,
+		);
+	}
+	const log = new EventLog();
+	for (const event of skillRead("writing-specs", "writing-specs")) log.push(event);
+	const question = {
+		toolCallId: "adopt",
+		toolName: "ask_user_question",
+		args: { questions: [ADOPTION_QUESTION] },
+	};
+	log.push(toolStart(question.toolCallId, question.toolName, question.args));
+	log.push(
+		toolEnd(question.toolCallId, question.toolName, {
+			details: answerImportQuestions(question, "accept"),
+		}),
+	);
+	log.push(toolStart("write", "apply_patch", { path: "src/resize/SPEC.md" }));
+	log.push(toolEnd("write", "apply_patch", { content: [] }));
+	log.push(toolStart("validate", "spec_validate", {}));
+	log.push(
+		toolEnd("validate", "spec_validate", {
+			details: { danglingLinks: [], duplicateIds: [], parentCycles: [] },
+		}),
+	);
+	return log;
+}
+
+test("importing: native multi-select uses explicit free text for adoption and refusal", () => {
+	const call = {
+		toolCallId: "adopt",
+		toolName: "ask_user_question",
+		args: {
+			questions: [
+				{
+					...ADOPTION_QUESTION,
+					options: [
+						{ label: "Both", description: "Adopt architecture and ADR" },
+						{ label: "Architecture only", description: "Adopt only architecture" },
+						{ label: "ADR only", description: "Adopt only ADR" },
+					],
+				},
+			],
+		},
+	};
+	const accepted = answerImportQuestions(call, "accept");
+	expect(accepted.answers[0]).toEqual({
+		questionIndex: 0,
+		question: ADOPTION_QUESTION.question,
+		kind: "multi",
+		selected: [],
+		answer:
+			"Adopt exactly docs/architecture.md and docs/adr/0001-pure-resize-pipeline.md in place; adopt no other files.",
+	});
+	const declined = answerImportQuestions(call, "decline");
+	expect(declined.answers[0]).toEqual({
+		questionIndex: 0,
+		question: ADOPTION_QUESTION.question,
+		kind: "multi",
+		selected: [],
+		answer:
+			"Adopt none. Preserve docs/architecture.md and docs/adr/0001-pure-resize-pipeline.md unchanged as input only.",
+	});
+	expect(buildQuestionnaireResponse(accepted, call.args).details).toEqual(accepted);
+	expect(buildQuestionnaireResponse(declined, call.args).details).toEqual(declined);
+	expect(() => answerImportQuestions({ ...call, args: {} }, "accept")).toThrow("Malformed");
+	expect(() =>
+		answerImportQuestions(
+			{ ...call, args: { questions: [{ ...ADOPTION_QUESTION, multiSelect: false }] } },
+			"accept",
+		),
+	).toThrow("multi-select");
+	const processOffer = {
+		...ADOPTION_QUESTION,
+		options: [{ label: "README.md", description: "The project overview" }],
+	};
+	const processLog = new EventLog();
+	processLog.push(toolStart("process-adopt", "ask_user_question", { questions: [processOffer] }));
+	const offerCheck = importChecks("no-docs").find((check) =>
+		check.name.startsWith("durable candidates"),
+	);
+	expect(offerCheck?.run({ log: processLog, cwd: "" }).pass).toBe(false);
+	const limitationLog = new EventLog();
+	limitationLog.push(
+		toolStart("limits", "ask_user_question", {
+			questions: [
+				{
+					header: "Limitations",
+					question: "Which current limitations should be recorded as unconfirmed?",
+					multiSelect: true,
+					options: [
+						{ label: "TODO.md lists missing verbose output", description: "Existing limitation" },
+					],
+				},
+			],
+		}),
+	);
+	expect(offerCheck?.run({ log: limitationLog, cwd: "" }).pass).toBe(true);
+});
+
+test("importing: limitation multi-select uses the native free-text-only shape", () => {
+	const call = {
+		toolCallId: "limitations",
+		toolName: "ask_user_question",
+		args: {
+			questions: [
+				{
+					header: "Limitations",
+					question: "Which current gaps should be recorded?",
+					multiSelect: true,
+					options: [{ label: "No tests", description: "No current test runner" }],
+				},
+			],
+		},
+	};
+	const result = answerImportQuestions(call, "no-docs");
+	expect(result.answers[0]).toEqual({
+		questionIndex: 0,
+		question: call.args.questions[0]?.question,
+		kind: "multi",
+		selected: [],
+		answer: expect.stringContaining("the skeletal implementation is incomplete"),
+	});
+	expect(buildQuestionnaireResponse(result, call.args).content[0]?.text).toContain(
+		"user's own answer",
+	);
+});
+
+test("importing: the retained four-question round keeps drift clarification separate from adoption", () => {
+	const args = {
+		questions: [
+			{
+				question:
+					"Which existing docs should become spec-graph nodes (adopted in place, content kept)? Everything else stays input-only.",
+				header: "Adopt docs",
+				multiSelect: true,
+				options: [
+					{
+						label: "docs/architecture.md",
+						description:
+							"Declarative design doc: two modules, the one-way cli→resize edge, and the purity invariant. Would become the architecture-design node.",
+					},
+					{
+						label: "docs/adr/0001-pure-resize-pipeline.md",
+						description:
+							"An accepted decision record still in force, with its rationale (unit-testable without fixtures). Would become its own decision node under the architecture.",
+					},
+				],
+			},
+			{
+				question:
+					"`docs/architecture.md` and ADR 0001 say the CLI owns all filesystem I/O, but no code does any I/O yet (`src/cli/index.ts` just forwards argv and `resize()` ignores its argument). How should the adopted architecture doc read?",
+				header: "I/O claim",
+				headerHint: "",
+				options: [
+					{
+						label: "Intended boundary, still unbuilt (Recommended)",
+						description:
+							'Keep "the CLI owns all I/O" as the design rule and add one line stating no I/O is implemented yet, so the purity invariant isn\'t mistaken for a description of working code.',
+						preview:
+							"- `src/cli` — argument parsing and the command entry point; the only module that talks to the user.\n- `src/resize` — the image-resizing pipeline (the core domain).\n\nThe resize pipeline is pure: no filesystem access inside `src/resize`; the CLI owns all I/O.\n+ *Not yet implemented: neither module performs I/O today; `resize()` is a stub.*",
+					},
+					{
+						label: "Soften to current state",
+						description:
+							'Restate it as "no module touches the filesystem today", leaving where I/O will eventually live unstated.',
+						preview:
+							"The resize pipeline is pure: no filesystem access inside `src/resize`. No module performs\nfilesystem I/O today.",
+					},
+					{
+						label: "Drop the I/O sentence",
+						description:
+							"Adopt only the two-module edge and leave I/O placement unrecorded until it exists.",
+						preview:
+							"acme-widgets is two modules with a one-way edge. `cli` depends on `resize`; `resize` never\nimports `cli`.",
+					},
+				],
+			},
+			{
+				question:
+					'Who is acme-widgets primarily for? The docs say "from the command line" but not who runs it or how — this sets the goal doc\'s audience.',
+				header: "Audience",
+				options: [
+					{
+						label: "Automation & CI batches (Recommended)",
+						description:
+							"Run from scripts and CI jobs to resize many images unattended; exit codes and non-interactive behavior matter most.",
+					},
+					{
+						label: "Individuals resizing by hand",
+						description:
+							"A person runs it ad hoc on their own images; clear messages and sensible defaults matter more than exit codes.",
+					},
+					{
+						label: "Called by other tools",
+						description:
+							"Other command-line programs shell out to it as a step in a larger pipeline; stable flags and output conventions are the contract.",
+					},
+				],
+			},
+			{
+				question:
+					"Which of these gaps in the current code are known limitations to record in the owning specs?",
+				header: "Limitations",
+				multiSelect: true,
+				options: [
+					{
+						label: "resize() is a stub",
+						description:
+							"`src/resize` ignores its file list (`void files`) — no pixels are actually resized.",
+					},
+					{
+						label: "No CLI I/O or flags",
+						description:
+							"The CLI forwards raw argv and never reads an image file or writes output.",
+					},
+					{
+						label: "No manifest, build, or tests",
+						description:
+							"No package.json, no build/test scripts, and no test files anywhere in the repo.",
+					},
+					{
+						label: "No error handling or exit codes",
+						description:
+							"`main()` returns void; bad input and failures are neither reported nor signalled to a caller.",
+					},
+				],
+			},
+		],
+	};
+	const call = { toolCallId: "retained-round", toolName: "ask_user_question", args };
+	const response = answerImportQuestions(call, "accept");
+	expect(response.answers).toHaveLength(4);
+	expect(response.answers.map((answer) => answer.kind)).toEqual([
+		"multi",
+		"custom",
+		"custom",
+		"multi",
+	]);
+	expect(response.answers[0]?.answer).toContain("Adopt exactly docs/architecture.md");
+	expect(response.answers[1]?.answer).toContain("Preserve the original durable prose");
+	expect(response.answers[3]?.selected).toEqual([]);
+	const log = new EventLog();
+	log.push(toolStart(call.toolCallId, call.toolName, args));
+	log.push(toolEnd(call.toolCallId, call.toolName, { details: response }));
+	const candidateCheck = importChecks("accept").find((check) =>
+		check.name.startsWith("durable candidates"),
+	);
+	expect(candidateCheck?.run({ log, cwd: "" }).pass).toBe(true);
+});
+
+test("importing: initial empty validation cannot unlock artifact or Git checks", () => {
+	const log = new EventLog();
+	for (const event of skillRead("writing", "writing-specs")) log.push(event);
+	log.push(toolStart("empty-validation", "spec_validate", {}));
+	log.push(
+		toolEnd("empty-validation", "spec_validate", {
+			details: { danglingLinks: [], duplicateIds: [], parentCycles: [] },
+		}),
+	);
+	const context = {
+		log,
+		get cwd(): string {
+			throw new Error("Premature artifact read");
+		},
+	};
+	expect(importChecks("no-docs").every((check) => check.run(context).pass)).toBe(false);
+});
+
+for (const mutation of [
+	"none",
+	"dangling",
+	"duplicate",
+	"rootless",
+	"reversed",
+	"body drift",
+	"source edit",
+	"early validation",
+	"empty module",
+] as const) {
+	test(`importing: artifact checks ${mutation === "none" ? "accept a valid graph" : `reject ${mutation}`}`, () => {
+		const cwd = mkdtempSync(join(tmpdir(), "workflow-import-check-"));
+		try {
+			const log = importedFixture(cwd);
+			if (["dangling", "reversed"].includes(mutation)) {
+				const path = join(cwd, "src/resize/SPEC.md");
+				const parsed = parseFile(readFileSync(path, "utf8"));
+				writeFileSync(
+					path,
+					serializeFrontmatter({
+						...parsed.frontmatter,
+						"depends-on": [mutation === "dangling" ? "missing" : "cli"],
+					}) + parsed.body,
+				);
+			}
+			if (mutation === "duplicate")
+				writeFileSync(
+					join(cwd, "duplicate.md"),
+					readFileSync(join(cwd, "goal-and-requirements.md"), "utf8"),
+				);
+			if (mutation === "rootless") rmSync(join(cwd, "goal-and-requirements.md"));
+			if (mutation === "body drift")
+				writeFileSync(
+					join(cwd, "docs/architecture.md"),
+					`${readFileSync(join(cwd, "docs/architecture.md"), "utf8")}Invented correction.\n`,
+				);
+			if (mutation === "source edit")
+				writeFileSync(join(cwd, "src/resize/index.ts"), "export const changed = true;\n");
+			if (mutation === "early validation") {
+				log.push(toolStart("later-write", "apply_patch", { path: "src/resize/SPEC.md" }));
+				log.push(toolEnd("later-write", "apply_patch", { content: [] }));
+			}
+			if (mutation === "empty module") {
+				const path = join(cwd, "src/resize/SPEC.md");
+				const parsed = parseFile(readFileSync(path, "utf8"));
+				writeFileSync(
+					path,
+					`${serializeFrontmatter(parsed.frontmatter ?? {})}## Responsibility\n\n## Boundary\n`,
+				);
+			}
+			const failures = runChecks(importChecks("accept"), { log, cwd }).filter(
+				(result) => !result.pass,
+			);
+			expect(failures.length).toBe(mutation === "none" ? 0 : 1);
+			const checkpoint = watchSignals(
+				log,
+				[
+					{
+						description: "complete imported artifacts",
+						test: (current) =>
+							importChecks("accept").every((check) => check.run({ log: current, cwd }).pass),
+					},
+				],
+				[],
+			);
+			expect(checkpoint.peek()?.kind ?? null).toBe(mutation === "none" ? "stop" : null);
+			checkpoint.cancel();
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+}
 
 function toolStart(id: string, name: string, args: Record<string, unknown>): SessionEvent {
 	return { type: "tool_execution_start", toolCallId: id, toolName: name, args } as SessionEvent;
@@ -204,6 +592,50 @@ test("driveTurn: forbidden signal wins over stop and returns the settled snapsho
 		"session.abort",
 		"session.getMessages",
 	]);
+});
+
+for (const failure of ["error", "length"] as const) {
+	test(`driveTurn: a new ${failure} completion fails even when the target is satisfied`, async () => {
+		const failed = turnSnapshot([
+			assistantCall("target", "skill_read", { name: "writing-specs", path: null }),
+			completedCall("target", "skill_read"),
+		]);
+		if (!failed.summary.state) throw new Error("Missing fixture state");
+		failed.summary.state.completion = {
+			completionId: "new-failed-run",
+			outcome: "failed",
+			failure,
+		};
+		const wire = scriptedWire([turnSnapshot(), failed]);
+		const turn = await driveTurn(wire, IDS, "import", {
+			stopWhen: [signals.skillRead("writing-specs")],
+		});
+		expect(turn.failure).toBe("Turn settled with failed");
+		expect(turn.stoppedBy).toBeNull();
+		expect(wire.requests.some((request) => request.method === "session.abort")).toBe(true);
+	});
+}
+
+test("driveTurn: an old failed completion does not reject a new satisfied target", async () => {
+	const previous: TranscriptMessage = { role: "user", content: "previous turn", timestamp: 1 };
+	const old = turnSnapshot([previous]);
+	if (!old.summary.state) throw new Error("Missing fixture state");
+	old.summary.state.completion = {
+		completionId: "old-failed-run",
+		outcome: "failed",
+		failure: "length",
+	};
+	const done = turnSnapshot([
+		previous,
+		assistantCall("target", "skill_read", { name: "writing-specs", path: null }),
+		completedCall("target", "skill_read"),
+	]);
+	const wire = scriptedWire([old, old, done]);
+	const turn = await driveTurn(wire, IDS, "import", {
+		stopWhen: [signals.skillRead("writing-specs")],
+	});
+	expect(turn.failure).toBeNull();
+	expect(turn.stoppedBy).toBe('skill "writing-specs" read');
 });
 
 test("driveTurn: a satisfied routing stop aborts before a subsequent bash approval", async () => {
@@ -390,6 +822,17 @@ for (const monitor of ["forbid", "stop", "budget"] as const) {
 	});
 }
 
+test("driveTurn: a custom tool budget is bounded and shares its timeout with the prompt RPC", async () => {
+	const done = turnSnapshot([assistantCall("read", "read", { path: "AGENTS.md" })]);
+	const wire = scriptedWire([turnSnapshot(), done]);
+	const turn = await driveTurn(wire, IDS, "inspect", { budget: { maxMs: 5000, maxToolCalls: 1 } });
+	expect(turn.failure).toBe("budget: 1 tool calls reached");
+	expect(wire.requests.find((request) => request.method === "session.prompt")?.timeoutMs).toBe(
+		5000,
+	);
+	expect(wire.requests.some((request) => request.method === "session.abort")).toBe(true);
+});
+
 test("driveTurn: the exact requested patch still receives one immediate approval", async () => {
 	const pending = confirmSnapshot("apply_patch", { path: "src/resize/index.ts" });
 	const done = turnSnapshot([...pending.messages, completedCall("confirm", "apply_patch")]);
@@ -476,6 +919,26 @@ test("driveTurn: custom refusal uses the native question result and preserves it
 	).toMatchObject({ toolCallId: "question", response });
 	expect(turn.log.toolCalls("ask_user_question")[0]?.result).toMatchObject({ details: response });
 	expect(turn.log.toolCalls().map((call) => call.toolName)).toEqual(["ask_user_question"]);
+});
+
+test("driveTurn: a failed preconfirmation file check aborts without answering", async () => {
+	const call = assistantCall("question", "ask_user_question", { questions: [ADOPTION_QUESTION] });
+	const pending = turnSnapshot([call], {
+		kind: "tool-response",
+		interactionId: "interaction",
+		toolCallId: "question",
+		runId: "run",
+		revision: 4,
+	});
+	const wire = scriptedWire([turnSnapshot(), pending, turnSnapshot([call])]);
+	const turn = await driveTurn(wire, IDS, "import", {
+		answer: () => {
+			throw new Error("preconfirmation file changed");
+		},
+	});
+	expect(turn.failure).toBe("preconfirmation file changed");
+	expect(wire.requests.some((request) => request.method === "session.respondToTool")).toBe(false);
+	expect(wire.requests.some((request) => request.method === "session.abort")).toBe(true);
 });
 
 test("driveTurn: success without the required routing signal fails", async () => {

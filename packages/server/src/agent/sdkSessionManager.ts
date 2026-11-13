@@ -907,7 +907,7 @@ function startStream(
 		stream: true,
 		session,
 		signal,
-		maxTurns: session.record.childRun?.definition.maxTurns ?? 20,
+		maxTurns: session.record.childRun ? (session.record.childRun.definition.maxTurns ?? 20) : 50,
 	});
 }
 

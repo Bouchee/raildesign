@@ -130,6 +130,38 @@ async function until(check: () => boolean) {
 	}
 }
 
+for (const maxTurns of [undefined, 3]) {
+	test(`review child retains its ${maxTurns ?? "default twenty"}-turn SDK bound`, async () => {
+		writeFileSync(join(cwd, "fixture.txt"), "fixture bytes");
+		const created = await createSession({ cwd, workspaceId: "workspace" });
+		if (!created.model) throw new Error("Missing model");
+		const child = new ScriptedModel([
+			...Array.from({ length: 21 }, (_, index) =>
+				call("read", { path: "fixture.txt" }, `child-read-${index}`),
+			),
+			done("must not reach final output"),
+		]);
+		configureAgentModelFactory(() => child);
+		const result = await runSessionChild(created.sessionId, {
+			name: "reviewer",
+			instructions: "Read the fixture repeatedly.",
+			prompt: "Inspect",
+			model: created.model,
+			thinkingLevel: created.thinkingLevel,
+			tools: ["read"],
+			...(maxTurns === undefined ? {} : { maxTurns }),
+		});
+		expect(child.calls).toHaveLength(maxTurns ?? 20);
+		expect(result.status).toBe("error");
+		expect(getSessionState(result.sessionId).completion?.outcome).toBe("failed");
+		expect(
+			readSessionRecord(result.sessionId)?.messages.findLast(
+				(message) => message.role === "assistant",
+			),
+		).toMatchObject({ role: "assistant", stopReason: "length" });
+	});
+}
+
 test("SDK foreground child returns its report, transcript and owned resource without a visible chat", async () => {
 	writeFileSync(join(cwd, "fixture.txt"), "fixture bytes");
 	const parent = new ScriptedModel([agentCall(), done("parent complete")]);

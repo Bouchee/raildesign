@@ -10,7 +10,7 @@ tags: [testing, workflow-system]
 
 ## Scope / trigger
 
-The routing live scenarios use the isolated browser host and its current SDK sessions. Deterministic
+The routing and importing live scenarios use the isolated browser host and its current SDK sessions. Deterministic
 helpers check tool/skill discipline, files, YAML spec metadata, budgets and structured replies. The old
 pi headless scenario runner, credential-copying environment and JSONL transcript presets are retired.
 
@@ -32,8 +32,10 @@ user simulation and rubric diagnostics never establish a passing result. Masked 
 cannot enter repository spec discovery. Artifact copying excludes `.git`, keeping `.gitignore` and
 `.github`.
 
-`driveTurn` uses the real prompt, question-response, approval and abort routes, with existing deterministic
-budgets. The prompt RPC may delay its acknowledgement for the host's send window; dispatch it with the
+`driveTurn` uses the real prompt, question-response, approval and abort routes, with deterministic
+budgets. A scenario may override individual budget fields; omitted fields retain `DEFAULT_BUDGET`.
+The resolved wall-time bound governs both the prompt RPC timeout and the observation watchdog.
+Routing retains the default 180 seconds / 60 tools. The prompt RPC may delay its acknowledgement for the host's send window; dispatch it with the
 turn budget as its explicit timeout and observe/respond concurrently. Attach its rejection handler at
 dispatch, fail promptly on rejection, and await the request after abort before returning. An unchanged
 idle snapshot from before admission is not completion of the new turn. After forbid/error/budget
@@ -42,6 +44,8 @@ denied confirmations fail and abort immediately. Stop signals succeed only when 
 observed, including the final snapshot recheck. It waits for idle settlement before returning the
 final snapshot, log and failure. Unexpected/failed settlement and missing stop signals fail. Questions
 default to a declined answer; an edit confirmation requires the scenario's explicit allow predicate.
+Before accepting a stop signal, reject a fresh non-success completion; an unchanged completion from
+before the prompt is not the new turn. Error or length completion cannot become target-stop success.
 
 `allowConfirm` returns `true`/`false` for an immediate per-call decision. Only an explicit `undefined`
 from a supplied callback defers to an external reviewer: keep the host's SDK interruption paused,
@@ -94,6 +98,34 @@ alone permits continuation and can never establish a passing acceptance result.
 Unanswered confirmations hit the existing budget and fail; these scenarios are not unattended checks.
 The helper unit suite simulates external decisions deterministically without a model or reviewer.
 
+`importing.live.spec.ts` covers durable-document adoption, a code-only import and declined adoption.
+Manual `/skill:importing-a-codebase` expands the Skill body through the native host entry; it does not
+require a redundant `skill_read`. The writing-specs concept still requires a successful body read.
+Adoption answers use the native multi-select free-text shape with no option selections and explicit
+file choices or refusal. Identify that candidate-selection role from the header or question; an
+ordinary clarification mentioning an adopted document or citing its path is not an adoption offer.
+Maintainer intent keeps the original durable boundary prose and records the
+skeletal implementation's gaps only as unconfirmed notes in new draft Specs. Before each interview
+answer, both Git status and the diff against the retained seed commit must be empty. All side-effect confirmations defer to the same
+per-call reviewer; no tool or shell command receives blanket approval. Final checks read real files
+through the public Spec index: one draft goal and architecture, both module boundaries, the
+architecture-owned one-way dependency, valid ID links, preserved adopted prose and unchanged source
+and process documents. New untracked or added files since the seed commit must be indexed Spec nodes;
+owned TODO completion may commit its deltas, so an unchanged HEAD is not required. The docs cases require the architecture
+and ADR offer in one interview round, its exact native choice receipt, and acceptance or rejection
+reflected in the actual files. The live proof attaches the snapshot, pre-answer observations, graph,
+artifact bytes, validation, Git effects and source identity. These checks replace the old model judge;
+no simulated model can establish a pass. Helper unit tests reject malformed choices, broken graphs,
+reversed dependencies, changed adopted prose and changed source, and ensure preconfirmation failures
+abort without replying. Full imports use bounded 900-second / 80-tool turns with a 960-second
+Playwright timeout; the shared driver's default budget remains unchanged.
+The same final file/graph/decision checks, including seed-based path scope, form the existing turn
+driver's stop signal. Once all pass, abort and settle through that driver, then recheck the final
+snapshot and artifacts. A partial graph, empty module scaffold or pre-write validation cannot stop
+successfully. This proves the complete validated artifact checkpoint, not a natural final handoff.
+The trace-only post-write validation check runs first and checkpoint checks short-circuit, keeping
+filesystem and Git reads out of polling before validation. Final results still collect every check.
+
 ## Wrong / correct
 
 Use isolated browser/SDK scenarios for production acceptance. Questions use the current
@@ -104,6 +136,6 @@ The current Stage 3 live scenario checks manual Skill invocation, workspace inst
 Plan behavior. These checks do not replace complete workflow routing, codebase importing or
 multi-round clarification followed by implementation and restored-conversation recall.
 
-The original Pi implementations remain in Git history. Routing has current SDK cases; importing and
-multi-round clarification/restored-conversation recall still need equivalent SDK acceptance. Retained
+The original Pi implementations remain in Git history. Routing and importing have current SDK cases;
+multi-round clarification/restored-conversation recall still needs equivalent SDK acceptance. Retained
 Markdown workspace fixtures may support those scenarios. No helper reads an old Pi session transcript.

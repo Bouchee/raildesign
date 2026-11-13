@@ -33,7 +33,7 @@ export function createSpecUpdate(services: SpecToolServices) {
 	return tool({
 		name: "spec_update",
 		description:
-			"Edit a spec's frontmatter only (never its prose): set/overwrite scalar fields, remove fields, and add/remove entries in the list fields (depends-on/references/implements/covers/tags). Comments and any non-dialect fields are preserved. Prose is edited with the write/edit tools.",
+			"Edit a spec's frontmatter only (never its prose): set/overwrite scalar fields, remove fields, and add/remove entries in the list fields (depends-on/references/implements/covers/tags). Comments and any non-dialect fields are preserved. Prose is edited with apply_patch.",
 		needsApproval: true,
 		strict: false,
 		parameters: { ...parameters, required: parameters.required ?? [], additionalProperties: true },

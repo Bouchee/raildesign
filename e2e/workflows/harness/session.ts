@@ -7,7 +7,7 @@ import type { E2eWire } from "../../fixtures/wire";
 import { skipAll } from "./dialog";
 import { type CapturedToolCall, EventLog } from "./events";
 import type { Signal } from "./signals";
-import { checkBudget, DEFAULT_BUDGET } from "./watchdog";
+import { checkBudget, DEFAULT_BUDGET, type WatchdogBudget } from "./watchdog";
 import { seedWorkspace, type WorkspaceSeed } from "./workspace";
 
 export interface WorkflowSession {
@@ -17,6 +17,7 @@ export interface WorkflowSession {
 }
 
 export interface TurnOptions {
+	budget?: Partial<WatchdogBudget>;
 	stopWhen?: Signal[];
 	forbid?: Signal[];
 	answer?: (call: CapturedToolCall) => unknown;
@@ -47,6 +48,7 @@ export async function driveTurn(
 	prompt: string,
 	options: TurnOptions = {},
 ) {
+	const budget = { ...DEFAULT_BUDGET, ...options.budget };
 	const startedAt = Date.now();
 	const answered = new Set<string>();
 	let failure: string | null = null;
@@ -59,7 +61,7 @@ export async function driveTurn(
 	let promptRequest = Promise.resolve();
 	try {
 		promptRequest = wire
-			.request("session.prompt", { sessionId: ids.sessionId, text: prompt }, DEFAULT_BUDGET.maxMs)
+			.request("session.prompt", { sessionId: ids.sessionId, text: prompt }, budget.maxMs)
 			.then(
 				() => {},
 				(error: unknown) => {
@@ -70,9 +72,17 @@ export async function driveTurn(
 			snapshot = await wire.request("session.getMessages", ids);
 			const log = EventLog.fromMessages(snapshot.messages.slice(previousMessages));
 			const forbidden = options.forbid?.find((signal) => signal.test(log));
-			failure =
-				forbidden?.description ?? promptFailure ?? checkBudget(log, startedAt, DEFAULT_BUDGET);
+			failure = forbidden?.description ?? promptFailure ?? checkBudget(log, startedAt, budget);
 			if (failure) break;
+			const completion = snapshot.summary.state?.completion;
+			if (
+				completion &&
+				completion.completionId !== previousCompletionId &&
+				completion.outcome !== "succeeded"
+			) {
+				failure = `Turn settled with ${completion.outcome}`;
+				break;
+			}
 			const stop = options.stopWhen?.find((signal) => signal.test(log));
 			if (stop) {
 				stoppedBy = stop.description;

@@ -121,6 +121,13 @@ It uses the same isolated browser host, current wire interactions and determinis
 message snapshots and git differences decide success. The pure workflow-helper suite remains excluded
 from browser discovery. The workflow module owns the shared seeding/turn-driver contract.
 
+`workflows/importing.live.spec.ts` uses that same host and driver for existing-code imports with
+accepted durable docs, no durable docs and declined adoption. Native choices and per-call approvals
+lead to checks of actual draft Spec files, module/dependency links, original prose and untouched input
+files. Each proof retains pre-answer no-write observations, full final artifacts and graph validation;
+Git effects are measured from the retained seed commit even if owned TODO completion commits them.
+The workflow module owns the detailed importing contract and its bounded full-import budget.
+
 Stage 2's focused live gate is `raildesign-stage2.live.spec.ts`,
 `raildesign-session-restart.live.spec.ts` and `compaction.live.spec.ts`. It checks queue and interaction
 hydration, steering before follow-ups, concurrent approval retries with one real effect, question

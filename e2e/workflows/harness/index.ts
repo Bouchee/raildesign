@@ -1,6 +1,12 @@
 export { type Check, type CheckContext, type CheckResult, checks, runChecks } from "./checks";
 export { type DialogRung, parsePersonaReply, pickRecommended, skipAll } from "./dialog";
 export { type CapturedToolCall, EventLog } from "./events";
+export {
+	answerImportQuestions,
+	type ImportChoice,
+	importChecks,
+	seedImportWorkspace,
+} from "./importing";
 export { type JudgeItem, type JudgeResult, judgeTranscript, parseJudgeReply } from "./judge";
 export {
 	applyArtifactPreset,
