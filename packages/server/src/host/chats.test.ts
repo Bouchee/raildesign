@@ -325,12 +325,12 @@ test("an older client never reads the container, its chats or their session stat
 		expect(newProjects.some((project) => project.kind === "chats")).toBe(true);
 		expect(oldProjects.some((project) => project.kind === "chats")).toBe(false);
 
-		const newStates = (await handleRequest("session.stateList", {}, NEW_CLIENT)) as {
-			workspaceId: string;
-		}[];
-		const oldStates = (await handleRequest("session.stateList", {}, OLD_CLIENT)) as {
-			workspaceId: string;
-		}[];
+		const [, newStates, oldStates] = (await Promise.all([
+			handleRequest("session.stateList", {}, NEW_CLIENT),
+			handleRequest("session.stateList", {}, NEW_CLIENT),
+			handleRequest("session.stateList", {}, OLD_CLIENT),
+		])) as WsResult<"session.stateList">[];
+		if (!newStates || !oldStates) throw new Error("missing concurrent state snapshots");
 		expect(newStates.some((record) => record.workspaceId === workspace.id)).toBe(true);
 		expect(oldStates.some((record) => record.workspaceId === workspace.id)).toBe(false);
 

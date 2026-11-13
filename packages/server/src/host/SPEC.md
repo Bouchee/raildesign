@@ -108,6 +108,15 @@ Held storage has one frame per pending stream key and no separate byte budget.
 
 ## SDK session wiring
 
+`session.stateList` coalesces full workspace scans through `trailingSingleFlight`. Requests arriving
+during a scan share one trailing scan rather than the already-running result, so state changed just
+before a request is not overwritten by an older scan. Only one scan runs at a time, including at its
+completion boundary; a failure rejects its own callers and does not block a queued or later scan.
+The completed scan keeps its slot until a queued scan starts, so promise continuations cannot race
+that queued launch and start another scan alongside it.
+The shared scan covers every workspace; each caller's projectless-chat visibility filter is applied
+after it resolves. There is no retained result cache.
+
 The host injects workspace-to-project and session/event/interaction publishers into the single agent
 module. `session.event` includes session/run IDs and monotonic `seq`; initial message snapshots include
 an `eventSeq` watermark. Approval cards use `session.interaction`, and replies carry session/run/tool/card/

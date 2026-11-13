@@ -250,6 +250,7 @@ import { resolveNewChatModel } from "./newChatModel";
 import { requestPlanFix, reviewAllPlan, startPlanReview } from "./requestReview";
 import { withChangeLock, withReviewLock } from "./reviewLock";
 import { hostSearch, publishSearchText } from "./search";
+import { trailingSingleFlight } from "./sessionStateList";
 import { findWorkspaceReviewOutcome, scheduleLifecyclePass } from "./settledLifecycle";
 import {
 	clearChangesRequestedIfResolved,
@@ -439,6 +440,10 @@ async function sendToFileChat(
 	fireReviewPrompt(workspaceId, comments, created.sessionId, pkg);
 	return { ...created, reused: false };
 }
+
+const sharedSessionStateList = trailingSingleFlight(() =>
+	listSessionStates(listAllWorkspaceRecords().map(sessionStateWorkspace)),
+);
 
 function sessionStateWorkspace(workspace: Workspace) {
 	return { id: workspace.id, projectId: workspace.projectId, cwd: workspace.worktreePath };
@@ -1047,12 +1052,12 @@ const handlers: WsHandlers = {
 			}
 		});
 	},
-	"session.stateList": (_params, ctx) =>
-		listSessionStates(
-			listAllWorkspaceRecords()
-				.filter((workspace) => seesChats(ctx.protocolVersion) || !isChatWorkspace(workspace))
-				.map(sessionStateWorkspace),
-		),
+	"session.stateList": async (_params, ctx) => {
+		const records = await sharedSessionStateList();
+		return seesChats(ctx.protocolVersion)
+			? records
+			: records.filter((record) => !isChatWorkspaceId(record.workspaceId));
+	},
 	"session.acknowledgeCompletion": (p) => {
 		return acknowledgeCompletion(p.sessionId, p.completionId);
 	},
